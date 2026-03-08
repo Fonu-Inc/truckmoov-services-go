@@ -1,0 +1,24 @@
+# Build
+bin/
+dist/
+*.out
+*.test
+coverage.out
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Local module/cache dirs used in constrained environments
+.gopath/
+.gomodcache/
+.gocache/
+
+# Logs
+*.log
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/

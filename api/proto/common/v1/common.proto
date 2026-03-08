@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package truckmoov.common.v1;
+
+option go_package = "github.com/truckmoov/services-go/api/proto/gen/common/v1;commonv1";
+
+message Coordinates {
+  double lat = 1;
+  double lng = 2;
+}
+
+message Timestamp {
+  string rfc3339 = 1;
+}

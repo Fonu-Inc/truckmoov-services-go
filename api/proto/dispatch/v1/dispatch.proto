@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package truckmoov.dispatch.v1;
+
+option go_package = "github.com/truckmoov/services-go/api/proto/gen/dispatch/v1;dispatchv1";
+
+import "common/v1/common.proto";
+
+service DispatchService {
+  rpc ComputeETA(ComputeETARequest) returns (ComputeETAResponse);
+}
+
+message ComputeETARequest {
+  string job_id = 1;
+  string vehicle_id = 2;
+  truckmoov.common.v1.Coordinates destination = 3;
+}
+
+message ComputeETAResponse {
+  int64 eta_seconds = 1;
+}

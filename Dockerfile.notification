@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1.7
+FROM --platform=$BUILDPLATFORM golang:1.22-alpine AS builder
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /app
+COPY go.mod go.sum* ./
+RUN go mod download
+COPY . .
+# Build for target runtime arch while keeping fast native build platform tooling.
+RUN GOOS="${TARGETOS:-$(go env GOOS)}" \
+    GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
+    CGO_ENABLED=0 go build -o /bin/notification ./cmd/notification
+
+FROM gcr.io/distroless/base-debian12
+COPY --from=builder /bin/notification /notification
+EXPOSE 3003
+ENTRYPOINT ["/notification"]
