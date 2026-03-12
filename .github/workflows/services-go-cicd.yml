@@ -235,7 +235,7 @@ jobs:
             -o ServerAliveCountMax=10
           )
           ssh "${ssh_opts[@]}" "$DEV_SSH_USER@$DEV_SSH_HOST" "
-            nohup sh -c 'DOCKER_BUILDKIT=0 docker build -f \"$SOURCE_PATH/Dockerfile.dispatch\" -t \"$DISPATCH_IMAGE\" \"$SOURCE_PATH\" >\"$BUILD_LOG\" 2>&1; echo \$? >\"$BUILD_LOG.exit\"' &
+            nohup sh -c 'docker build -f \"$SOURCE_PATH/Dockerfile.dispatch\" -t \"$DISPATCH_IMAGE\" \"$SOURCE_PATH\" >\"$BUILD_LOG\" 2>&1; echo \$? >\"$BUILD_LOG.exit\"' &
           "
           while true; do
             if ssh "${ssh_opts[@]}" "$DEV_SSH_USER@$DEV_SSH_HOST" "test -f \"$BUILD_LOG.exit\"" 2>/dev/null; then
@@ -266,7 +266,7 @@ jobs:
             -o ServerAliveCountMax=10
           )
           ssh "${ssh_opts[@]}" "$DEV_SSH_USER@$DEV_SSH_HOST" "
-            nohup sh -c 'DOCKER_BUILDKIT=0 docker build -f \"$SOURCE_PATH/Dockerfile.notification\" -t \"$NOTIFICATION_IMAGE\" \"$SOURCE_PATH\" >\"$BUILD_LOG\" 2>&1; echo \$? >\"$BUILD_LOG.exit\"' &
+            nohup sh -c 'docker build -f \"$SOURCE_PATH/Dockerfile.notification\" -t \"$NOTIFICATION_IMAGE\" \"$SOURCE_PATH\" >\"$BUILD_LOG\" 2>&1; echo \$? >\"$BUILD_LOG.exit\"' &
           "
           while true; do
             if ssh "${ssh_opts[@]}" "$DEV_SSH_USER@$DEV_SSH_HOST" "test -f \"$BUILD_LOG.exit\"" 2>/dev/null; then
@@ -297,7 +297,7 @@ jobs:
             -o ServerAliveCountMax=10
           )
           ssh "${ssh_opts[@]}" "$DEV_SSH_USER@$DEV_SSH_HOST" "
-            nohup sh -c 'DOCKER_BUILDKIT=0 docker build -f \"$SOURCE_PATH/Dockerfile.tracking\" -t \"$TRACKING_IMAGE\" \"$SOURCE_PATH\" >\"$BUILD_LOG\" 2>&1; echo \$? >\"$BUILD_LOG.exit\"' &
+            nohup sh -c 'docker build -f \"$SOURCE_PATH/Dockerfile.tracking\" -t \"$TRACKING_IMAGE\" \"$SOURCE_PATH\" >\"$BUILD_LOG\" 2>&1; echo \$? >\"$BUILD_LOG.exit\"' &
           "
           while true; do
             if ssh "${ssh_opts[@]}" "$DEV_SSH_USER@$DEV_SSH_HOST" "test -f \"$BUILD_LOG.exit\"" 2>/dev/null; then
