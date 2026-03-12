@@ -223,9 +223,9 @@ func (j Job) Assign(driverID, vehicleID string, now time.Time, timelineID string
 		Summary:    summary,
 		OccurredAt: now.UTC(),
 		Metadata: map[string]string{
-			"driver_id":          driverID,
-			"vehicle_id":         vehicleID,
-			"previous_driver_id": previousDriver,
+			"driver_id":           driverID,
+			"vehicle_id":          vehicleID,
+			"previous_driver_id":  previousDriver,
 			"previous_vehicle_id": previousVehicle,
 		},
 	})
@@ -344,7 +344,7 @@ func (j Job) AddPODAttachment(attachment JobPODAttachment, now time.Time, timeli
 		Summary:    "Proof-of-delivery attachment uploaded",
 		OccurredAt: now.UTC(),
 		Metadata: map[string]string{
-			"attachment_id": attachment.ID,
+			"attachment_id":   attachment.ID,
 			"attachment_kind": attachment.Kind,
 		},
 	})
@@ -387,7 +387,7 @@ func (j Job) MarkDriverInstructionSent(channel string, now time.Time, timelineID
 		Summary:    "Driver instruction delivered",
 		OccurredAt: now.UTC(),
 		Metadata: map[string]string{
-			"channel": strings.TrimSpace(channel),
+			"channel":   strings.TrimSpace(channel),
 			"driver_id": updated.AssignedDriverID,
 		},
 	})
