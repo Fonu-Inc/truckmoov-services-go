@@ -16,6 +16,7 @@ import (
 	httpx "github.com/truckmoov/services-go/pkg/http"
 	"github.com/truckmoov/services-go/pkg/logger"
 	"github.com/truckmoov/services-go/pkg/otel"
+	redisstore "github.com/truckmoov/services-go/pkg/redis"
 )
 
 func main() {
@@ -39,6 +40,7 @@ func main() {
 		_ = bus.Close()
 	}()
 
+	redisClient := redisstore.NewStore(cfg.RedisAddr, cfg.RedisDB)
 	jobStatusPublisher := infrastructure.NewJobStatusEventPublisher(bus)
 	publishJobStatusUseCase := application.NewPublishJobStatusChangedUseCase(
 		jobStatusPublisher,
@@ -46,7 +48,7 @@ func main() {
 		infrastructure.TimeIDGenerator{},
 		cfg.DefaultTenant,
 	)
-	jobRepository := infrastructure.NewInMemoryJobRepository()
+	jobRepository := infrastructure.NewRedisJobRepository(redisClient)
 	driverInstructionNotifier := infrastructure.NewDriverInstructionNotifier(bus)
 	jobLifecycleUseCase := application.NewJobLifecycleUseCase(
 		jobRepository,

@@ -15,6 +15,7 @@ import (
 	httpx "github.com/truckmoov/services-go/pkg/http"
 	"github.com/truckmoov/services-go/pkg/logger"
 	"github.com/truckmoov/services-go/pkg/otel"
+	redisstore "github.com/truckmoov/services-go/pkg/redis"
 )
 
 func main() {
@@ -38,7 +39,8 @@ func main() {
 		_ = bus.Close()
 	}()
 
-	outboxRepository := infrastructure.NewInMemoryOutboxRepository()
+	redisClient := redisstore.NewStore(cfg.RedisAddr, cfg.RedisDB)
+	outboxRepository := infrastructure.NewRedisOutboxRepository(redisClient)
 	messageProvider := infrastructure.NewMTNMessageProvider()
 	deliveryPublisher := infrastructure.NewDeliveryEventPublisher(bus)
 	clock := infrastructure.SystemClock{}

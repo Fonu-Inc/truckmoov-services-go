@@ -11,6 +11,7 @@ coverage.out
 !.env.example
 
 # Local module/cache dirs used in constrained environments
+.tmp/
 .gopath/
 .gomodcache/
 .gocache/

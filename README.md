@@ -43,7 +43,8 @@ make docker-buildx-push IMAGE_REPO=ghcr.io/<org>/truckmoov IMAGE_TAG=<tag> PUSH_
 - `push` to `main`: runs the same pipeline on mainline changes.
 - `workflow_dispatch`: lets you trigger the pipeline manually.
 
-Current scope is CI plus Docker image verification. A deploy stage can be added once this repo has its own Kubernetes manifests or another declared deployment target, similar to the TypeScript services repo.
+Kubernetes manifests now live under `deploy/k8s/{notification,tracking,dispatch}` for the in-cluster service names used by the platform gateway.
+Runtime state for these services is now backed by Redis instead of per-process in-memory repositories, so multiple replicas can share the same persisted data.
 
 ## Health endpoints
 - `GET http://localhost:3003/notify/health`
