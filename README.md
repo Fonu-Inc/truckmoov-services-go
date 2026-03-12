@@ -37,6 +37,14 @@ make docker-buildx-push IMAGE_REPO=ghcr.io/<org>/truckmoov IMAGE_TAG=<tag> PUSH_
 ```
 - Runtime will pull the matching architecture image automatically from that multi-arch tag.
 
+## GitHub Actions
+- Workflow: `.github/workflows/services-go-cicd.yml`
+- `pull_request`: runs formatting checks, `go vet`, `go test`, binary compilation, and Docker build validation when Go service files change.
+- `push` to `main`: runs the same pipeline on mainline changes.
+- `workflow_dispatch`: lets you trigger the pipeline manually.
+
+Current scope is CI plus Docker image verification. A deploy stage can be added once this repo has its own Kubernetes manifests or another declared deployment target, similar to the TypeScript services repo.
+
 ## Health endpoints
 - `GET http://localhost:3003/notify/health`
 - `GET http://localhost:3004/tracking/health`
