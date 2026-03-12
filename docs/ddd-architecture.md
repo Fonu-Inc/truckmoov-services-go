@@ -15,6 +15,15 @@ Per bounded context:
 `cmd/<service>` remains composition root only.
 
 ## Implemented vertical slices
+`dispatch/job.lifecycle` follows DDD layering:
+- domain aggregate: `internal/dispatch/domain/job.go`
+- use-case: `internal/dispatch/application/job_lifecycle.go`
+- adapters:
+  - repository: `internal/dispatch/infrastructure/job_repository.go`
+  - notifier: `internal/dispatch/infrastructure/driver_instruction_notifier.go`
+- HTTP adapter: `internal/dispatch/interfaces/http/handler.go`
+- composition root wiring: `cmd/dispatch/main.go`
+
 `dispatch/job.status.changed` follows DDD layering:
 - domain event: `internal/dispatch/domain/job_status_changed.go`
 - use-case: `internal/dispatch/application/publish_job_status_changed.go`
@@ -37,11 +46,23 @@ Per bounded context:
 - composition root wiring: `cmd/notification/main.go`
 
 Public API remains:
-- `POST /dispatch/jobs/status`
 - `GET /dispatch/health`
 - `GET /dispatch/eta`
+- `POST /dispatch/jobs`
+- `PATCH /dispatch/jobs/{job_id}/scheduling`
+- `POST /dispatch/jobs/{job_id}/assign`
+- `POST /dispatch/jobs/{job_id}/cancel`
+- `POST /dispatch/jobs/{job_id}/acknowledge`
+- `POST /dispatch/jobs/{job_id}/status`
+- `GET /dispatch/jobs/{job_id}`
+- `GET /dispatch/jobs/{job_id}/timeline`
+- `POST /dispatch/jobs/{job_id}/pod-attachments`
+- `POST /dispatch/jobs/{job_id}/notes`
+- `POST /dispatch/jobs/status` (legacy compatibility endpoint)
+- `GET /dispatch/docs`
+- `GET /dispatch/docs/openapi.json`
 
 ## Next DDD slices
-1. Replace in-memory repositories with Redis/Postgres-backed adapters for durability.
-2. Add application-level tests for use-cases and contract tests for adapters.
+1. Replace in-memory dispatch repository with Redis/Postgres-backed adapter for durability.
+2. Add notification consumer for `tm.<tenant>.driver.job.instruction` to deliver WhatsApp messages.
 3. Introduce domain value objects for IDs/statuses to centralize validation.

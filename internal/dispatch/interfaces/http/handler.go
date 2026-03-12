@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/truckmoov/services-go/internal/dispatch/application"
+	"github.com/truckmoov/services-go/internal/dispatch/domain"
 	trackinggrpc "github.com/truckmoov/services-go/pkg/grpc"
 )
 
@@ -20,8 +23,75 @@ type statusRequest struct {
 	Reason         string `json:"reason,omitempty"`
 }
 
+type stopRequest struct {
+	Address      string   `json:"address"`
+	ContactName  string   `json:"contact_name,omitempty"`
+	ContactPhone string   `json:"contact_phone,omitempty"`
+	Latitude     *float64 `json:"latitude,omitempty"`
+	Longitude    *float64 `json:"longitude,omitempty"`
+	Notes        string   `json:"notes,omitempty"`
+}
+
+type timeWindowRequest struct {
+	PickupStart  *string `json:"pickup_start,omitempty"`
+	PickupEnd    *string `json:"pickup_end,omitempty"`
+	DropoffStart *string `json:"dropoff_start,omitempty"`
+	DropoffEnd   *string `json:"dropoff_end,omitempty"`
+}
+
+type createJobRequest struct {
+	TenantID   string            `json:"tenant_id,omitempty"`
+	JobID      string            `json:"job_id,omitempty"`
+	Pickup     stopRequest       `json:"pickup"`
+	Dropoff    stopRequest       `json:"dropoff"`
+	Priority   string            `json:"priority,omitempty"`
+	TimeWindow timeWindowRequest `json:"time_window,omitempty"`
+}
+
+type updateJobSchedulingRequest struct {
+	TenantID   string            `json:"tenant_id,omitempty"`
+	Priority   string            `json:"priority,omitempty"`
+	TimeWindow timeWindowRequest `json:"time_window,omitempty"`
+}
+
+type assignJobRequest struct {
+	TenantID  string `json:"tenant_id,omitempty"`
+	DriverID  string `json:"driver_id"`
+	VehicleID string `json:"vehicle_id"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type cancelJobRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
+	Reason   string `json:"reason"`
+}
+
+type acknowledgeJobRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
+	DriverID string `json:"driver_id,omitempty"`
+}
+
+type updateJobStatusRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
+	Status   string `json:"status"`
+}
+
+type addPODAttachmentRequest struct {
+	TenantID   string `json:"tenant_id,omitempty"`
+	Kind       string `json:"kind"`
+	URL        string `json:"url"`
+	UploadedBy string `json:"uploaded_by,omitempty"`
+}
+
+type addJobNoteRequest struct {
+	TenantID string `json:"tenant_id,omitempty"`
+	Text     string `json:"text"`
+	AuthorID string `json:"author_id,omitempty"`
+}
+
 type Handler struct {
 	publishJobStatusUseCase *application.PublishJobStatusChangedUseCase
+	jobLifecycleUseCase     *application.JobLifecycleUseCase
 	trackingClient          trackinggrpc.TrackingClient
 
 	mu              sync.RWMutex
@@ -30,10 +100,12 @@ type Handler struct {
 
 func NewHandler(
 	publishJobStatusUseCase *application.PublishJobStatusChangedUseCase,
+	jobLifecycleUseCase *application.JobLifecycleUseCase,
 	trackingClient trackinggrpc.TrackingClient,
 ) *Handler {
 	return &Handler{
 		publishJobStatusUseCase: publishJobStatusUseCase,
+		jobLifecycleUseCase:     jobLifecycleUseCase,
 		trackingClient:          trackingClient,
 		latestLocations:         make(map[string]map[string]any),
 	}
@@ -41,6 +113,13 @@ func NewHandler(
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/dispatch/health", h.health)
+	mux.HandleFunc("/dispatch/docs", h.docsUI)
+	mux.HandleFunc("/dispatch/docs/openapi.json", h.docsOpenAPI)
+	mux.HandleFunc("/docs/dispatch", h.docsUI)
+	mux.HandleFunc("/docs/dispatch/openapi.json", h.docsOpenAPI)
+	mux.HandleFunc("/dispatch/jobs", h.jobsCollection)
+	mux.HandleFunc("/dispatch/jobs/", h.jobResource)
+	// Legacy contract kept for existing integrations that publish status events directly.
 	mux.HandleFunc("/dispatch/jobs/status", h.updateStatus)
 	mux.HandleFunc("/dispatch/eta", h.computeETA)
 	mux.HandleFunc("/health", h.health)
@@ -64,6 +143,294 @@ func (h *Handler) HandleLocationEvent(_ context.Context, payload map[string]any)
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"status": "ok", "service": "dispatch"})
+}
+
+func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
+	if h.jobLifecycleUseCase == nil {
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "job lifecycle is not configured"})
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req createJobRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	timeWindow, err := req.TimeWindow.toDomain()
+	if err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	job, err := h.jobLifecycleUseCase.CreateJob(r.Context(), application.CreateJobCommand{
+		TenantID:   req.TenantID,
+		JobID:      req.JobID,
+		Pickup:     req.Pickup.toDomain(),
+		Dropoff:    req.Dropoff.toDomain(),
+		Priority:   req.Priority,
+		TimeWindow: timeWindow,
+	})
+	if err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	respondJSON(w, http.StatusCreated, job)
+}
+
+func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
+	if h.jobLifecycleUseCase == nil {
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "job lifecycle is not configured"})
+		return
+	}
+
+	jobID, action, ok := parseJobResourcePath(r.URL.Path)
+	if !ok {
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+
+	switch action {
+	case "":
+		h.getJob(w, r, jobID)
+	case "scheduling":
+		h.updateJobScheduling(w, r, jobID)
+	case "assign":
+		h.assignJob(w, r, jobID)
+	case "cancel":
+		h.cancelJob(w, r, jobID)
+	case "acknowledge":
+		h.acknowledgeJob(w, r, jobID)
+	case "status":
+		h.updateJobLifecycleStatus(w, r, jobID)
+	case "timeline":
+		h.getJobTimeline(w, r, jobID)
+	case "pod-attachments":
+		h.addPODAttachment(w, r, jobID)
+	case "notes":
+		h.addJobNote(w, r, jobID)
+	default:
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	}
+}
+
+func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, jobID string) {
+	if r.Method != http.MethodGet {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID := r.URL.Query().Get("tenant_id")
+	job, err := h.jobLifecycleUseCase.GetJob(r.Context(), tenantID, jobID)
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, job)
+}
+
+func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jobID string) {
+	if r.Method != http.MethodPatch && r.Method != http.MethodPut {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req updateJobSchedulingRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	timeWindow, err := req.TimeWindow.toDomain()
+	if err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	job, err := h.jobLifecycleUseCase.UpdateScheduling(r.Context(), application.UpdateJobSchedulingCommand{
+		TenantID:   req.TenantID,
+		JobID:      jobID,
+		Priority:   req.Priority,
+		TimeWindow: timeWindow,
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, job)
+}
+
+func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req assignJobRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	job, err := h.jobLifecycleUseCase.AssignJob(r.Context(), application.AssignJobCommand{
+		TenantID:  req.TenantID,
+		JobID:     jobID,
+		DriverID:  req.DriverID,
+		VehicleID: req.VehicleID,
+		Reason:    req.Reason,
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, job)
+}
+
+func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request, jobID string) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req cancelJobRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	job, err := h.jobLifecycleUseCase.CancelJob(r.Context(), application.CancelJobCommand{
+		TenantID: req.TenantID,
+		JobID:    jobID,
+		Reason:   req.Reason,
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, job)
+}
+
+func (h *Handler) acknowledgeJob(w http.ResponseWriter, r *http.Request, jobID string) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req acknowledgeJobRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	job, err := h.jobLifecycleUseCase.AcknowledgeJob(r.Context(), application.AcknowledgeJobCommand{
+		TenantID: req.TenantID,
+		JobID:    jobID,
+		DriverID: req.DriverID,
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, job)
+}
+
+func (h *Handler) updateJobLifecycleStatus(w http.ResponseWriter, r *http.Request, jobID string) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req updateJobStatusRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	job, err := h.jobLifecycleUseCase.UpdateJobStatus(r.Context(), application.UpdateJobStatusCommand{
+		TenantID: req.TenantID,
+		JobID:    jobID,
+		Status:   req.Status,
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, job)
+}
+
+func (h *Handler) getJobTimeline(w http.ResponseWriter, r *http.Request, jobID string) {
+	if r.Method != http.MethodGet {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID := r.URL.Query().Get("tenant_id")
+	timeline, err := h.jobLifecycleUseCase.GetTimeline(r.Context(), tenantID, jobID)
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{
+		"job_id":   jobID,
+		"timeline": timeline,
+	})
+}
+
+func (h *Handler) addPODAttachment(w http.ResponseWriter, r *http.Request, jobID string) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req addPODAttachmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	job, err := h.jobLifecycleUseCase.AddPODAttachment(r.Context(), application.AddJobPODAttachmentCommand{
+		TenantID:   req.TenantID,
+		JobID:      jobID,
+		Kind:       req.Kind,
+		URL:        req.URL,
+		UploadedBy: req.UploadedBy,
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, job)
+}
+
+func (h *Handler) addJobNote(w http.ResponseWriter, r *http.Request, jobID string) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req addJobNoteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	job, err := h.jobLifecycleUseCase.AddNote(r.Context(), application.AddJobNoteCommand{
+		TenantID: req.TenantID,
+		JobID:    jobID,
+		Text:     req.Text,
+		AuthorID: req.AuthorID,
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, job)
 }
 
 func (h *Handler) updateStatus(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +479,86 @@ func (h *Handler) computeETA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{"eta_seconds": etaSeconds})
+}
+
+func parseJobResourcePath(path string) (jobID, action string, ok bool) {
+	trimmed := strings.TrimPrefix(path, "/dispatch/jobs/")
+	trimmed = strings.Trim(trimmed, "/")
+	if trimmed == "" {
+		return "", "", false
+	}
+
+	// Support exactly /dispatch/jobs/{id} and /dispatch/jobs/{id}/{action}.
+	parts := strings.Split(trimmed, "/")
+	if len(parts) == 1 {
+		return parts[0], "", true
+	}
+	if len(parts) == 2 {
+		return parts[0], parts[1], true
+	}
+	return "", "", false
+}
+
+func respondLifecycleError(w http.ResponseWriter, err error) {
+	if err == application.ErrJobNotFound {
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+}
+
+func (s stopRequest) toDomain() domain.JobStop {
+	return domain.JobStop{
+		Address:      s.Address,
+		ContactName:  s.ContactName,
+		ContactPhone: s.ContactPhone,
+		Latitude:     s.Latitude,
+		Longitude:    s.Longitude,
+		Notes:        s.Notes,
+	}
+}
+
+func (t timeWindowRequest) toDomain() (domain.JobTimeWindow, error) {
+	pickupStart, err := parseTimeValue(t.PickupStart)
+	if err != nil {
+		return domain.JobTimeWindow{}, err
+	}
+	pickupEnd, err := parseTimeValue(t.PickupEnd)
+	if err != nil {
+		return domain.JobTimeWindow{}, err
+	}
+	dropoffStart, err := parseTimeValue(t.DropoffStart)
+	if err != nil {
+		return domain.JobTimeWindow{}, err
+	}
+	dropoffEnd, err := parseTimeValue(t.DropoffEnd)
+	if err != nil {
+		return domain.JobTimeWindow{}, err
+	}
+
+	return domain.JobTimeWindow{
+		PickupStart:  pickupStart,
+		PickupEnd:    pickupEnd,
+		DropoffStart: dropoffStart,
+		DropoffEnd:   dropoffEnd,
+	}, nil
+}
+
+func parseTimeValue(value *string) (*time.Time, error) {
+	if value == nil {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil, nil
+	}
+
+	parsed, err := time.Parse(time.RFC3339, trimmed)
+	if err != nil {
+		return nil, err
+	}
+	parsedUTC := parsed.UTC()
+	return &parsedUTC, nil
 }
 
 func respondJSON(w http.ResponseWriter, status int, payload any) {

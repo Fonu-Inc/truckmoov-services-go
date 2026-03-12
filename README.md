@@ -42,9 +42,28 @@ make docker-buildx-push IMAGE_REPO=ghcr.io/<org>/truckmoov IMAGE_TAG=<tag> PUSH_
 - `GET http://localhost:3004/tracking/health`
 - `GET http://localhost:3005/dispatch/health`
 
+## Dispatch API docs
+- `GET http://localhost:3005/dispatch/docs` (Swagger UI)
+- `GET http://localhost:3005/dispatch/docs/openapi.json` (OpenAPI spec)
+- Kong unified docs URL: `GET http://localhost:8000/docs/dispatch`
+
+## Dispatch lifecycle endpoints (Epic D)
+- `POST /dispatch/jobs` create job (pickup/dropoff).
+- `PATCH /dispatch/jobs/{job_id}/scheduling` set priority/time windows.
+- `POST /dispatch/jobs/{job_id}/assign` assign/reassign driver + vehicle.
+- `POST /dispatch/jobs/{job_id}/cancel` cancel with reason.
+- `POST /dispatch/jobs/{job_id}/acknowledge` driver acknowledgement.
+- `POST /dispatch/jobs/{job_id}/status` update status (`en-route|arrived|loaded|delivered`).
+- `GET /dispatch/jobs/{job_id}` fetch job details.
+- `GET /dispatch/jobs/{job_id}/timeline` fetch lifecycle history.
+- `POST /dispatch/jobs/{job_id}/pod-attachments` add proof-of-delivery attachment.
+- `POST /dispatch/jobs/{job_id}/notes` add dispatcher note.
+- `POST /dispatch/jobs/status` legacy compatibility endpoint for direct status event publishing.
+
 ## Event topics (examples)
 - `tm.<tenant>.vehicle.location.updated`
 - `tm.<tenant>.job.status.changed`
+- `tm.<tenant>.driver.job.instruction`
 - `tm.<tenant>.alert.triggered`
 - `tm.<tenant>.message.delivery.updated`
 
@@ -58,6 +77,6 @@ Source of truth is under `api/proto`:
 - Bounded contexts: `dispatch`, `tracking`, `notification`
 - DDD architecture guide: `docs/ddd-architecture.md`
 - Implemented layered slices:
-  - `internal/dispatch` (`job.status.changed`)
+  - `internal/dispatch` (`job.lifecycle`, `job.status.changed`)
   - `internal/tracking` (`vehicle.location.updated`, `alert.triggered`)
   - `internal/notification` (`message.delivery.updated`, outbox+retry)

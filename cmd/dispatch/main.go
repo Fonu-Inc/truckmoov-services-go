@@ -46,9 +46,20 @@ func main() {
 		infrastructure.TimeIDGenerator{},
 		cfg.DefaultTenant,
 	)
+	jobRepository := infrastructure.NewInMemoryJobRepository()
+	driverInstructionNotifier := infrastructure.NewDriverInstructionNotifier(bus)
+	jobLifecycleUseCase := application.NewJobLifecycleUseCase(
+		jobRepository,
+		publishJobStatusUseCase,
+		driverInstructionNotifier,
+		infrastructure.SystemClock{},
+		infrastructure.TimeIDGenerator{},
+		cfg.DefaultTenant,
+	)
 
 	handler := dispatchhttp.NewHandler(
 		publishJobStatusUseCase,
+		jobLifecycleUseCase,
 		trackinggrpc.NewStubTrackingClient(),
 	)
 
