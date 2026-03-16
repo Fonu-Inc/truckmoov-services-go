@@ -52,6 +52,7 @@ func (f *fakeDriverInstructionNotifier) NotifyJobInstruction(
 func buildDispatchTestHandler() *Handler {
 	clock := fixedDispatchClock{now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)}
 	ids := &sequenceDispatchID{}
+	repository := infrastructure.NewInMemoryJobRepository()
 	publishUseCase := application.NewPublishJobStatusChangedUseCase(
 		&fakeJobStatusPublisher{},
 		clock,
@@ -59,15 +60,16 @@ func buildDispatchTestHandler() *Handler {
 		"default",
 	)
 	lifecycleUseCase := application.NewJobLifecycleUseCase(
-		infrastructure.NewInMemoryJobRepository(),
+		repository,
 		publishUseCase,
 		&fakeDriverInstructionNotifier{},
 		clock,
 		ids,
 		"default",
 	)
+	routingUseCase := application.NewRoutingUseCase(repository, clock, "default")
 
-	return NewHandler(publishUseCase, lifecycleUseCase, trackinggrpc.NewStubTrackingClient())
+	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase, trackinggrpc.NewStubTrackingClient())
 }
 
 func dispatchRequest(
@@ -109,6 +111,11 @@ func TestHandler_UpdateStatusContract(t *testing.T) {
 			&fakeDriverInstructionNotifier{},
 			fixedDispatchClock{now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)},
 			fixedDispatchID{id: "evt-1"},
+			"default",
+		),
+		application.NewRoutingUseCase(
+			infrastructure.NewInMemoryJobRepository(),
+			fixedDispatchClock{now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)},
 			"default",
 		),
 		trackinggrpc.NewStubTrackingClient(),
@@ -327,5 +334,161 @@ func TestHandler_DocsContract(t *testing.T) {
 		if payload["openapi"] != "3.0.3" {
 			t.Fatalf("openapi path %s expected openapi=3.0.3", path)
 		}
+	}
+}
+
+func TestHandler_SuggestRouteContract(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"job_id":"job-route-1",
+			"pickup":{"address":"Apapa Port","latitude":6.4448,"longitude":3.3649},
+			"dropoff":{"address":"Lekki Free Zone","latitude":6.4294,"longitude":4.0096},
+			"required_vehicle_type":"flatbed",
+			"load_weight_kg":5000,
+			"load_volume_m3":12,
+			"estimated_service_minutes":20,
+			"priority":"high"
+		}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d", http.StatusCreated, createRes.Code)
+	}
+
+	routeRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/routes/suggest",
+		`{
+			"job_id":"job-route-1",
+			"origin":{"address":"Truck Yard","latitude":6.4550,"longitude":3.3958},
+			"vehicle":{"vehicle_id":"veh-1","vehicle_type":"flatbed","capacity_weight_kg":7000,"capacity_volume_m3":20,"average_speed_kph":40},
+			"driver_shift":{"start":"2026-01-01T09:00:00Z","end":"2026-01-01T18:00:00Z"}
+		}`,
+	)
+	if routeRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, routeRes.Code, routeRes.Body.String())
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(routeRes.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload["feasible"] != true {
+		t.Fatalf("expected feasible route, got %v", payload["feasible"])
+	}
+	steps, ok := payload["ordered_steps"].([]any)
+	if !ok || len(steps) != 2 {
+		t.Fatalf("expected 2 ordered steps, got %#v", payload["ordered_steps"])
+	}
+}
+
+func TestHandler_OptimizeRouteContract(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	for _, body := range []string{
+		`{"job_id":"job-a","pickup":{"address":"Apapa","latitude":6.4500,"longitude":3.3600},"dropoff":{"address":"Victoria Island","latitude":6.4281,"longitude":3.4219},"priority":"normal"}`,
+		`{"job_id":"job-b","pickup":{"address":"Ikeja","latitude":6.6018,"longitude":3.3515},"dropoff":{"address":"Yaba","latitude":6.5095,"longitude":3.3711},"priority":"critical"}`,
+	} {
+		res := dispatchRequest(t, mux, http.MethodPost, "/dispatch/jobs", body)
+		if res.Code != http.StatusCreated {
+			t.Fatalf("expected status %d, got %d", http.StatusCreated, res.Code)
+		}
+	}
+
+	routeRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/routes/optimize",
+		`{
+			"job_ids":["job-a","job-b"],
+			"origin":{"address":"Ojota","latitude":6.5841,"longitude":3.3792},
+			"vehicle":{"vehicle_id":"veh-2","vehicle_type":"van","capacity_weight_kg":9000,"capacity_volume_m3":30,"average_speed_kph":35},
+			"driver_shift":{"start":"2026-01-01T10:00:00Z","end":"2026-01-01T22:00:00Z"}
+		}`,
+	)
+	if routeRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, routeRes.Code, routeRes.Body.String())
+	}
+
+	var payload struct {
+		OrderedSteps []struct {
+			JobID    string `json:"job_id"`
+			StopType string `json:"stop_type"`
+		} `json:"ordered_steps"`
+	}
+	if err := json.Unmarshal(routeRes.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(payload.OrderedSteps) != 4 {
+		t.Fatalf("expected 4 steps, got %d", len(payload.OrderedSteps))
+	}
+	if payload.OrderedSteps[0].JobID != "job-b" || payload.OrderedSteps[0].StopType != "pickup" {
+		t.Fatalf("expected job-b pickup first due to proximity/priority, got %+v", payload.OrderedSteps[0])
+	}
+}
+
+func TestHandler_OptimizeRouteConstraintViolationReported(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"job_id":"job-heavy",
+			"pickup":{"address":"Port","latitude":6.4448,"longitude":3.3649},
+			"dropoff":{"address":"Warehouse","latitude":6.5244,"longitude":3.3792},
+			"required_vehicle_type":"flatbed",
+			"load_weight_kg":12000,
+			"load_volume_m3":40
+		}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d", http.StatusCreated, createRes.Code)
+	}
+
+	routeRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/routes/suggest",
+		`{
+			"job_id":"job-heavy",
+			"origin":{"address":"Depot","latitude":6.4500,"longitude":3.4000},
+			"vehicle":{"vehicle_id":"veh-3","vehicle_type":"bike","capacity_weight_kg":200,"capacity_volume_m3":1,"average_speed_kph":25},
+			"driver_shift":{"start":"2026-01-01T10:00:00Z","end":"2026-01-01T11:00:00Z"}
+		}`,
+	)
+	if routeRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, routeRes.Code, routeRes.Body.String())
+	}
+
+	var payload struct {
+		Feasible             bool     `json:"feasible"`
+		InfeasibilityReasons []string `json:"infeasibility_reasons"`
+	}
+	if err := json.Unmarshal(routeRes.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if payload.Feasible {
+		t.Fatalf("expected infeasible route")
+	}
+	if len(payload.InfeasibilityReasons) < 2 {
+		t.Fatalf("expected multiple infeasibility reasons, got %#v", payload.InfeasibilityReasons)
 	}
 }

@@ -30,6 +30,23 @@ func (f *fakeLatestLocationRepository) Save(location LatestLocation) error {
 	return nil
 }
 
+func (f *fakeLatestLocationRepository) Get(_, _ string) (*LatestLocation, error) {
+	return nil, nil
+}
+
+type fakeLocationHistoryRepository struct {
+	entry LatestLocation
+}
+
+func (f *fakeLocationHistoryRepository) Append(entry LatestLocation) error {
+	f.entry = entry
+	return nil
+}
+
+func (f *fakeLocationHistoryRepository) History(_, _ string, _ int) ([]LatestLocation, error) {
+	return nil, nil
+}
+
 type fixedTrackingClock struct{ now time.Time }
 
 func (f fixedTrackingClock) Now() time.Time { return f.now }
@@ -41,12 +58,15 @@ func (f fixedTrackingIDGenerator) New(_ string) string { return f.value }
 func TestIngestLocationUseCase_Execute(t *testing.T) {
 	publisher := &fakeTrackingPublisher{}
 	repository := &fakeLatestLocationRepository{}
+	historyRepo := &fakeLocationHistoryRepository{}
 	useCase := NewIngestLocationUseCase(
 		publisher,
 		repository,
 		fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)},
 		fixedTrackingIDGenerator{value: "evt-123"},
 		"default",
+		historyRepo,
+		TelemetryConfig{},
 	)
 
 	result, err := useCase.Execute(context.Background(), IngestLocationCommand{

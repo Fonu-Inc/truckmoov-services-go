@@ -21,9 +21,11 @@ type IngestLocationCommand struct {
 }
 
 type IngestLocationResult struct {
-	Published bool   `json:"published"`
-	Subject   string `json:"subject"`
-	EventID   string `json:"event_id"`
+	Published  bool   `json:"published"`
+	Subject    string `json:"subject,omitempty"`
+	EventID    string `json:"event_id,omitempty"`
+	Skipped    bool   `json:"skipped,omitempty"`
+	SkipReason string `json:"skip_reason,omitempty"`
 }
 
 type IngestLocationUseCase struct {
@@ -32,6 +34,8 @@ type IngestLocationUseCase struct {
 	clock         Clock
 	idGenerator   IDGenerator
 	defaultTenant string
+	historyStore  LocationHistoryRepository
+	telemetry     TelemetryConfig
 }
 
 func NewIngestLocationUseCase(
@@ -40,6 +44,8 @@ func NewIngestLocationUseCase(
 	clock Clock,
 	idGenerator IDGenerator,
 	defaultTenant string,
+	historyStore LocationHistoryRepository,
+	telemetry TelemetryConfig,
 ) *IngestLocationUseCase {
 	return &IngestLocationUseCase{
 		publisher:     publisher,
@@ -47,6 +53,8 @@ func NewIngestLocationUseCase(
 		clock:         clock,
 		idGenerator:   idGenerator,
 		defaultTenant: defaultTenant,
+		historyStore:  historyStore,
+		telemetry:     telemetry,
 	}
 }
 
@@ -62,6 +70,13 @@ func (u *IngestLocationUseCase) Execute(
 	fixTime := command.FixTime
 	if fixTime == "" {
 		fixTime = u.clock.Now().UTC().Format(time.RFC3339)
+	}
+
+	if parsedFix, err := time.Parse(time.RFC3339, fixTime); err == nil {
+		prev, _ := u.locationStore.Get(tenantID, command.VehicleID)
+		if r := applyTelemetryFilter(u.telemetry, prev, command, parsedFix); r.skip {
+			return IngestLocationResult{Skipped: true, SkipReason: r.reason}, nil
+		}
 	}
 
 	locationUpdate, err := domain.NewLocationUpdate(domain.LocationUpdate{
@@ -92,8 +107,25 @@ func (u *IngestLocationUseCase) Execute(
 		AccuracyM:  locationUpdate.AccuracyM,
 		FixTimeRFC: locationUpdate.FixTimeRFC,
 		ObservedAt: locationUpdate.OccurredAt,
+		EventID:    locationUpdate.EventID,
 	}); err != nil {
 		return IngestLocationResult{}, fmt.Errorf("save latest location: %w", err)
+	}
+
+	if err := u.historyStore.Append(LatestLocation{
+		TenantID:   locationUpdate.TenantID,
+		VehicleID:  locationUpdate.VehicleID,
+		DeviceID:   locationUpdate.DeviceID,
+		Latitude:   locationUpdate.Latitude,
+		Longitude:  locationUpdate.Longitude,
+		SpeedKPH:   locationUpdate.SpeedKPH,
+		Heading:    locationUpdate.Heading,
+		AccuracyM:  locationUpdate.AccuracyM,
+		FixTimeRFC: locationUpdate.FixTimeRFC,
+		ObservedAt: locationUpdate.OccurredAt,
+		EventID:    locationUpdate.EventID,
+	}); err != nil {
+		return IngestLocationResult{}, fmt.Errorf("append location history: %w", err)
 	}
 
 	if err := u.publisher.PublishLocationUpdate(ctx, locationUpdate); err != nil {

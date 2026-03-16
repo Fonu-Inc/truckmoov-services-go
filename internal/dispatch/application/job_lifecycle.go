@@ -30,12 +30,16 @@ type DriverInstructionNotifier interface {
 }
 
 type CreateJobCommand struct {
-	TenantID   string
-	JobID      string
-	Pickup     domain.JobStop
-	Dropoff    domain.JobStop
-	Priority   string
-	TimeWindow domain.JobTimeWindow
+	TenantID                string
+	JobID                   string
+	Pickup                  domain.JobStop
+	Dropoff                 domain.JobStop
+	RequiredVehicleType     string
+	LoadWeightKg            float64
+	LoadVolumeM3            float64
+	EstimatedServiceMinutes int
+	Priority                string
+	TimeWindow              domain.JobTimeWindow
 }
 
 type UpdateJobSchedulingCommand struct {
@@ -127,15 +131,19 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 	}
 
 	job, err := domain.NewJob(domain.Job{
-		ID:         jobID,
-		TenantID:   tenantID,
-		Pickup:     command.Pickup,
-		Dropoff:    command.Dropoff,
-		Priority:   priority,
-		TimeWindow: command.TimeWindow,
-		Status:     domain.StatusCreated,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:                      jobID,
+		TenantID:                tenantID,
+		Pickup:                  command.Pickup,
+		Dropoff:                 command.Dropoff,
+		RequiredVehicleType:     command.RequiredVehicleType,
+		LoadWeightKg:            command.LoadWeightKg,
+		LoadVolumeM3:            command.LoadVolumeM3,
+		EstimatedServiceMinutes: command.EstimatedServiceMinutes,
+		Priority:                priority,
+		TimeWindow:              command.TimeWindow,
+		Status:                  domain.StatusCreated,
+		CreatedAt:               now,
+		UpdatedAt:               now,
 		Timeline: []domain.JobTimelineEntry{
 			{
 				ID:         u.idGenerator.New(),

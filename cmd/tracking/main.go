@@ -43,13 +43,20 @@ func main() {
 	eventPublisher := infrastructure.NewEventPublisher(bus)
 	clock := infrastructure.SystemClock{}
 	idGenerator := infrastructure.TimeIDGenerator{}
+	latestLocationStore := infrastructure.NewRedisLatestLocationRepository(redisClient, cfg.LatestTTLSeconds)
+	historyStore := infrastructure.NewRedisLocationHistoryRepository(redisClient, cfg.HistoryTTLSeconds)
 
 	ingestLocationUseCase := application.NewIngestLocationUseCase(
 		eventPublisher,
-		infrastructure.NewRedisLatestLocationRepository(redisClient),
+		latestLocationStore,
 		clock,
 		idGenerator,
 		cfg.DefaultTenant,
+		historyStore,
+		application.TelemetryConfig{
+			MaxAccuracyM: cfg.MaxAccuracyM,
+			MaxSpeedKPH:  cfg.MaxSpeedKPH,
+		},
 	)
 	publishAlertUseCase := application.NewPublishAlertUseCase(
 		eventPublisher,
@@ -58,10 +65,17 @@ func main() {
 		cfg.DefaultTenant,
 	)
 
-	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase)
+	trackingQueryUseCase := application.NewTrackingQueryUseCase(
+		latestLocationStore,
+		historyStore,
+		cfg.DefaultTenant,
+	)
+
+	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, cfg.GPSAPIKey)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	handlerWithCORS := httpx.WithCORS(mux, cfg.CORSOrigins)
+	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
 
 	// cmd/tracking is kept as composition root only: all business rules live in internal/tracking.
 	if runErr := httpx.Run(ctx, ":"+cfg.Port, httpx.WithLogging(handlerWithCORS, log), log); runErr != nil {

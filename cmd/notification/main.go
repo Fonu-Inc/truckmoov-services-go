@@ -62,6 +62,11 @@ func main() {
 		idGenerator,
 	)
 
+	consumeNotificationUseCase := application.NewConsumeNotificationUseCase(sendMessageUseCase, log)
+	if _, subErr := bus.Subscribe(ctx, "tm.*.notification.send", "notification-send", consumeNotificationUseCase.Handle); subErr != nil {
+		log.Warn("notification_subscribe_failed", "error", subErr.Error())
+	}
+
 	handler := notificationhttp.NewHandler(sendMessageUseCase, retryMessageUseCase)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)

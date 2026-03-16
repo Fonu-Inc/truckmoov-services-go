@@ -68,22 +68,26 @@ type JobTimelineEntry struct {
 }
 
 type Job struct {
-	ID                 string             `json:"id"`
-	TenantID           string             `json:"tenant_id"`
-	Pickup             JobStop            `json:"pickup"`
-	Dropoff            JobStop            `json:"dropoff"`
-	Priority           JobPriority        `json:"priority"`
-	TimeWindow         JobTimeWindow      `json:"time_window"`
-	Status             JobStatus          `json:"status"`
-	AssignedDriverID   string             `json:"assigned_driver_id,omitempty"`
-	AssignedVehicleID  string             `json:"assigned_vehicle_id,omitempty"`
-	CancellationReason string             `json:"cancellation_reason,omitempty"`
-	AcknowledgedAt     *time.Time         `json:"acknowledged_at,omitempty"`
-	Notes              []JobNote          `json:"notes"`
-	PODAttachments     []JobPODAttachment `json:"pod_attachments"`
-	Timeline           []JobTimelineEntry `json:"timeline"`
-	CreatedAt          time.Time          `json:"created_at"`
-	UpdatedAt          time.Time          `json:"updated_at"`
+	ID                      string             `json:"id"`
+	TenantID                string             `json:"tenant_id"`
+	Pickup                  JobStop            `json:"pickup"`
+	Dropoff                 JobStop            `json:"dropoff"`
+	RequiredVehicleType     string             `json:"required_vehicle_type,omitempty"`
+	LoadWeightKg            float64            `json:"load_weight_kg,omitempty"`
+	LoadVolumeM3            float64            `json:"load_volume_m3,omitempty"`
+	EstimatedServiceMinutes int                `json:"estimated_service_minutes,omitempty"`
+	Priority                JobPriority        `json:"priority"`
+	TimeWindow              JobTimeWindow      `json:"time_window"`
+	Status                  JobStatus          `json:"status"`
+	AssignedDriverID        string             `json:"assigned_driver_id,omitempty"`
+	AssignedVehicleID       string             `json:"assigned_vehicle_id,omitempty"`
+	CancellationReason      string             `json:"cancellation_reason,omitempty"`
+	AcknowledgedAt          *time.Time         `json:"acknowledged_at,omitempty"`
+	Notes                   []JobNote          `json:"notes"`
+	PODAttachments          []JobPODAttachment `json:"pod_attachments"`
+	Timeline                []JobTimelineEntry `json:"timeline"`
+	CreatedAt               time.Time          `json:"created_at"`
+	UpdatedAt               time.Time          `json:"updated_at"`
 }
 
 func NewJob(params Job) (Job, error) {
@@ -101,6 +105,15 @@ func NewJob(params Job) (Job, error) {
 	}
 	if params.CreatedAt.IsZero() || params.UpdatedAt.IsZero() {
 		return Job{}, errors.New("created_at and updated_at are required")
+	}
+	if params.LoadWeightKg < 0 {
+		return Job{}, errors.New("load_weight_kg cannot be negative")
+	}
+	if params.LoadVolumeM3 < 0 {
+		return Job{}, errors.New("load_volume_m3 cannot be negative")
+	}
+	if params.EstimatedServiceMinutes < 0 {
+		return Job{}, errors.New("estimated_service_minutes cannot be negative")
 	}
 
 	priority, err := NormalizePriority(string(params.Priority))
@@ -121,22 +134,26 @@ func NewJob(params Job) (Job, error) {
 	}
 
 	job := Job{
-		ID:                 strings.TrimSpace(params.ID),
-		TenantID:           strings.TrimSpace(params.TenantID),
-		Pickup:             normalizeStop(params.Pickup),
-		Dropoff:            normalizeStop(params.Dropoff),
-		Priority:           priority,
-		TimeWindow:         params.TimeWindow,
-		Status:             status,
-		AssignedDriverID:   strings.TrimSpace(params.AssignedDriverID),
-		AssignedVehicleID:  strings.TrimSpace(params.AssignedVehicleID),
-		CancellationReason: strings.TrimSpace(params.CancellationReason),
-		AcknowledgedAt:     params.AcknowledgedAt,
-		Notes:              append([]JobNote{}, params.Notes...),
-		PODAttachments:     append([]JobPODAttachment{}, params.PODAttachments...),
-		Timeline:           append([]JobTimelineEntry{}, params.Timeline...),
-		CreatedAt:          params.CreatedAt.UTC(),
-		UpdatedAt:          params.UpdatedAt.UTC(),
+		ID:                      strings.TrimSpace(params.ID),
+		TenantID:                strings.TrimSpace(params.TenantID),
+		Pickup:                  normalizeStop(params.Pickup),
+		Dropoff:                 normalizeStop(params.Dropoff),
+		RequiredVehicleType:     strings.TrimSpace(params.RequiredVehicleType),
+		LoadWeightKg:            params.LoadWeightKg,
+		LoadVolumeM3:            params.LoadVolumeM3,
+		EstimatedServiceMinutes: params.EstimatedServiceMinutes,
+		Priority:                priority,
+		TimeWindow:              params.TimeWindow,
+		Status:                  status,
+		AssignedDriverID:        strings.TrimSpace(params.AssignedDriverID),
+		AssignedVehicleID:       strings.TrimSpace(params.AssignedVehicleID),
+		CancellationReason:      strings.TrimSpace(params.CancellationReason),
+		AcknowledgedAt:          params.AcknowledgedAt,
+		Notes:                   append([]JobNote{}, params.Notes...),
+		PODAttachments:          append([]JobPODAttachment{}, params.PODAttachments...),
+		Timeline:                append([]JobTimelineEntry{}, params.Timeline...),
+		CreatedAt:               params.CreatedAt.UTC(),
+		UpdatedAt:               params.UpdatedAt.UTC(),
 	}
 
 	return job, nil

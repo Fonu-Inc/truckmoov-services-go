@@ -11,6 +11,7 @@ import (
 
 	"github.com/truckmoov/services-go/internal/tracking/application"
 	"github.com/truckmoov/services-go/internal/tracking/domain"
+	"github.com/truckmoov/services-go/internal/tracking/infrastructure"
 )
 
 type fakeTrackingPublisher struct{}
@@ -23,12 +24,6 @@ func (f *fakeTrackingPublisher) PublishAlertTriggered(_ context.Context, _ domai
 	return nil
 }
 
-type fakeLocationRepo struct{}
-
-func (f *fakeLocationRepo) Save(_ application.LatestLocation) error {
-	return nil
-}
-
 type fixedTrackingClock struct{ now time.Time }
 
 func (f fixedTrackingClock) Now() time.Time { return f.now }
@@ -37,20 +32,39 @@ type fixedTrackingID struct{ value string }
 
 func (f fixedTrackingID) New(prefix string) string { return prefix + "-" + f.value }
 
-func TestHandler_IngestContract(t *testing.T) {
+func buildTrackingTestHandler() *Handler {
 	clock := fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)}
-	id := fixedTrackingID{value: "1"}
+	ids := fixedTrackingID{value: "1"}
 	publisher := &fakeTrackingPublisher{}
 
+	latestRepo := infrastructure.NewInMemoryLatestLocationRepository()
+	historyRepo := infrastructure.NewInMemoryLocationHistoryRepository()
 	ingestUseCase := application.NewIngestLocationUseCase(
 		publisher,
-		&fakeLocationRepo{},
+		latestRepo,
 		clock,
-		id,
+		ids,
+		"default",
+		historyRepo,
+		application.TelemetryConfig{},
+	)
+	alertUseCase := application.NewPublishAlertUseCase(
+		publisher,
+		clock,
+		ids,
 		"default",
 	)
-	alertUseCase := application.NewPublishAlertUseCase(publisher, clock, id, "default")
-	handler := NewHandler(ingestUseCase, alertUseCase)
+	queryUseCase := application.NewTrackingQueryUseCase(
+		latestRepo,
+		historyRepo,
+		"default",
+	)
+
+	return NewHandler(ingestUseCase, alertUseCase, queryUseCase, "")
+}
+
+func TestHandler_IngestContract(t *testing.T) {
+	handler := buildTrackingTestHandler()
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -76,19 +90,7 @@ func TestHandler_IngestContract(t *testing.T) {
 }
 
 func TestHandler_WebsocketPlaceholderContract(t *testing.T) {
-	clock := fixedTrackingClock{now: time.Now()}
-	id := fixedTrackingID{value: "2"}
-	publisher := &fakeTrackingPublisher{}
-
-	ingestUseCase := application.NewIngestLocationUseCase(
-		publisher,
-		&fakeLocationRepo{},
-		clock,
-		id,
-		"default",
-	)
-	alertUseCase := application.NewPublishAlertUseCase(publisher, clock, id, "default")
-	handler := NewHandler(ingestUseCase, alertUseCase)
+	handler := buildTrackingTestHandler()
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -100,5 +102,83 @@ func TestHandler_WebsocketPlaceholderContract(t *testing.T) {
 
 	if res.Code != http.StatusNotImplemented {
 		t.Fatalf("expected status %d, got %d", http.StatusNotImplemented, res.Code)
+	}
+}
+
+func TestHandler_ListVehiclesContract(t *testing.T) {
+	handler := buildTrackingTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	body := bytes.NewBufferString(`{"tenant_id":"tenant-1","vehicle_id":"vehicle-1","device_id":"device-1","lat":6.5,"lng":3.4}`)
+	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", body)
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	mux.ServeHTTP(res, req)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d", http.StatusAccepted, res.Code)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/tracking/vehicles?tenant_id=tenant-1", nil)
+	listRes := httptest.NewRecorder()
+	mux.ServeHTTP(listRes, listReq)
+	if listRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, listRes.Code)
+	}
+	var payload struct {
+		Vehicles []map[string]any `json:"vehicles"`
+	}
+	if err := json.Unmarshal(listRes.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(payload.Vehicles) != 1 {
+		t.Fatalf("expected 1 vehicle, got %#v", payload.Vehicles)
+	}
+	if payload.Vehicles[0]["vehicle_id"] != "vehicle-1" {
+		t.Fatalf("unexpected vehicle id %#v", payload.Vehicles[0]["vehicle_id"])
+	}
+}
+
+func TestHandler_VehicleHistoryContract(t *testing.T) {
+	handler := buildTrackingTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	lines := []string{
+		`{"tenant_id":"tenant-2","vehicle_id":"vehicle-2","device_id":"device-2","lat":6.6,"lng":3.7,"fix_time":"2026-02-02T11:00:00Z"}`,
+		`{"tenant_id":"tenant-2","vehicle_id":"vehicle-2","device_id":"device-2","lat":6.7,"lng":3.8,"fix_time":"2026-02-02T11:05:00Z"}`,
+	}
+	for _, payload := range lines {
+		req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+		res := httptest.NewRecorder()
+		mux.ServeHTTP(res, req)
+		if res.Code != http.StatusAccepted {
+			t.Fatalf("ingest expected %d, got %d payload=%s", http.StatusAccepted, res.Code, payload)
+		}
+	}
+
+	historyReq := httptest.NewRequest(http.MethodGet, "/tracking/vehicles/vehicle-2/history?tenant_id=tenant-2&limit=1", nil)
+	historyRes := httptest.NewRecorder()
+	mux.ServeHTTP(historyRes, historyReq)
+	if historyRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, historyRes.Code)
+	}
+
+	var historyPayload struct {
+		VehicleID string           `json:"vehicle_id"`
+		History   []map[string]any `json:"history"`
+	}
+	if err := json.Unmarshal(historyRes.Body.Bytes(), &historyPayload); err != nil {
+		t.Fatalf("failed to decode history response: %v", err)
+	}
+	if historyPayload.VehicleID != "vehicle-2" {
+		t.Fatalf("expected vehicle-2 returned, got %s", historyPayload.VehicleID)
+	}
+	if len(historyPayload.History) != 1 {
+		t.Fatalf("expected 1 history entry, got %d", len(historyPayload.History))
+	}
+	if historyPayload.History[0]["fix_time"] != "2026-02-02T11:05:00Z" {
+		t.Fatalf("expected most recent fix_time, got %#v", historyPayload.History[0]["fix_time"])
 	}
 }

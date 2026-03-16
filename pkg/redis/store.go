@@ -43,6 +43,11 @@ func (s *Store) Set(key string, value []byte) error {
 	return err
 }
 
+func (s *Store) SetEX(key string, value []byte, ttlSeconds int) error {
+	_, err := s.do("SET", key, string(value), "EX", strconv.Itoa(ttlSeconds))
+	return err
+}
+
 func (s *Store) Get(key string) ([]byte, bool, error) {
 	reply, err := s.do("GET", key)
 	if err != nil {

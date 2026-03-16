@@ -40,12 +40,16 @@ type timeWindowRequest struct {
 }
 
 type createJobRequest struct {
-	TenantID   string            `json:"tenant_id,omitempty"`
-	JobID      string            `json:"job_id,omitempty"`
-	Pickup     stopRequest       `json:"pickup"`
-	Dropoff    stopRequest       `json:"dropoff"`
-	Priority   string            `json:"priority,omitempty"`
-	TimeWindow timeWindowRequest `json:"time_window,omitempty"`
+	TenantID                string            `json:"tenant_id,omitempty"`
+	JobID                   string            `json:"job_id,omitempty"`
+	Pickup                  stopRequest       `json:"pickup"`
+	Dropoff                 stopRequest       `json:"dropoff"`
+	RequiredVehicleType     string            `json:"required_vehicle_type,omitempty"`
+	LoadWeightKg            float64           `json:"load_weight_kg,omitempty"`
+	LoadVolumeM3            float64           `json:"load_volume_m3,omitempty"`
+	EstimatedServiceMinutes int               `json:"estimated_service_minutes,omitempty"`
+	Priority                string            `json:"priority,omitempty"`
+	TimeWindow              timeWindowRequest `json:"time_window,omitempty"`
 }
 
 type updateJobSchedulingRequest struct {
@@ -89,9 +93,48 @@ type addJobNoteRequest struct {
 	AuthorID string `json:"author_id,omitempty"`
 }
 
+type routeLocationRequest struct {
+	Label     string  `json:"label,omitempty"`
+	Address   string  `json:"address,omitempty"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+
+type vehicleProfileRequest struct {
+	VehicleID        string  `json:"vehicle_id,omitempty"`
+	VehicleType      string  `json:"vehicle_type,omitempty"`
+	CapacityWeightKg float64 `json:"capacity_weight_kg,omitempty"`
+	CapacityVolumeM3 float64 `json:"capacity_volume_m3,omitempty"`
+	AverageSpeedKPH  float64 `json:"average_speed_kph,omitempty"`
+}
+
+type driverShiftRequest struct {
+	Start *string `json:"start,omitempty"`
+	End   *string `json:"end,omitempty"`
+}
+
+type suggestRouteRequest struct {
+	TenantID      string                `json:"tenant_id,omitempty"`
+	JobID         string                `json:"job_id"`
+	Origin        routeLocationRequest  `json:"origin"`
+	Vehicle       vehicleProfileRequest `json:"vehicle"`
+	DriverShift   driverShiftRequest    `json:"driver_shift,omitempty"`
+	DepartureTime *string               `json:"departure_time,omitempty"`
+}
+
+type optimizeRouteRequest struct {
+	TenantID      string                `json:"tenant_id,omitempty"`
+	JobIDs        []string              `json:"job_ids"`
+	Origin        routeLocationRequest  `json:"origin"`
+	Vehicle       vehicleProfileRequest `json:"vehicle"`
+	DriverShift   driverShiftRequest    `json:"driver_shift,omitempty"`
+	DepartureTime *string               `json:"departure_time,omitempty"`
+}
+
 type Handler struct {
 	publishJobStatusUseCase *application.PublishJobStatusChangedUseCase
 	jobLifecycleUseCase     *application.JobLifecycleUseCase
+	routingUseCase          *application.RoutingUseCase
 	trackingClient          trackinggrpc.TrackingClient
 
 	mu              sync.RWMutex
@@ -101,11 +144,13 @@ type Handler struct {
 func NewHandler(
 	publishJobStatusUseCase *application.PublishJobStatusChangedUseCase,
 	jobLifecycleUseCase *application.JobLifecycleUseCase,
+	routingUseCase *application.RoutingUseCase,
 	trackingClient trackinggrpc.TrackingClient,
 ) *Handler {
 	return &Handler{
 		publishJobStatusUseCase: publishJobStatusUseCase,
 		jobLifecycleUseCase:     jobLifecycleUseCase,
+		routingUseCase:          routingUseCase,
 		trackingClient:          trackingClient,
 		latestLocations:         make(map[string]map[string]any),
 	}
@@ -113,16 +158,20 @@ func NewHandler(
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/dispatch/health", h.health)
+	mux.HandleFunc("/dispatch/ready", h.ready)
+	mux.HandleFunc("/health", h.health)
+	mux.HandleFunc("/ready", h.ready)
 	mux.HandleFunc("/dispatch/docs", h.docsUI)
 	mux.HandleFunc("/dispatch/docs/openapi.json", h.docsOpenAPI)
 	mux.HandleFunc("/docs/dispatch", h.docsUI)
 	mux.HandleFunc("/docs/dispatch/openapi.json", h.docsOpenAPI)
 	mux.HandleFunc("/dispatch/jobs", h.jobsCollection)
 	mux.HandleFunc("/dispatch/jobs/", h.jobResource)
+	mux.HandleFunc("/dispatch/routes/suggest", h.suggestRoute)
+	mux.HandleFunc("/dispatch/routes/optimize", h.optimizeRoute)
 	// Legacy contract kept for existing integrations that publish status events directly.
 	mux.HandleFunc("/dispatch/jobs/status", h.updateStatus)
 	mux.HandleFunc("/dispatch/eta", h.computeETA)
-	mux.HandleFunc("/health", h.health)
 }
 
 func (h *Handler) HandleLocationEvent(_ context.Context, payload map[string]any) error {
@@ -143,6 +192,17 @@ func (h *Handler) HandleLocationEvent(_ context.Context, payload map[string]any)
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"status": "ok", "service": "dispatch"})
+}
+
+func (h *Handler) ready(w http.ResponseWriter, _ *http.Request) {
+	ready := h.jobLifecycleUseCase != nil
+	status := http.StatusOK
+	if !ready {
+		status = http.StatusServiceUnavailable
+	}
+	respondJSON(w, status, map[string]any{"ready": ready, "checks": map[string]string{
+		"job_lifecycle": map[bool]string{true: "ok", false: "not initialised"}[ready],
+	}})
 }
 
 func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
@@ -169,12 +229,16 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job, err := h.jobLifecycleUseCase.CreateJob(r.Context(), application.CreateJobCommand{
-		TenantID:   req.TenantID,
-		JobID:      req.JobID,
-		Pickup:     req.Pickup.toDomain(),
-		Dropoff:    req.Dropoff.toDomain(),
-		Priority:   req.Priority,
-		TimeWindow: timeWindow,
+		TenantID:                req.TenantID,
+		JobID:                   req.JobID,
+		Pickup:                  req.Pickup.toDomain(),
+		Dropoff:                 req.Dropoff.toDomain(),
+		RequiredVehicleType:     req.RequiredVehicleType,
+		LoadWeightKg:            req.LoadWeightKg,
+		LoadVolumeM3:            req.LoadVolumeM3,
+		EstimatedServiceMinutes: req.EstimatedServiceMinutes,
+		Priority:                req.Priority,
+		TimeWindow:              timeWindow,
 	})
 	if err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -472,13 +536,123 @@ func (h *Handler) computeETA(w http.ResponseWriter, r *http.Request) {
 	jobID := r.URL.Query().Get("job_id")
 	destination := r.URL.Query().Get("destination")
 
+	if h.routingUseCase != nil && strings.TrimSpace(jobID) != "" {
+		if origin, ok := h.lookupVehicleLocation(vehicleID); ok {
+			plan, err := h.routingUseCase.EstimateETAFromLocation(
+				r.Context(),
+				r.URL.Query().Get("tenant_id"),
+				jobID,
+				origin,
+				application.RouteVehicleProfile{VehicleID: vehicleID},
+			)
+			if err == nil {
+				respondJSON(w, http.StatusOK, map[string]any{
+					"eta_seconds":           plan.ETASeconds,
+					"distance_km":           plan.TotalDistanceKm,
+					"planned_completion_at": plan.CompletionTime,
+					"source":                "dispatch-routing",
+				})
+				return
+			}
+		}
+	}
+
 	etaSeconds, err := h.trackingClient.ComputeETA(r.Context(), jobID, vehicleID, destination)
 	if err != nil {
 		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{"eta_seconds": etaSeconds})
+	respondJSON(w, http.StatusOK, map[string]any{
+		"eta_seconds": etaSeconds,
+		"source":      "tracking-client",
+	})
+}
+
+func (h *Handler) suggestRoute(w http.ResponseWriter, r *http.Request) {
+	if h.routingUseCase == nil {
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "routing is not configured"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req suggestRouteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	driverShift, err := req.DriverShift.toDomain()
+	if err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	departureTime, err := parseTimeValue(req.DepartureTime)
+	if err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	plan, err := h.routingUseCase.SuggestRoute(r.Context(), application.SuggestRouteCommand{
+		TenantID:      req.TenantID,
+		JobID:         req.JobID,
+		Origin:        req.Origin.toDomain(),
+		Vehicle:       req.Vehicle.toDomain(),
+		DriverShift:   driverShift,
+		DepartureTime: departureTime,
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, plan)
+}
+
+func (h *Handler) optimizeRoute(w http.ResponseWriter, r *http.Request) {
+	if h.routingUseCase == nil {
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "routing is not configured"})
+		return
+	}
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	var req optimizeRouteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	driverShift, err := req.DriverShift.toDomain()
+	if err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	departureTime, err := parseTimeValue(req.DepartureTime)
+	if err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	plan, err := h.routingUseCase.OptimizeRoute(r.Context(), application.OptimizeRouteCommand{
+		TenantID:      req.TenantID,
+		JobIDs:        req.JobIDs,
+		Origin:        req.Origin.toDomain(),
+		Vehicle:       req.Vehicle.toDomain(),
+		DriverShift:   driverShift,
+		DepartureTime: departureTime,
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, plan)
 }
 
 func parseJobResourcePath(path string) (jobID, action string, ok bool) {
@@ -559,6 +733,85 @@ func parseTimeValue(value *string) (*time.Time, error) {
 	}
 	parsedUTC := parsed.UTC()
 	return &parsedUTC, nil
+}
+
+func (d driverShiftRequest) toDomain() (application.DriverShift, error) {
+	start, err := parseTimeValue(d.Start)
+	if err != nil {
+		return application.DriverShift{}, err
+	}
+	end, err := parseTimeValue(d.End)
+	if err != nil {
+		return application.DriverShift{}, err
+	}
+	return application.DriverShift{Start: start, End: end}, nil
+}
+
+func (r routeLocationRequest) toDomain() application.RouteLocation {
+	return application.RouteLocation{
+		Label:     r.Label,
+		Address:   r.Address,
+		Latitude:  r.Latitude,
+		Longitude: r.Longitude,
+	}
+}
+
+func (v vehicleProfileRequest) toDomain() application.RouteVehicleProfile {
+	return application.RouteVehicleProfile{
+		VehicleID:        v.VehicleID,
+		VehicleType:      v.VehicleType,
+		CapacityWeightKg: v.CapacityWeightKg,
+		CapacityVolumeM3: v.CapacityVolumeM3,
+		AverageSpeedKPH:  v.AverageSpeedKPH,
+	}
+}
+
+func (h *Handler) lookupVehicleLocation(vehicleID string) (application.RouteLocation, bool) {
+	h.mu.RLock()
+	payload, ok := h.latestLocations[strings.TrimSpace(vehicleID)]
+	h.mu.RUnlock()
+	if !ok {
+		return application.RouteLocation{}, false
+	}
+
+	latitude, okLat := readFloat(payload["latitude"])
+	longitude, okLon := readFloat(payload["longitude"])
+	if !okLat || !okLon {
+		return application.RouteLocation{}, false
+	}
+
+	return application.RouteLocation{
+		Label:     "vehicle_current_location",
+		Address:   readString(payload["address"]),
+		Latitude:  latitude,
+		Longitude: longitude,
+	}, true
+}
+
+func readFloat(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		number, err := typed.Float64()
+		return number, err == nil
+	case string:
+		number, err := json.Number(strings.TrimSpace(typed)).Float64()
+		return number, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func readString(value any) string {
+	typed, _ := value.(string)
+	return strings.TrimSpace(typed)
 }
 
 func respondJSON(w http.ResponseWriter, status int, payload any) {

@@ -17,6 +17,27 @@ func WithLogging(next http.Handler, log *slog.Logger) http.Handler {
 	})
 }
 
+// WithAPIKey rejects requests to the wrapped handler if the configured key is
+// non-empty and neither the X-Api-Key header nor the api_key query param match.
+func WithAPIKey(next http.Handler, apiKey string) http.Handler {
+	if apiKey == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := r.Header.Get("X-Api-Key")
+		if key == "" {
+			key = r.URL.Query().Get("api_key")
+		}
+		if key != apiKey {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"invalid or missing api key"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func WithCORS(next http.Handler, allowedOrigins []string) http.Handler {
 	normalizedOrigins := normalizeOrigins(allowedOrigins)
 	allowAllOrigins := normalizedOrigins["*"]

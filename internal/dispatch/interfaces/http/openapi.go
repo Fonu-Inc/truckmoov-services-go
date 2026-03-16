@@ -95,6 +95,7 @@ func dispatchOpenAPISpec() map[string]any {
 					"summary":     "Compute ETA",
 					"operationId": "computeETA",
 					"parameters": []map[string]any{
+						{"name": "tenant_id", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "job_id", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "vehicle_id", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "destination", "in": "query", "schema": map[string]any{"type": "string"}},
@@ -107,9 +108,62 @@ func dispatchOpenAPISpec() map[string]any {
 									"schema": map[string]any{
 										"type": "object",
 										"properties": map[string]any{
-											"eta_seconds": map[string]any{"type": "integer"},
+											"eta_seconds":           map[string]any{"type": "integer"},
+											"distance_km":           map[string]any{"type": "number"},
+											"planned_completion_at": map[string]any{"type": "string", "format": "date-time"},
+											"source":                map[string]any{"type": "string"},
 										},
 									},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/dispatch/routes/suggest": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Suggest an optimal route for a job",
+					"operationId": "suggestRoute",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/SuggestRouteRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Route plan",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/RoutePlan"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/dispatch/routes/optimize": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Optimize a multi-stop route across jobs",
+					"operationId": "optimizeRoute",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/OptimizeRouteRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Optimized route plan",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/RoutePlan"},
 								},
 							},
 						},
@@ -480,14 +534,101 @@ func dispatchOpenAPISpec() map[string]any {
 				"CreateJobRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"tenant_id":   map[string]any{"type": "string"},
-						"job_id":      map[string]any{"type": "string"},
-						"pickup":      map[string]any{"$ref": "#/components/schemas/Stop"},
-						"dropoff":     map[string]any{"$ref": "#/components/schemas/Stop"},
-						"priority":    map[string]any{"type": "string", "enum": []string{"low", "normal", "high", "critical"}},
-						"time_window": map[string]any{"$ref": "#/components/schemas/JobTimeWindow"},
+						"tenant_id":                 map[string]any{"type": "string"},
+						"job_id":                    map[string]any{"type": "string"},
+						"pickup":                    map[string]any{"$ref": "#/components/schemas/Stop"},
+						"dropoff":                   map[string]any{"$ref": "#/components/schemas/Stop"},
+						"required_vehicle_type":     map[string]any{"type": "string"},
+						"load_weight_kg":            map[string]any{"type": "number"},
+						"load_volume_m3":            map[string]any{"type": "number"},
+						"estimated_service_minutes": map[string]any{"type": "integer"},
+						"priority":                  map[string]any{"type": "string", "enum": []string{"low", "normal", "high", "critical"}},
+						"time_window":               map[string]any{"$ref": "#/components/schemas/JobTimeWindow"},
 					},
 					"required": []string{"pickup", "dropoff"},
+				},
+				"RouteLocation": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"label":     map[string]any{"type": "string"},
+						"address":   map[string]any{"type": "string"},
+						"latitude":  map[string]any{"type": "number"},
+						"longitude": map[string]any{"type": "number"},
+					},
+					"required": []string{"latitude", "longitude"},
+				},
+				"VehicleProfile": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"vehicle_id":         map[string]any{"type": "string"},
+						"vehicle_type":       map[string]any{"type": "string"},
+						"capacity_weight_kg": map[string]any{"type": "number"},
+						"capacity_volume_m3": map[string]any{"type": "number"},
+						"average_speed_kph":  map[string]any{"type": "number"},
+					},
+				},
+				"DriverShift": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"start": map[string]any{"type": "string", "format": "date-time"},
+						"end":   map[string]any{"type": "string", "format": "date-time"},
+					},
+				},
+				"SuggestRouteRequest": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"tenant_id":      map[string]any{"type": "string"},
+						"job_id":         map[string]any{"type": "string"},
+						"origin":         map[string]any{"$ref": "#/components/schemas/RouteLocation"},
+						"vehicle":        map[string]any{"$ref": "#/components/schemas/VehicleProfile"},
+						"driver_shift":   map[string]any{"$ref": "#/components/schemas/DriverShift"},
+						"departure_time": map[string]any{"type": "string", "format": "date-time"},
+					},
+					"required": []string{"job_id", "origin", "vehicle"},
+				},
+				"OptimizeRouteRequest": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"tenant_id":      map[string]any{"type": "string"},
+						"job_ids":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"origin":         map[string]any{"$ref": "#/components/schemas/RouteLocation"},
+						"vehicle":        map[string]any{"$ref": "#/components/schemas/VehicleProfile"},
+						"driver_shift":   map[string]any{"$ref": "#/components/schemas/DriverShift"},
+						"departure_time": map[string]any{"type": "string", "format": "date-time"},
+					},
+					"required": []string{"job_ids", "origin", "vehicle"},
+				},
+				"RouteStep": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"sequence":                  map[string]any{"type": "integer"},
+						"job_id":                    map[string]any{"type": "string"},
+						"stop_type":                 map[string]any{"type": "string"},
+						"address":                   map[string]any{"type": "string"},
+						"label":                     map[string]any{"type": "string"},
+						"latitude":                  map[string]any{"type": "number"},
+						"longitude":                 map[string]any{"type": "number"},
+						"distance_from_previous_km": map[string]any{"type": "number"},
+						"travel_seconds_from_prev":  map[string]any{"type": "integer"},
+						"arrival_at":                map[string]any{"type": "string", "format": "date-time"},
+						"departure_at":              map[string]any{"type": "string", "format": "date-time"},
+						"eta_seconds":               map[string]any{"type": "integer"},
+					},
+				},
+				"RoutePlan": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"feasible":               map[string]any{"type": "boolean"},
+						"infeasibility_reasons":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"vehicle_id":             map[string]any{"type": "string"},
+						"vehicle_type":           map[string]any{"type": "string"},
+						"departure_time":         map[string]any{"type": "string", "format": "date-time"},
+						"completion_time":        map[string]any{"type": "string", "format": "date-time"},
+						"eta_seconds":            map[string]any{"type": "integer"},
+						"total_distance_km":      map[string]any{"type": "number"},
+						"total_duration_seconds": map[string]any{"type": "integer"},
+						"ordered_steps":          map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/RouteStep"}},
+					},
 				},
 				"UpdateJobSchedulingRequest": map[string]any{
 					"type": "object",
@@ -608,19 +749,23 @@ func dispatchOpenAPISpec() map[string]any {
 				"Job": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"id":                  map[string]any{"type": "string"},
-						"tenant_id":           map[string]any{"type": "string"},
-						"pickup":              map[string]any{"$ref": "#/components/schemas/Stop"},
-						"dropoff":             map[string]any{"$ref": "#/components/schemas/Stop"},
-						"priority":            map[string]any{"type": "string"},
-						"time_window":         map[string]any{"$ref": "#/components/schemas/JobTimeWindow"},
-						"status":              map[string]any{"type": "string"},
-						"assigned_driver_id":  map[string]any{"type": "string"},
-						"assigned_vehicle_id": map[string]any{"type": "string"},
-						"cancellation_reason": map[string]any{"type": "string"},
-						"acknowledged_at":     map[string]any{"type": "string", "format": "date-time"},
-						"created_at":          map[string]any{"type": "string", "format": "date-time"},
-						"updated_at":          map[string]any{"type": "string", "format": "date-time"},
+						"id":                        map[string]any{"type": "string"},
+						"tenant_id":                 map[string]any{"type": "string"},
+						"pickup":                    map[string]any{"$ref": "#/components/schemas/Stop"},
+						"dropoff":                   map[string]any{"$ref": "#/components/schemas/Stop"},
+						"required_vehicle_type":     map[string]any{"type": "string"},
+						"load_weight_kg":            map[string]any{"type": "number"},
+						"load_volume_m3":            map[string]any{"type": "number"},
+						"estimated_service_minutes": map[string]any{"type": "integer"},
+						"priority":                  map[string]any{"type": "string"},
+						"time_window":               map[string]any{"$ref": "#/components/schemas/JobTimeWindow"},
+						"status":                    map[string]any{"type": "string"},
+						"assigned_driver_id":        map[string]any{"type": "string"},
+						"assigned_vehicle_id":       map[string]any{"type": "string"},
+						"cancellation_reason":       map[string]any{"type": "string"},
+						"acknowledged_at":           map[string]any{"type": "string", "format": "date-time"},
+						"created_at":                map[string]any{"type": "string", "format": "date-time"},
+						"updated_at":                map[string]any{"type": "string", "format": "date-time"},
 						"timeline": map[string]any{
 							"type":  "array",
 							"items": map[string]any{"$ref": "#/components/schemas/JobTimelineEntry"},

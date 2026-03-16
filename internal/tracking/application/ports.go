@@ -14,6 +14,16 @@ type TrackingEventPublisher interface {
 
 type LatestLocationRepository interface {
 	Save(location LatestLocation) error
+	Get(tenantID, vehicleID string) (*LatestLocation, error)
+}
+
+type LatestLocationReader interface {
+	List(tenantID string) ([]LatestLocation, error)
+}
+
+type LocationHistoryRepository interface {
+	Append(entry LatestLocation) error
+	History(tenantID, vehicleID string, limit int) ([]LatestLocation, error)
 }
 
 type Clock interface {
@@ -25,14 +35,15 @@ type IDGenerator interface {
 }
 
 type LatestLocation struct {
-	TenantID   string
-	VehicleID  string
-	DeviceID   string
-	Latitude   float64
-	Longitude  float64
-	SpeedKPH   *float64
-	Heading    *float64
-	AccuracyM  *float64
-	FixTimeRFC string
-	ObservedAt time.Time
+	TenantID   string    `json:"tenant_id"`
+	VehicleID  string    `json:"vehicle_id"`
+	DeviceID   string    `json:"device_id"`
+	Latitude   float64   `json:"latitude"`
+	Longitude  float64   `json:"longitude"`
+	SpeedKPH   *float64  `json:"speed_kph,omitempty"`
+	Heading    *float64  `json:"heading,omitempty"`
+	AccuracyM  *float64  `json:"accuracy_m,omitempty"`
+	FixTimeRFC string    `json:"fix_time"`
+	ObservedAt time.Time `json:"observed_at"`
+	EventID    string    `json:"event_id"`
 }
