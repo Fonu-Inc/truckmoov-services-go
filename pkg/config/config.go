@@ -37,9 +37,9 @@ func Load(serviceName, defaultPort string) Config {
 		MaxSpeedKPH:       getEnvFloat("TELEMETRY_MAX_SPEED_KPH", 250.0),
 		HistoryTTLSeconds: getEnvInt("TRACKING_HISTORY_TTL_SECONDS", 7*24*3600),
 		LatestTTLSeconds:  getEnvInt("TRACKING_LATEST_TTL_SECONDS", 30*24*3600),
-		GPSAPIKey:      getEnv("GPS_API_KEY", ""),
-		RateLimitRPS:   getEnvInt("RATE_LIMIT_RPS", 100),
-		RateLimitBurst: getEnvInt("RATE_LIMIT_BURST", 200),
+		GPSAPIKey:         getEnv("GPS_API_KEY", ""),
+		RateLimitRPS:      getEnvInt("RATE_LIMIT_RPS", 100),
+		RateLimitBurst:    getEnvInt("RATE_LIMIT_BURST", 200),
 		CORSOrigins: parseCSVEnv(
 			"CORS_ALLOWED_ORIGINS",
 			"http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000",
