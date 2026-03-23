@@ -5,7 +5,7 @@ metadata:
 data:
   TRACKING_PORT: "3004"
   NATS_URL: nats://nats:4222
-  NATS_STREAM: truckmoov.events
+  NATS_STREAM: truckmoov_events
   DEFAULT_TENANT: default
   REDIS_ADDR: redis:6379
   REDIS_DB: "0"

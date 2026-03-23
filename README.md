@@ -9,11 +9,7 @@ Golang monorepo containing:
 
 ```bash
 cp .env.example .env
-go run ./cmd/notification
-# in another terminal
-go run ./cmd/tracking
-# in another terminal
-go run ./cmd/dispatch
+make dev
 ```
 
 Run quality checks:
@@ -24,6 +20,29 @@ go test ./...
 ## CORS
 - `CORS_ALLOWED_ORIGINS` accepts comma-separated origins.
 - Default local value allows web + Kong dev hosts (`localhost` / `127.0.0.1` on `5173` and `8000`).
+
+## Environment variables
+
+Core vars used by notification, tracking, and dispatch:
+- `NOTIFICATION_PORT`, `TRACKING_PORT`, `DISPATCH_PORT`
+- `DEFAULT_TENANT`
+- `CORS_ALLOWED_ORIGINS`
+- `NATS_URL`, `NATS_STREAM` (use a JetStream-safe stream name such as `truckmoov_events`)
+- `REDIS_ADDR`, `REDIS_DB`
+
+Tracking- and ingest-specific vars:
+- `TELEMETRY_MAX_ACCURACY_M`: discard obviously bad GPS samples above this accuracy threshold.
+- `TELEMETRY_MAX_SPEED_KPH`: reject implausible speed samples.
+- `TRACKING_HISTORY_TTL_SECONDS`: retention for historical location entries.
+- `TRACKING_LATEST_TTL_SECONDS`: retention for latest-known vehicle position cache.
+- `GPS_API_KEY`: reserved for external GPS vendor adapters when enabled.
+
+Shared runtime protection:
+- `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`
+
+Local recommendation:
+- keep `REDIS_ADDR` aligned with the platform repo `REDIS_PORT`
+- keep `NATS_URL` aligned with the platform repo `NATS_CLIENT_PORT`
 
 ## Container Architectures
 - Linux deployments can be either `amd64` or `arm64` (depends on your node pool).
@@ -52,8 +71,10 @@ Runtime state for these services is now backed by Redis instead of per-process i
 - `GET http://localhost:3005/dispatch/health`
 
 ## Dispatch API docs
-- `GET http://localhost:3005/dispatch/docs` (Swagger UI)
-- `GET http://localhost:3005/dispatch/docs/openapi.json` (OpenAPI spec)
+- `GET http://localhost:3005/docs/dispatch` (preferred Swagger UI path)
+- `GET http://localhost:3005/docs/dispatch/openapi.json` (preferred OpenAPI spec path)
+- `GET http://localhost:3005/dispatch/docs` (legacy Swagger UI path)
+- `GET http://localhost:3005/dispatch/docs/openapi.json` (legacy OpenAPI spec path)
 - Kong unified docs URL: `GET http://localhost:8000/docs/dispatch`
 
 ## Dispatch lifecycle endpoints (Epic D)

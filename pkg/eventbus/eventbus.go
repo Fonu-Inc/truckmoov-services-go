@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -44,7 +45,26 @@ type noOpEventBus struct {
 	log *slog.Logger
 }
 
+var invalidJetStreamNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
+var repeatedUnderscores = regexp.MustCompile(`_+`)
+var leadingOrTrailingUnderscores = regexp.MustCompile(`^_+|_+$`)
+
+func sanitizeJetStreamName(streamName string) string {
+	normalized := invalidJetStreamNameChars.ReplaceAllString(streamName, "_")
+	normalized = repeatedUnderscores.ReplaceAllString(normalized, "_")
+	normalized = leadingOrTrailingUnderscores.ReplaceAllString(normalized, "")
+	if normalized == "" {
+		return "truckmoov_events"
+	}
+	return normalized
+}
+
 func New(ctx context.Context, natsURL, streamName string, log *slog.Logger) EventBus {
+	effectiveStreamName := sanitizeJetStreamName(streamName)
+	if effectiveStreamName != streamName {
+		log.Warn("nats_stream_name_sanitized", "configured_stream", streamName, "effective_stream", effectiveStreamName)
+	}
+
 	nc, err := nats.Connect(natsURL, nats.Name("truckmoov-eventbus"))
 	if err != nil {
 		log.Warn("nats_connect_failed_using_noop", "error", err.Error())
@@ -58,9 +78,9 @@ func New(ctx context.Context, natsURL, streamName string, log *slog.Logger) Even
 		return &noOpEventBus{log: log}
 	}
 
-	if _, err = js.StreamInfo(streamName); err != nil {
+	if _, err = js.StreamInfo(effectiveStreamName); err != nil {
 		_, err = js.AddStream(&nats.StreamConfig{
-			Name:     streamName,
+			Name:     effectiveStreamName,
 			Subjects: []string{"tm.*.>"},
 			Storage:  nats.FileStorage,
 		})
@@ -72,8 +92,8 @@ func New(ctx context.Context, natsURL, streamName string, log *slog.Logger) Even
 	}
 
 	_ = ctx
-	log.Info("nats_eventbus_ready", "url", natsURL, "stream", streamName)
-	return &natsEventBus{log: log, nc: nc, js: js, streamName: streamName}
+	log.Info("nats_eventbus_ready", "url", natsURL, "stream", effectiveStreamName)
+	return &natsEventBus{log: log, nc: nc, js: js, streamName: effectiveStreamName}
 }
 
 func (b *natsEventBus) Publish(_ context.Context, subject string, envelope EventEnvelope) error {

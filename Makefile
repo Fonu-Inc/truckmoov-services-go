@@ -5,9 +5,17 @@ IMAGE_TAG ?= local
 LOCAL_PLATFORM ?= linux/amd64
 PUSH_PLATFORMS ?= linux/amd64,linux/arm64
 
-.PHONY: run-notification run-tracking run-dispatch fmt vet proto \
+.PHONY: dev run-notification run-tracking run-dispatch fmt vet proto \
 	docker-build-local docker-build-dispatch docker-build-notification docker-build-tracking \
 	docker-buildx-push docker-buildx-push-dispatch docker-buildx-push-notification docker-buildx-push-tracking
+
+dev:
+	@# Keep the three Go HTTP services available together for local gateway/docs work.
+	@trap 'kill 0' EXIT INT TERM; \
+		go run ./cmd/notification & \
+		go run ./cmd/tracking & \
+		go run ./cmd/dispatch & \
+		wait
 
 run-notification:
 	go run ./cmd/notification

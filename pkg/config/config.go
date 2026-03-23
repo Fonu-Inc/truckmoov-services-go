@@ -29,7 +29,7 @@ func Load(serviceName, defaultPort string) Config {
 		ServiceName:       serviceName,
 		Port:              getEnv(serviceName+"_PORT", defaultPort),
 		NATSURL:           getEnv("NATS_URL", "nats://localhost:4222"),
-		NATSStream:        getEnv("NATS_STREAM", "truckmoov.events"),
+		NATSStream:        getEnv("NATS_STREAM", "truckmoov_events"),
 		DefaultTenant:     getEnv("DEFAULT_TENANT", "default"),
 		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6380"),
 		RedisDB:           getEnv("REDIS_DB", "0"),
