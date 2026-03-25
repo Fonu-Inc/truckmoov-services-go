@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
 )
@@ -32,8 +33,13 @@ type DriverInstructionNotifier interface {
 type CreateJobCommand struct {
 	TenantID                string
 	JobID                   string
+	Reference               string
 	Pickup                  domain.JobStop
 	Dropoff                 domain.JobStop
+	CargoType               string
+	CargoDescription        string
+	AmountNgn               float64
+	Deadline                *time.Time
 	RequiredVehicleType     string
 	LoadWeightKg            float64
 	LoadVolumeM3            float64
@@ -129,18 +135,33 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 	if jobID == "" {
 		jobID = u.idGenerator.New()
 	}
+	reference := strings.TrimSpace(command.Reference)
+	if reference == "" {
+		reference = jobID
+	}
+
+	timeWindow := command.TimeWindow
+	if timeWindow.DropoffEnd == nil && command.Deadline != nil {
+		deadlineUTC := command.Deadline.UTC()
+		timeWindow.DropoffEnd = &deadlineUTC
+	}
 
 	job, err := domain.NewJob(domain.Job{
 		ID:                      jobID,
+		Reference:               reference,
 		TenantID:                tenantID,
 		Pickup:                  command.Pickup,
 		Dropoff:                 command.Dropoff,
+		CargoType:               command.CargoType,
+		CargoDescription:        command.CargoDescription,
+		AmountNgn:               command.AmountNgn,
+		Deadline:                command.Deadline,
 		RequiredVehicleType:     command.RequiredVehicleType,
 		LoadWeightKg:            command.LoadWeightKg,
 		LoadVolumeM3:            command.LoadVolumeM3,
 		EstimatedServiceMinutes: command.EstimatedServiceMinutes,
 		Priority:                priority,
-		TimeWindow:              command.TimeWindow,
+		TimeWindow:              timeWindow,
 		Status:                  domain.StatusCreated,
 		CreatedAt:               now,
 		UpdatedAt:               now,
@@ -416,9 +437,13 @@ func (u *JobLifecycleUseCase) notifyDriverInstruction(
 }
 
 func buildDriverInstructionMessage(job domain.Job) string {
+	jobIdentifier := job.ID
+	if strings.TrimSpace(job.Reference) != "" {
+		jobIdentifier = job.Reference
+	}
 	return fmt.Sprintf(
 		"New job %s assigned. Pickup: %s. Dropoff: %s. Priority: %s.",
-		job.ID,
+		jobIdentifier,
 		job.Pickup.Address,
 		job.Dropoff.Address,
 		job.Priority,

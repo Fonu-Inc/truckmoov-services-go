@@ -69,9 +69,14 @@ type JobTimelineEntry struct {
 
 type Job struct {
 	ID                      string             `json:"id"`
+	Reference               string             `json:"reference,omitempty"`
 	TenantID                string             `json:"tenant_id"`
 	Pickup                  JobStop            `json:"pickup"`
 	Dropoff                 JobStop            `json:"dropoff"`
+	CargoType               string             `json:"cargo_type,omitempty"`
+	CargoDescription        string             `json:"cargo_description,omitempty"`
+	AmountNgn               float64            `json:"amount_ngn,omitempty"`
+	Deadline                *time.Time         `json:"deadline,omitempty"`
 	RequiredVehicleType     string             `json:"required_vehicle_type,omitempty"`
 	LoadWeightKg            float64            `json:"load_weight_kg,omitempty"`
 	LoadVolumeM3            float64            `json:"load_volume_m3,omitempty"`
@@ -109,6 +114,9 @@ func NewJob(params Job) (Job, error) {
 	if params.LoadWeightKg < 0 {
 		return Job{}, errors.New("load_weight_kg cannot be negative")
 	}
+	if params.AmountNgn < 0 {
+		return Job{}, errors.New("amount_ngn cannot be negative")
+	}
 	if params.LoadVolumeM3 < 0 {
 		return Job{}, errors.New("load_volume_m3 cannot be negative")
 	}
@@ -135,9 +143,14 @@ func NewJob(params Job) (Job, error) {
 
 	job := Job{
 		ID:                      strings.TrimSpace(params.ID),
+		Reference:               strings.TrimSpace(params.Reference),
 		TenantID:                strings.TrimSpace(params.TenantID),
 		Pickup:                  normalizeStop(params.Pickup),
 		Dropoff:                 normalizeStop(params.Dropoff),
+		CargoType:               strings.TrimSpace(params.CargoType),
+		CargoDescription:        strings.TrimSpace(params.CargoDescription),
+		AmountNgn:               params.AmountNgn,
+		Deadline:                normalizeOptionalTime(params.Deadline),
 		RequiredVehicleType:     strings.TrimSpace(params.RequiredVehicleType),
 		LoadWeightKg:            params.LoadWeightKg,
 		LoadVolumeM3:            params.LoadVolumeM3,
@@ -160,17 +173,17 @@ func NewJob(params Job) (Job, error) {
 }
 
 func NormalizePriority(value string) (JobPriority, error) {
-	switch JobPriority(strings.ToLower(strings.TrimSpace(value))) {
-	case "", PriorityNormal:
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "medium", string(PriorityNormal):
 		return PriorityNormal, nil
-	case PriorityLow:
+	case string(PriorityLow):
 		return PriorityLow, nil
-	case PriorityHigh:
+	case string(PriorityHigh):
 		return PriorityHigh, nil
-	case PriorityCritical:
+	case "urgent", string(PriorityCritical):
 		return PriorityCritical, nil
 	default:
-		return "", fmt.Errorf("priority must be one of low, normal, high, critical")
+		return "", fmt.Errorf("priority must be one of low, medium, high, urgent")
 	}
 }
 
@@ -427,6 +440,14 @@ func normalizeStop(stop JobStop) JobStop {
 		Longitude:    stop.Longitude,
 		Notes:        strings.TrimSpace(stop.Notes),
 	}
+}
+
+func normalizeOptionalTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	normalized := value.UTC()
+	return &normalized
 }
 
 func validateTimeWindow(window JobTimeWindow) error {

@@ -238,3 +238,54 @@ func TestJobLifecycleUseCase_TenantIsolation(t *testing.T) {
 		t.Fatalf("expected ErrJobNotFound, got %v", err)
 	}
 }
+
+func TestJobLifecycleUseCase_CreateJobMapsUIDetails(t *testing.T) {
+	repo := newLifecycleRepository()
+	useCase := NewJobLifecycleUseCase(
+		repo,
+		&lifecycleEmitter{},
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	deadline := time.Date(2026, 2, 11, 16, 30, 0, 0, time.UTC)
+	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		Reference:        "JOB-900",
+		CargoType:        "Electronics",
+		CargoDescription: "Fragile televisions",
+		AmountNgn:        900000,
+		Deadline:         &deadline,
+		LoadWeightKg:     6500,
+		Priority:         "urgent",
+		Pickup: domain.JobStop{
+			Address: "Apapa Port",
+		},
+		Dropoff: domain.JobStop{
+			Address: "Lekki Free Zone",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+
+	if job.Reference != "JOB-900" {
+		t.Fatalf("expected reference JOB-900, got %q", job.Reference)
+	}
+	if job.CargoType != "Electronics" {
+		t.Fatalf("expected cargo type Electronics, got %q", job.CargoType)
+	}
+	if job.AmountNgn != 900000 {
+		t.Fatalf("expected amount 900000, got %v", job.AmountNgn)
+	}
+	if job.Priority != domain.PriorityCritical {
+		t.Fatalf("expected urgent to normalize to %q, got %q", domain.PriorityCritical, job.Priority)
+	}
+	if job.Deadline == nil || !job.Deadline.Equal(deadline) {
+		t.Fatalf("expected deadline to be stored")
+	}
+	if job.TimeWindow.DropoffEnd == nil || !job.TimeWindow.DropoffEnd.Equal(deadline) {
+		t.Fatalf("expected deadline to populate dropoff end window")
+	}
+}

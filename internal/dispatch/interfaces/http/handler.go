@@ -42,10 +42,22 @@ type timeWindowRequest struct {
 type createJobRequest struct {
 	TenantID                string            `json:"tenant_id,omitempty"`
 	JobID                   string            `json:"job_id,omitempty"`
+	Reference               string            `json:"reference,omitempty"`
+	PickupAddress           string            `json:"pickupAddress,omitempty"`
+	PickupLat               *float64          `json:"pickupLat,omitempty"`
+	PickupLng               *float64          `json:"pickupLng,omitempty"`
+	DeliveryAddress         string            `json:"deliveryAddress,omitempty"`
+	DeliveryLat             *float64          `json:"deliveryLat,omitempty"`
+	DeliveryLng             *float64          `json:"deliveryLng,omitempty"`
+	CargoType               string            `json:"cargoType,omitempty"`
+	CargoWeight             *float64          `json:"cargoWeight,omitempty"`
+	CargoDescription        string            `json:"cargoDescription,omitempty"`
+	Amount                  *float64          `json:"amount,omitempty"`
+	Deadline                *string           `json:"deadline,omitempty"`
 	Pickup                  stopRequest       `json:"pickup"`
 	Dropoff                 stopRequest       `json:"dropoff"`
 	RequiredVehicleType     string            `json:"required_vehicle_type,omitempty"`
-	LoadWeightKg            float64           `json:"load_weight_kg,omitempty"`
+	LoadWeightKg            *float64          `json:"load_weight_kg,omitempty"`
 	LoadVolumeM3            float64           `json:"load_volume_m3,omitempty"`
 	EstimatedServiceMinutes int               `json:"estimated_service_minutes,omitempty"`
 	Priority                string            `json:"priority,omitempty"`
@@ -227,14 +239,24 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	deadline, err := parseTimeValue(req.Deadline)
+	if err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	job, err := h.jobLifecycleUseCase.CreateJob(r.Context(), application.CreateJobCommand{
 		TenantID:                req.TenantID,
 		JobID:                   req.JobID,
-		Pickup:                  req.Pickup.toDomain(),
-		Dropoff:                 req.Dropoff.toDomain(),
+		Reference:               req.Reference,
+		Pickup:                  req.pickupStop().toDomain(),
+		Dropoff:                 req.dropoffStop().toDomain(),
+		CargoType:               req.CargoType,
+		CargoDescription:        req.CargoDescription,
+		AmountNgn:               req.amountNgn(),
+		Deadline:                deadline,
 		RequiredVehicleType:     req.RequiredVehicleType,
-		LoadWeightKg:            req.LoadWeightKg,
+		LoadWeightKg:            req.loadWeightKg(),
 		LoadVolumeM3:            req.LoadVolumeM3,
 		EstimatedServiceMinutes: req.EstimatedServiceMinutes,
 		Priority:                req.Priority,
@@ -692,6 +714,47 @@ func (s stopRequest) toDomain() domain.JobStop {
 	}
 }
 
+func (r createJobRequest) pickupStop() stopRequest {
+	if strings.TrimSpace(r.Pickup.Address) != "" || r.Pickup.Latitude != nil || r.Pickup.Longitude != nil {
+		return r.Pickup
+	}
+
+	return stopRequest{
+		Address:   r.PickupAddress,
+		Latitude:  r.PickupLat,
+		Longitude: r.PickupLng,
+	}
+}
+
+func (r createJobRequest) dropoffStop() stopRequest {
+	if strings.TrimSpace(r.Dropoff.Address) != "" || r.Dropoff.Latitude != nil || r.Dropoff.Longitude != nil {
+		return r.Dropoff
+	}
+
+	return stopRequest{
+		Address:   r.DeliveryAddress,
+		Latitude:  r.DeliveryLat,
+		Longitude: r.DeliveryLng,
+	}
+}
+
+func (r createJobRequest) loadWeightKg() float64 {
+	if r.LoadWeightKg != nil {
+		return *r.LoadWeightKg
+	}
+	if r.CargoWeight != nil {
+		return *r.CargoWeight * 1000
+	}
+	return 0
+}
+
+func (r createJobRequest) amountNgn() float64 {
+	if r.Amount == nil {
+		return 0
+	}
+	return *r.Amount
+}
+
 func (t timeWindowRequest) toDomain() (domain.JobTimeWindow, error) {
 	pickupStart, err := parseTimeValue(t.PickupStart)
 	if err != nil {
@@ -729,7 +792,11 @@ func parseTimeValue(value *string) (*time.Time, error) {
 
 	parsed, err := time.Parse(time.RFC3339, trimmed)
 	if err != nil {
-		return nil, err
+		// HTML datetime-local inputs omit timezone information; accept them and normalize to UTC.
+		parsed, err = time.ParseInLocation("2006-01-02T15:04", trimmed, time.Local)
+		if err != nil {
+			return nil, err
+		}
 	}
 	parsedUTC := parsed.UTC()
 	return &parsedUTC, nil

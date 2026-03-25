@@ -166,21 +166,52 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 		http.MethodPost,
 		"/dispatch/jobs",
 		`{
-			"job_id":"job-100",
-			"pickup":{"address":"Apapa Port"},
-			"dropoff":{"address":"Lekki Free Zone"},
-			"priority":"normal"
+			"reference":"JOB-100",
+			"pickupAddress":"Apapa Port",
+			"pickupLat":6.45,
+			"pickupLng":3.35,
+			"deliveryAddress":"Lekki Free Zone",
+			"deliveryLat":6.44,
+			"deliveryLng":3.48,
+			"cargoType":"Electronics",
+			"cargoWeight":12.5,
+			"cargoDescription":"High-value electronics cargo",
+			"amount":450000,
+			"deadline":"2026-01-01T15:30",
+			"priority":"medium"
 		}`,
 	)
 	if createRes.Code != http.StatusCreated {
 		t.Fatalf("expected status %d, got %d", http.StatusCreated, createRes.Code)
 	}
 
+	var createdJob domain.Job
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+	if createdJob.Reference != "JOB-100" {
+		t.Fatalf("expected reference JOB-100, got %q", createdJob.Reference)
+	}
+	if createdJob.CargoType != "Electronics" {
+		t.Fatalf("expected cargo type Electronics, got %q", createdJob.CargoType)
+	}
+	if createdJob.LoadWeightKg != 12500 {
+		t.Fatalf("expected 12500kg load weight, got %v", createdJob.LoadWeightKg)
+	}
+	if createdJob.Priority != domain.PriorityNormal {
+		t.Fatalf("expected medium to normalize to %q, got %q", domain.PriorityNormal, createdJob.Priority)
+	}
+	if createdJob.TimeWindow.DropoffEnd == nil {
+		t.Fatalf("expected deadline to map into dropoff end time window")
+	}
+
+	jobID := createdJob.ID
+
 	schedulingRes := dispatchRequest(
 		t,
 		mux,
 		http.MethodPatch,
-		"/dispatch/jobs/job-100/scheduling",
+		"/dispatch/jobs/"+jobID+"/scheduling",
 		`{
 			"priority":"high",
 			"time_window":{
@@ -199,7 +230,7 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 		t,
 		mux,
 		http.MethodPost,
-		"/dispatch/jobs/job-100/assign",
+		"/dispatch/jobs/"+jobID+"/assign",
 		`{"driver_id":"driver-100","vehicle_id":"vehicle-100","reason":"initial assignment"}`,
 	)
 	if assignRes.Code != http.StatusOK {
@@ -210,7 +241,7 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 		t,
 		mux,
 		http.MethodPost,
-		"/dispatch/jobs/job-100/assign",
+		"/dispatch/jobs/"+jobID+"/assign",
 		`{"driver_id":"driver-101","vehicle_id":"vehicle-101","reason":"breakdown fallback"}`,
 	)
 	if reassignRes.Code != http.StatusOK {
@@ -221,7 +252,7 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 		t,
 		mux,
 		http.MethodPost,
-		"/dispatch/jobs/job-100/acknowledge",
+		"/dispatch/jobs/"+jobID+"/acknowledge",
 		`{"driver_id":"driver-101"}`,
 	)
 	if ackRes.Code != http.StatusOK {
@@ -233,7 +264,7 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 			t,
 			mux,
 			http.MethodPost,
-			"/dispatch/jobs/job-100/status",
+			"/dispatch/jobs/"+jobID+"/status",
 			fmt.Sprintf(`{"status":"%s"}`, status),
 		)
 		if updateRes.Code != http.StatusOK {
@@ -245,7 +276,7 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 		t,
 		mux,
 		http.MethodPost,
-		"/dispatch/jobs/job-100/pod-attachments",
+		"/dispatch/jobs/"+jobID+"/pod-attachments",
 		`{"kind":"photo","url":"https://example.com/pod.jpg","uploaded_by":"driver-101"}`,
 	)
 	if podRes.Code != http.StatusOK {
@@ -256,14 +287,14 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 		t,
 		mux,
 		http.MethodPost,
-		"/dispatch/jobs/job-100/notes",
+		"/dispatch/jobs/"+jobID+"/notes",
 		`{"text":"Customer requested gate entry call","author_id":"dispatcher-1"}`,
 	)
 	if noteRes.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, noteRes.Code)
 	}
 
-	timelineRes := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs/job-100/timeline", "")
+	timelineRes := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs/"+jobID+"/timeline", "")
 	if timelineRes.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, timelineRes.Code)
 	}
@@ -275,6 +306,39 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 	timeline, ok := timelinePayload["timeline"].([]any)
 	if !ok || len(timeline) == 0 {
 		t.Fatalf("expected timeline entries to be present")
+	}
+}
+
+func TestHandler_CreateJobLegacyPayloadStillAccepted(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"job_id":"job-legacy-1",
+			"pickup":{"address":"Apapa Port","latitude":6.4448,"longitude":3.3649},
+			"dropoff":{"address":"Lekki Free Zone","latitude":6.4294,"longitude":4.0096},
+			"priority":"critical"
+		}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+
+	var createdJob domain.Job
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+	if createdJob.Reference != "job-legacy-1" {
+		t.Fatalf("expected legacy payload to default reference to job id, got %q", createdJob.Reference)
+	}
+	if createdJob.Priority != domain.PriorityCritical {
+		t.Fatalf("expected priority %q, got %q", domain.PriorityCritical, createdJob.Priority)
 	}
 }
 
