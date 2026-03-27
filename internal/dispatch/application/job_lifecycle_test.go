@@ -241,10 +241,12 @@ func TestJobLifecycleUseCase_TenantIsolation(t *testing.T) {
 
 func TestJobLifecycleUseCase_CreateJobMapsUIDetails(t *testing.T) {
 	repo := newLifecycleRepository()
+	emitter := &lifecycleEmitter{}
+	notifier := &lifecycleNotifier{}
 	useCase := NewJobLifecycleUseCase(
 		repo,
-		&lifecycleEmitter{},
-		&lifecycleNotifier{},
+		emitter,
+		notifier,
 		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
 		&lifecycleID{},
 		"default",
@@ -253,8 +255,11 @@ func TestJobLifecycleUseCase_CreateJobMapsUIDetails(t *testing.T) {
 	deadline := time.Date(2026, 2, 11, 16, 30, 0, 0, time.UTC)
 	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
 		Reference:        "JOB-900",
+		VehicleID:        "veh-1",
+		DriverID:         "driver-1",
 		CargoType:        "Electronics",
 		CargoDescription: "Fragile televisions",
+		InitialNote:      "Handle with care",
 		AmountNgn:        900000,
 		Deadline:         &deadline,
 		LoadWeightKg:     6500,
@@ -287,5 +292,20 @@ func TestJobLifecycleUseCase_CreateJobMapsUIDetails(t *testing.T) {
 	}
 	if job.TimeWindow.DropoffEnd == nil || !job.TimeWindow.DropoffEnd.Equal(deadline) {
 		t.Fatalf("expected deadline to populate dropoff end window")
+	}
+	if job.Status != domain.StatusAssigned {
+		t.Fatalf("expected create with vehicle and driver to assign immediately, got %q", job.Status)
+	}
+	if job.AssignedVehicleID != "veh-1" || job.AssignedDriverID != "driver-1" {
+		t.Fatalf("expected assigned vehicle/driver to be stored, got vehicle=%q driver=%q", job.AssignedVehicleID, job.AssignedDriverID)
+	}
+	if len(job.Notes) != 1 || job.Notes[0].Text != "Handle with care" {
+		t.Fatalf("expected initial note to be stored, got %#v", job.Notes)
+	}
+	if len(emitter.commands) != 1 {
+		t.Fatalf("expected one emitted status event, got %d", len(emitter.commands))
+	}
+	if notifier.calls != 1 {
+		t.Fatalf("expected one driver notification, got %d", notifier.calls)
 	}
 }

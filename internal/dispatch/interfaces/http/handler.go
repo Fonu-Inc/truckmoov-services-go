@@ -3,6 +3,7 @@ package dispatchhttp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -43,15 +44,23 @@ type createJobRequest struct {
 	TenantID                string            `json:"tenant_id,omitempty"`
 	JobID                   string            `json:"job_id,omitempty"`
 	Reference               string            `json:"reference,omitempty"`
+	VehicleID               string            `json:"vehicleId,omitempty"`
+	VehicleIDSnake          string            `json:"vehicle_id,omitempty"`
+	DriverID                string            `json:"driverId,omitempty"`
+	DriverIDSnake           string            `json:"driver_id,omitempty"`
+	PickupLocation          string            `json:"pickupLocation,omitempty"`
 	PickupAddress           string            `json:"pickupAddress,omitempty"`
 	PickupLat               *float64          `json:"pickupLat,omitempty"`
 	PickupLng               *float64          `json:"pickupLng,omitempty"`
+	DeliveryLocation        string            `json:"deliveryLocation,omitempty"`
 	DeliveryAddress         string            `json:"deliveryAddress,omitempty"`
 	DeliveryLat             *float64          `json:"deliveryLat,omitempty"`
 	DeliveryLng             *float64          `json:"deliveryLng,omitempty"`
 	CargoType               string            `json:"cargoType,omitempty"`
 	CargoWeight             *float64          `json:"cargoWeight,omitempty"`
 	CargoDescription        string            `json:"cargoDescription,omitempty"`
+	AdditionalNotes         string            `json:"additionalNotes,omitempty"`
+	Notes                   string            `json:"notes,omitempty"`
 	Amount                  *float64          `json:"amount,omitempty"`
 	Deadline                *string           `json:"deadline,omitempty"`
 	Pickup                  stopRequest       `json:"pickup"`
@@ -233,6 +242,12 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
+	// The original Dispatch Center modal has a smaller required field set than the
+	// richer legacy payload, so validate it only when those modal-specific fields are present.
+	if err := req.validateOriginalModalPayload(); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
 
 	timeWindow, err := req.TimeWindow.toDomain()
 	if err != nil {
@@ -249,10 +264,13 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 		TenantID:                req.TenantID,
 		JobID:                   req.JobID,
 		Reference:               req.Reference,
+		VehicleID:               req.vehicleID(),
+		DriverID:                req.driverID(),
 		Pickup:                  req.pickupStop().toDomain(),
 		Dropoff:                 req.dropoffStop().toDomain(),
 		CargoType:               req.CargoType,
 		CargoDescription:        req.CargoDescription,
+		InitialNote:             req.initialNote(),
 		AmountNgn:               req.amountNgn(),
 		Deadline:                deadline,
 		RequiredVehicleType:     req.RequiredVehicleType,
@@ -719,8 +737,12 @@ func (r createJobRequest) pickupStop() stopRequest {
 		return r.Pickup
 	}
 
+	address := strings.TrimSpace(r.PickupLocation)
+	if address == "" {
+		address = r.PickupAddress
+	}
 	return stopRequest{
-		Address:   r.PickupAddress,
+		Address:   address,
 		Latitude:  r.PickupLat,
 		Longitude: r.PickupLng,
 	}
@@ -731,11 +753,60 @@ func (r createJobRequest) dropoffStop() stopRequest {
 		return r.Dropoff
 	}
 
+	address := strings.TrimSpace(r.DeliveryLocation)
+	if address == "" {
+		address = r.DeliveryAddress
+	}
 	return stopRequest{
-		Address:   r.DeliveryAddress,
+		Address:   address,
 		Latitude:  r.DeliveryLat,
 		Longitude: r.DeliveryLng,
 	}
+}
+
+func (r createJobRequest) vehicleID() string {
+	if value := strings.TrimSpace(r.VehicleID); value != "" {
+		return value
+	}
+	return strings.TrimSpace(r.VehicleIDSnake)
+}
+
+func (r createJobRequest) driverID() string {
+	if value := strings.TrimSpace(r.DriverID); value != "" {
+		return value
+	}
+	return strings.TrimSpace(r.DriverIDSnake)
+}
+
+func (r createJobRequest) initialNote() string {
+	if value := strings.TrimSpace(r.Notes); value != "" {
+		return value
+	}
+	return strings.TrimSpace(r.AdditionalNotes)
+}
+
+func (r createJobRequest) validateOriginalModalPayload() error {
+	if !r.usesOriginalModalShape() {
+		return nil
+	}
+	if r.vehicleID() == "" {
+		return errors.New("vehicleId is required for the original dispatch modal")
+	}
+	if strings.TrimSpace(r.pickupStop().Address) == "" {
+		return errors.New("pickupLocation is required for the original dispatch modal")
+	}
+	if strings.TrimSpace(r.dropoffStop().Address) == "" {
+		return errors.New("deliveryLocation is required for the original dispatch modal")
+	}
+	return nil
+}
+
+func (r createJobRequest) usesOriginalModalShape() bool {
+	return r.vehicleID() != "" ||
+		r.driverID() != "" ||
+		strings.TrimSpace(r.PickupLocation) != "" ||
+		strings.TrimSpace(r.DeliveryLocation) != "" ||
+		r.initialNote() != ""
 }
 
 func (r createJobRequest) loadWeightKg() float64 {

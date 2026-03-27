@@ -166,19 +166,14 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 		http.MethodPost,
 		"/dispatch/jobs",
 		`{
-			"reference":"JOB-100",
-			"pickupAddress":"Apapa Port",
-			"pickupLat":6.45,
-			"pickupLng":3.35,
-			"deliveryAddress":"Lekki Free Zone",
-			"deliveryLat":6.44,
-			"deliveryLng":3.48,
-			"cargoType":"Electronics",
-			"cargoWeight":12.5,
+			"reference":"TM-2847",
+			"vehicleId":"vehicle-100",
+			"driverId":"driver-100",
+			"pickupLocation":"Apapa Port",
+			"deliveryLocation":"Lekki Free Zone",
 			"cargoDescription":"High-value electronics cargo",
-			"amount":450000,
-			"deadline":"2026-01-01T15:30",
-			"priority":"medium"
+			"notes":"Gate pass already approved",
+			"priority":"normal"
 		}`,
 	)
 	if createRes.Code != http.StatusCreated {
@@ -189,53 +184,29 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
 		t.Fatalf("decode created job: %v", err)
 	}
-	if createdJob.Reference != "JOB-100" {
-		t.Fatalf("expected reference JOB-100, got %q", createdJob.Reference)
+	if createdJob.Reference != "TM-2847" {
+		t.Fatalf("expected reference TM-2847, got %q", createdJob.Reference)
 	}
-	if createdJob.CargoType != "Electronics" {
-		t.Fatalf("expected cargo type Electronics, got %q", createdJob.CargoType)
-	}
-	if createdJob.LoadWeightKg != 12500 {
-		t.Fatalf("expected 12500kg load weight, got %v", createdJob.LoadWeightKg)
+	if createdJob.CargoDescription != "High-value electronics cargo" {
+		t.Fatalf("expected cargo description to be captured, got %q", createdJob.CargoDescription)
 	}
 	if createdJob.Priority != domain.PriorityNormal {
-		t.Fatalf("expected medium to normalize to %q, got %q", domain.PriorityNormal, createdJob.Priority)
+		t.Fatalf("expected normal to normalize to %q, got %q", domain.PriorityNormal, createdJob.Priority)
 	}
-	if createdJob.TimeWindow.DropoffEnd == nil {
-		t.Fatalf("expected deadline to map into dropoff end time window")
+	if createdJob.Status != domain.StatusAssigned {
+		t.Fatalf("expected immediate-dispatch modal to assign the job, got %q", createdJob.Status)
+	}
+	if createdJob.AssignedVehicleID != "vehicle-100" {
+		t.Fatalf("expected assigned vehicle vehicle-100, got %q", createdJob.AssignedVehicleID)
+	}
+	if createdJob.AssignedDriverID != "driver-100" {
+		t.Fatalf("expected assigned driver driver-100, got %q", createdJob.AssignedDriverID)
+	}
+	if len(createdJob.Notes) != 1 || createdJob.Notes[0].Text != "Gate pass already approved" {
+		t.Fatalf("expected initial note to be stored, got %#v", createdJob.Notes)
 	}
 
 	jobID := createdJob.ID
-
-	schedulingRes := dispatchRequest(
-		t,
-		mux,
-		http.MethodPatch,
-		"/dispatch/jobs/"+jobID+"/scheduling",
-		`{
-			"priority":"high",
-			"time_window":{
-				"pickup_start":"2026-01-01T11:00:00Z",
-				"pickup_end":"2026-01-01T12:00:00Z",
-				"dropoff_start":"2026-01-01T14:00:00Z",
-				"dropoff_end":"2026-01-01T15:00:00Z"
-			}
-		}`,
-	)
-	if schedulingRes.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, schedulingRes.Code)
-	}
-
-	assignRes := dispatchRequest(
-		t,
-		mux,
-		http.MethodPost,
-		"/dispatch/jobs/"+jobID+"/assign",
-		`{"driver_id":"driver-100","vehicle_id":"vehicle-100","reason":"initial assignment"}`,
-	)
-	if assignRes.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, assignRes.Code)
-	}
 
 	reassignRes := dispatchRequest(
 		t,
@@ -306,6 +277,116 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 	timeline, ok := timelinePayload["timeline"].([]any)
 	if !ok || len(timeline) == 0 {
 		t.Fatalf("expected timeline entries to be present")
+	}
+}
+
+func TestHandler_CreateJobOriginalModalVehicleOnlyStillPersistsSelection(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"vehicleId":"vehicle-200",
+			"pickupLocation":"Oshodi Market",
+			"deliveryLocation":"Ikorodu",
+			"priority":"urgent"
+		}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+
+	var createdJob domain.Job
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+	if createdJob.Status != domain.StatusCreated {
+		t.Fatalf("expected vehicle-only create to remain created, got %q", createdJob.Status)
+	}
+	if createdJob.AssignedVehicleID != "vehicle-200" {
+		t.Fatalf("expected selected vehicle to be preserved, got %q", createdJob.AssignedVehicleID)
+	}
+	if createdJob.AssignedDriverID != "" {
+		t.Fatalf("expected no assigned driver, got %q", createdJob.AssignedDriverID)
+	}
+	if createdJob.Priority != domain.PriorityCritical {
+		t.Fatalf("expected urgent to normalize to %q, got %q", domain.PriorityCritical, createdJob.Priority)
+	}
+}
+
+func TestHandler_CreateJobOriginalModalRequiresVehicle(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"pickupLocation":"Apapa Port",
+			"deliveryLocation":"Lekki Free Zone"
+		}`,
+	)
+	if createRes.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, createRes.Code, createRes.Body.String())
+	}
+	if !strings.Contains(createRes.Body.String(), "vehicleId is required") {
+		t.Fatalf("expected missing vehicle validation, got %s", createRes.Body.String())
+	}
+}
+
+func TestHandler_CreateJobAlternateFlatPayloadStillAccepted(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"reference":"JOB-100",
+			"pickupAddress":"Apapa Port",
+			"pickupLat":6.45,
+			"pickupLng":3.35,
+			"deliveryAddress":"Lekki Free Zone",
+			"deliveryLat":6.44,
+			"deliveryLng":3.48,
+			"cargoType":"Electronics",
+			"cargoWeight":12.5,
+			"cargoDescription":"High-value electronics cargo",
+			"amount":450000,
+			"deadline":"2026-01-01T15:30",
+			"priority":"medium"
+		}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d", http.StatusCreated, createRes.Code)
+	}
+
+	var createdJob domain.Job
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+	if createdJob.Reference != "JOB-100" {
+		t.Fatalf("expected reference JOB-100, got %q", createdJob.Reference)
+	}
+	if createdJob.CargoType != "Electronics" {
+		t.Fatalf("expected cargo type Electronics, got %q", createdJob.CargoType)
+	}
+	if createdJob.LoadWeightKg != 12500 {
+		t.Fatalf("expected 12500kg load weight, got %v", createdJob.LoadWeightKg)
+	}
+	if createdJob.TimeWindow.DropoffEnd == nil {
+		t.Fatalf("expected deadline to map into dropoff end time window")
 	}
 }
 

@@ -78,7 +78,7 @@ Runtime state for these services is now backed by Redis instead of per-process i
 - Kong unified docs URL: `GET http://localhost:8000/docs/dispatch`
 
 ## Dispatch lifecycle endpoints (Epic D)
-- `POST /dispatch/jobs` create job from the dispatch modal payload (`reference`, pickup/delivery coordinates, cargo details, amount, deadline). The older nested pickup/dropoff payload is still accepted.
+- `POST /dispatch/jobs` create job from the original Dispatch Center modal payload (`vehicleId`, optional `driverId`, `pickupLocation`, `deliveryLocation`, optional `cargoDescription`, `priority`, `notes`). The older richer flat payload and nested pickup/dropoff payload are still accepted.
 - `PATCH /dispatch/jobs/{job_id}/scheduling` set priority/time windows.
 - `POST /dispatch/jobs/{job_id}/assign` assign/reassign driver + vehicle.
 - `POST /dispatch/jobs/{job_id}/cancel` cancel with reason.

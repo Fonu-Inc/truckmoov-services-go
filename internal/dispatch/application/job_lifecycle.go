@@ -34,10 +34,13 @@ type CreateJobCommand struct {
 	TenantID                string
 	JobID                   string
 	Reference               string
+	VehicleID               string
+	DriverID                string
 	Pickup                  domain.JobStop
 	Dropoff                 domain.JobStop
 	CargoType               string
 	CargoDescription        string
+	InitialNote             string
 	AmountNgn               float64
 	Deadline                *time.Time
 	RequiredVehicleType     string
@@ -146,6 +149,55 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		timeWindow.DropoffEnd = &deadlineUTC
 	}
 
+	assignedVehicleID := strings.TrimSpace(command.VehicleID)
+	assignedDriverID := strings.TrimSpace(command.DriverID)
+	if assignedDriverID != "" && assignedVehicleID == "" {
+		return domain.Job{}, errors.New("vehicle id is required when driver id is provided")
+	}
+
+	status := domain.StatusCreated
+	timeline := []domain.JobTimelineEntry{
+		{
+			ID:         u.idGenerator.New(),
+			Type:       "job_created",
+			Summary:    "Job created with pickup/dropoff details",
+			OccurredAt: now,
+		},
+	}
+
+	notes := make([]domain.JobNote, 0)
+	if initialNote := strings.TrimSpace(command.InitialNote); initialNote != "" {
+		noteID := u.idGenerator.New()
+		notes = append(notes, domain.JobNote{
+			ID:        noteID,
+			Text:      initialNote,
+			CreatedAt: now,
+		})
+		timeline = append(timeline, domain.JobTimelineEntry{
+			ID:         u.idGenerator.New(),
+			Type:       "job_note_added",
+			Summary:    "Dispatcher note added to job",
+			OccurredAt: now,
+			Metadata: map[string]string{
+				"note_id": noteID,
+			},
+		})
+	}
+
+	if assignedVehicleID != "" && assignedDriverID != "" {
+		status = domain.StatusAssigned
+		timeline = append(timeline, domain.JobTimelineEntry{
+			ID:         u.idGenerator.New(),
+			Type:       "job_assigned",
+			Summary:    "Job assigned to driver/vehicle",
+			OccurredAt: now,
+			Metadata: map[string]string{
+				"driver_id":  assignedDriverID,
+				"vehicle_id": assignedVehicleID,
+			},
+		})
+	}
+
 	job, err := domain.NewJob(domain.Job{
 		ID:                      jobID,
 		Reference:               reference,
@@ -162,19 +214,14 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		EstimatedServiceMinutes: command.EstimatedServiceMinutes,
 		Priority:                priority,
 		TimeWindow:              timeWindow,
-		Status:                  domain.StatusCreated,
+		Status:                  status,
+		AssignedDriverID:        assignedDriverID,
+		AssignedVehicleID:       assignedVehicleID,
 		CreatedAt:               now,
 		UpdatedAt:               now,
-		Timeline: []domain.JobTimelineEntry{
-			{
-				ID:         u.idGenerator.New(),
-				Type:       "job_created",
-				Summary:    "Job created with pickup/dropoff details",
-				OccurredAt: now,
-			},
-		},
-		Notes:          make([]domain.JobNote, 0),
-		PODAttachments: make([]domain.JobPODAttachment, 0),
+		Timeline:                timeline,
+		Notes:                   notes,
+		PODAttachments:          make([]domain.JobPODAttachment, 0),
 	})
 	if err != nil {
 		return domain.Job{}, err
@@ -184,7 +231,31 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		return domain.Job{}, fmt.Errorf("save job: %w", err)
 	}
 
-	_ = ctx
+	// The original modal is a create-and-dispatch flow, so when both selections are supplied
+	// we emit the same side effects that the explicit assign endpoint would have triggered.
+	if assignedVehicleID != "" && assignedDriverID != "" {
+		u.emitStatusChanged(ctx, PublishJobStatusChangedCommand{
+			TenantID:          job.TenantID,
+			JobID:             job.ID,
+			PreviousStatus:    string(domain.StatusCreated),
+			NewStatus:         string(job.Status),
+			AssignedDriverID:  job.AssignedDriverID,
+			AssignedVehicleID: job.AssignedVehicleID,
+		})
+
+		message := buildDriverInstructionMessage(job)
+		if notifyErr := u.notifyDriverInstruction(
+			ctx,
+			job.TenantID,
+			job.ID,
+			job.AssignedDriverID,
+			message,
+		); notifyErr == nil {
+			job = job.MarkDriverInstructionSent("whatsapp", u.clock.Now(), u.idGenerator.New())
+			_ = u.repository.Save(job)
+		}
+	}
+
 	return job, nil
 }
 

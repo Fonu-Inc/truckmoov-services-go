@@ -183,7 +183,7 @@ func NormalizePriority(value string) (JobPriority, error) {
 	case "urgent", string(PriorityCritical):
 		return PriorityCritical, nil
 	default:
-		return "", fmt.Errorf("priority must be one of low, medium, high, urgent")
+		return "", fmt.Errorf("priority must be one of low, normal, high, urgent")
 	}
 }
 
