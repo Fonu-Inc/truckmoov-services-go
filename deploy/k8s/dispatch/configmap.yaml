@@ -8,7 +8,7 @@ data:
   NATS_STREAM: truckmoov_events
   DEFAULT_TENANT: default
   POSTGRES_HOST: postgres
-  POSTGRES_PORT: "5432"
+  POSTGRES_PORT: "10028"
   POSTGRES_USER: truckmoov
   POSTGRES_DB: truckmoov
   POSTGRES_SSLMODE: disable
