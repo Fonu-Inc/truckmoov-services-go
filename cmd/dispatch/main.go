@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	"github.com/truckmoov/services-go/internal/dispatch/infrastructure"
 	dispatchhttp "github.com/truckmoov/services-go/internal/dispatch/interfaces/http"
@@ -17,7 +19,6 @@ import (
 	httpx "github.com/truckmoov/services-go/pkg/http"
 	"github.com/truckmoov/services-go/pkg/logger"
 	"github.com/truckmoov/services-go/pkg/otel"
-	redisstore "github.com/truckmoov/services-go/pkg/redis"
 )
 
 func main() {
@@ -41,7 +42,19 @@ func main() {
 		_ = bus.Close()
 	}()
 
-	redisClient := redisstore.NewStore(cfg.RedisAddr, cfg.RedisDB)
+	postgresDB, err := sql.Open("pgx", cfg.PostgresDSN())
+	if err != nil {
+		log.Error("postgres_open_failed", "error", err.Error())
+		os.Exit(1)
+	}
+	defer func() {
+		_ = postgresDB.Close()
+	}()
+	if err := postgresDB.PingContext(ctx); err != nil {
+		log.Error("postgres_ping_failed", "error", err.Error())
+		os.Exit(1)
+	}
+
 	jobStatusPublisher := infrastructure.NewJobStatusEventPublisher(bus)
 	publishJobStatusUseCase := application.NewPublishJobStatusChangedUseCase(
 		jobStatusPublisher,
@@ -49,7 +62,11 @@ func main() {
 		infrastructure.TimeIDGenerator{},
 		cfg.DefaultTenant,
 	)
-	jobRepository := infrastructure.NewRedisJobRepository(redisClient)
+	jobRepository := infrastructure.NewPostgresJobRepository(postgresDB)
+	if err := jobRepository.EnsureSchema(ctx); err != nil {
+		log.Error("dispatch_schema_init_failed", "error", err.Error())
+		os.Exit(1)
+	}
 	driverInstructionNotifier := infrastructure.NewDriverInstructionNotifier(bus)
 	jobLifecycleUseCase := application.NewJobLifecycleUseCase(
 		jobRepository,

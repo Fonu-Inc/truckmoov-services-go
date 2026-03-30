@@ -28,6 +28,11 @@ Core vars used by notification, tracking, and dispatch:
 - `DEFAULT_TENANT`
 - `CORS_ALLOWED_ORIGINS`
 - `NATS_URL`, `NATS_STREAM` (use a JetStream-safe stream name such as `truckmoov_events`)
+
+Dispatch persistence vars:
+- `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_SSLMODE`
+
+Tracking state/cache vars:
 - `REDIS_ADDR`, `REDIS_DB`
 
 Tracking- and ingest-specific vars:
@@ -41,7 +46,8 @@ Shared runtime protection:
 - `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`
 
 Local recommendation:
-- keep `REDIS_ADDR` aligned with the platform repo `REDIS_PORT`
+- keep dispatch Postgres vars aligned with the platform repo `POSTGRES_*`
+- keep `REDIS_ADDR` aligned with the platform repo `REDIS_PORT` for tracking
 - keep `NATS_URL` aligned with the platform repo `NATS_CLIENT_PORT`
 
 ## Container Architectures
@@ -63,7 +69,7 @@ make docker-buildx-push IMAGE_REPO=ghcr.io/<org>/truckmoov IMAGE_TAG=<tag> PUSH_
 - `workflow_dispatch`: lets you trigger the pipeline manually.
 
 Kubernetes manifests now live under `deploy/k8s/{notification,tracking,dispatch}` for the in-cluster service names used by the platform gateway.
-Runtime state for these services is now backed by Redis instead of per-process in-memory repositories, so multiple replicas can share the same persisted data.
+Dispatch job state is now backed by Postgres instead of per-process memory, while tracking continues to use Redis for operational location state.
 
 ## Health endpoints
 - `GET http://localhost:3003/notify/health`
@@ -90,6 +96,11 @@ Runtime state for these services is now backed by Redis instead of per-process i
 - `POST /dispatch/jobs/{job_id}/pod-attachments` add proof-of-delivery attachment.
 - `POST /dispatch/jobs/{job_id}/notes` add dispatcher note.
 - `POST /dispatch/jobs/status` legacy compatibility endpoint for direct status event publishing.
+
+## Dispatch storage
+- Dispatch jobs are stored in Postgres table `dispatch_jobs`.
+- The repository keeps the full job aggregate in `payload JSONB` and surfaces indexed workflow columns (`status`, `priority`, `assigned_driver_id`, `assigned_vehicle_id`, timestamps) for relational querying.
+- Existing Redis-backed dispatch job records are not auto-migrated; recreate or backfill them if you are switching an environment with live data.
 
 ## Event topics (examples)
 - `tm.<tenant>.vehicle.location.updated`

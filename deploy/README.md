@@ -27,7 +27,7 @@ These manifests expose the same in-cluster service names already referenced by t
 
 ## Runtime notes
 
-The production entrypoints now persist state through Redis-backed repositories. The manifests default to `replicas: 2`, assuming a reachable shared Redis service.
+Dispatch now persists jobs through Postgres so business records survive restarts and can be queried relationally. Tracking still uses Redis for low-latency location state. The manifests default to `replicas: 2`, assuming a reachable shared Postgres service for dispatch and Redis service for tracking.
 
 ## Image names
 

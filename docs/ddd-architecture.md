@@ -19,7 +19,7 @@ Per bounded context:
 - domain aggregate: `internal/dispatch/domain/job.go`
 - use-case: `internal/dispatch/application/job_lifecycle.go`
 - adapters:
-  - repository: `internal/dispatch/infrastructure/job_repository.go`
+  - repository: `internal/dispatch/infrastructure/job_repository.go`, `internal/dispatch/infrastructure/postgres_job_repository.go`
   - notifier: `internal/dispatch/infrastructure/driver_instruction_notifier.go`
 - HTTP adapter: `internal/dispatch/interfaces/http/handler.go`
 - composition root wiring: `cmd/dispatch/main.go`
@@ -64,6 +64,6 @@ Public API remains:
 - `GET /dispatch/docs/openapi.json`
 
 ## Next DDD slices
-1. Replace in-memory dispatch repository with Redis/Postgres-backed adapter for durability.
-2. Add notification consumer for `tm.<tenant>.driver.job.instruction` to deliver WhatsApp messages.
-3. Introduce domain value objects for IDs/statuses to centralize validation.
+1. Add notification consumer for `tm.<tenant>.driver.job.instruction` to deliver WhatsApp messages.
+2. Introduce domain value objects for IDs/statuses to centralize validation.
+3. Add a reporting/query projection if dispatch analytics outgrow the current aggregate-per-row storage model.

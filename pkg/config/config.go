@@ -1,6 +1,8 @@
 package config
 
 import (
+	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -12,6 +14,12 @@ type Config struct {
 	NATSURL           string
 	NATSStream        string
 	DefaultTenant     string
+	PostgresHost      string
+	PostgresPort      string
+	PostgresUser      string
+	PostgresPassword  string
+	PostgresDB        string
+	PostgresSSLMode   string
 	RedisAddr         string
 	RedisDB           string
 	CORSOrigins       []string
@@ -31,6 +39,12 @@ func Load(serviceName, defaultPort string) Config {
 		NATSURL:           getEnv("NATS_URL", "nats://localhost:4222"),
 		NATSStream:        getEnv("NATS_STREAM", "truckmoov_events"),
 		DefaultTenant:     getEnv("DEFAULT_TENANT", "default"),
+		PostgresHost:      getEnv("POSTGRES_HOST", "localhost"),
+		PostgresPort:      getEnv("POSTGRES_PORT", "5432"),
+		PostgresUser:      getEnv("POSTGRES_USER", "truckmoov"),
+		PostgresPassword:  getEnv("POSTGRES_PASSWORD", "truckmoov"),
+		PostgresDB:        getEnv("POSTGRES_DB", "truckmoov"),
+		PostgresSSLMode:   getEnv("POSTGRES_SSLMODE", "disable"),
 		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6380"),
 		RedisDB:           getEnv("REDIS_DB", "0"),
 		MaxAccuracyM:      getEnvFloat("TELEMETRY_MAX_ACCURACY_M", 500.0),
@@ -77,6 +91,26 @@ func getEnv(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func (c Config) PostgresDSN() string {
+	query := url.Values{}
+	query.Set("sslmode", strings.TrimSpace(c.PostgresSSLMode))
+
+	dsn := url.URL{
+		Scheme:   "postgres",
+		Host:     net.JoinHostPort(strings.TrimSpace(c.PostgresHost), strings.TrimSpace(c.PostgresPort)),
+		Path:     "/" + strings.TrimSpace(c.PostgresDB),
+		RawQuery: query.Encode(),
+	}
+
+	if strings.TrimSpace(c.PostgresPassword) == "" {
+		dsn.User = url.User(strings.TrimSpace(c.PostgresUser))
+	} else {
+		dsn.User = url.UserPassword(strings.TrimSpace(c.PostgresUser), c.PostgresPassword)
+	}
+
+	return dsn.String()
 }
 
 func parseCSVEnv(key, fallback string) []string {
