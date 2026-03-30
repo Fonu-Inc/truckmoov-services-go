@@ -232,11 +232,20 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.Method != http.MethodPost {
+	switch r.Method {
+	case http.MethodGet:
+		h.listJobs(w, r)
+		return
+	case http.MethodPost:
+		h.createJob(w, r)
+		return
+	default:
 		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
+}
 
+func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 	var req createJobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -286,6 +295,20 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusCreated, job)
+}
+
+func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
+	jobs, err := h.jobLifecycleUseCase.ListJobs(r.Context(), r.URL.Query().Get("tenant_id"), application.ListJobsFilter{
+		Status:    r.URL.Query().Get("status"),
+		Query:     r.URL.Query().Get("query"),
+		DriverID:  r.URL.Query().Get("driver_id"),
+		VehicleID: r.URL.Query().Get("vehicle_id"),
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, jobs)
 }
 
 func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {

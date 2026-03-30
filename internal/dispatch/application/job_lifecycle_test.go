@@ -309,3 +309,64 @@ func TestJobLifecycleUseCase_CreateJobMapsUIDetails(t *testing.T) {
 		t.Fatalf("expected one driver notification, got %d", notifier.calls)
 	}
 }
+
+func TestJobLifecycleUseCase_ListJobsSupportsFilters(t *testing.T) {
+	repo := newLifecycleRepository()
+	useCase := NewJobLifecycleUseCase(
+		repo,
+		&lifecycleEmitter{},
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	jobA, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:     "job-a",
+		Reference: "TM-2849",
+		VehicleID: "vehicle-1",
+		Pickup:    domain.JobStop{Address: "Oshodi Market"},
+		Dropoff:   domain.JobStop{Address: "Ikorodu"},
+	})
+	if err != nil {
+		t.Fatalf("create job A failed: %v", err)
+	}
+
+	_, err = useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:     "job-b",
+		Reference: "TM-2850",
+		VehicleID: "vehicle-2",
+		DriverID:  "driver-2",
+		Pickup:    domain.JobStop{Address: "Apapa Port"},
+		Dropoff:   domain.JobStop{Address: "Victoria Island"},
+	})
+	if err != nil {
+		t.Fatalf("create job B failed: %v", err)
+	}
+
+	list, err := useCase.ListJobs(context.Background(), "", ListJobsFilter{
+		Status: "pending",
+		Query:  "oshodi",
+	})
+	if err != nil {
+		t.Fatalf("list jobs failed: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected one pending oshodi job, got %d", len(list))
+	}
+	if list[0].ID != jobA.ID {
+		t.Fatalf("expected job %q, got %q", jobA.ID, list[0].ID)
+	}
+
+	list, err = useCase.ListJobs(context.Background(), "", ListJobsFilter{
+		Status:    "in_progress",
+		VehicleID: "vehicle-2",
+		DriverID:  "driver-2",
+	})
+	if err != nil {
+		t.Fatalf("list jobs with in_progress failed: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != "job-b" {
+		t.Fatalf("expected assigned job-b, got %#v", list)
+	}
+}

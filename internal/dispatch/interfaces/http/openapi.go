@@ -210,6 +210,40 @@ func dispatchOpenAPISpec() map[string]any {
 				},
 			},
 			"/dispatch/jobs": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "List jobs",
+					"operationId": "listJobs",
+					"description": "Returns dispatch jobs for a tenant. Supports simple filtering for the Dispatch Center page.",
+					"parameters": []map[string]any{
+						{"name": "tenant_id", "in": "query", "schema": map[string]any{"type": "string"}},
+						{"name": "status", "in": "query", "schema": map[string]any{"type": "string", "enum": []string{"all", "pending", "created", "assigned", "in_progress", "en-route", "arrived", "loaded", "completed", "delivered", "cancelled"}}},
+						{"name": "query", "in": "query", "schema": map[string]any{"type": "string"}},
+						{"name": "driver_id", "in": "query", "schema": map[string]any{"type": "string"}},
+						{"name": "vehicle_id", "in": "query", "schema": map[string]any{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Jobs list",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"type":  "array",
+										"items": map[string]any{"$ref": "#/components/schemas/Job"},
+									},
+								},
+							},
+						},
+						"400": map[string]any{
+							"description": "Validation error",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/ErrorResponse"},
+								},
+							},
+						},
+					},
+				},
 				"post": map[string]any{
 					"tags":        []string{"dispatch"},
 					"summary":     "Create job from the dispatch UI payload",

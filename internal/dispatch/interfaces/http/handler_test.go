@@ -155,6 +155,51 @@ func TestHandler_ETAContract(t *testing.T) {
 	}
 }
 
+func TestHandler_ListJobsContract(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	for _, body := range []string{
+		`{
+			"reference":"TM-2849",
+			"vehicleId":"vehicle-1",
+			"pickupLocation":"Oshodi Market",
+			"deliveryLocation":"Ikorodu",
+			"priority":"low"
+		}`,
+		`{
+			"reference":"TM-2850",
+			"vehicleId":"vehicle-2",
+			"driverId":"driver-2",
+			"pickupLocation":"Apapa Port",
+			"deliveryLocation":"Victoria Island",
+			"priority":"normal"
+		}`,
+	} {
+		res := dispatchRequest(t, mux, http.MethodPost, "/dispatch/jobs", body)
+		if res.Code != http.StatusCreated {
+			t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, res.Code, res.Body.String())
+		}
+	}
+
+	res := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs?status=in_progress&query=victoria&vehicle_id=vehicle-2&driver_id=driver-2", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, res.Code, res.Body.String())
+	}
+
+	var jobs []domain.Job
+	if err := json.Unmarshal(res.Body.Bytes(), &jobs); err != nil {
+		t.Fatalf("decode jobs list: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected one filtered job, got %d", len(jobs))
+	}
+	if jobs[0].Reference != "TM-2850" {
+		t.Fatalf("expected TM-2850, got %q", jobs[0].Reference)
+	}
+}
+
 func TestHandler_JobLifecycleContract(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()

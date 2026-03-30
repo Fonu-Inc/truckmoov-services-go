@@ -99,6 +99,13 @@ type AddJobNoteCommand struct {
 	AuthorID string
 }
 
+type ListJobsFilter struct {
+	Status    string
+	Query     string
+	DriverID  string
+	VehicleID string
+}
+
 type JobLifecycleUseCase struct {
 	repository    JobRepository
 	statusEmitter JobStatusChangedEmitter
@@ -452,6 +459,41 @@ func (u *JobLifecycleUseCase) GetJob(_ context.Context, tenantID, jobID string) 
 	return u.findJobForTenant(tenantID, jobID)
 }
 
+func (u *JobLifecycleUseCase) ListJobs(_ context.Context, tenantID string, filter ListJobsFilter) ([]domain.Job, error) {
+	jobs := append([]domain.Job{}, u.repository.FindByTenant(u.resolveTenant(tenantID))...)
+
+	statusMatcher, err := buildJobStatusMatcher(filter.Status)
+	if err != nil {
+		return nil, err
+	}
+
+	query := strings.ToLower(strings.TrimSpace(filter.Query))
+	driverID := strings.TrimSpace(filter.DriverID)
+	vehicleID := strings.TrimSpace(filter.VehicleID)
+
+	filtered := make([]domain.Job, 0, len(jobs))
+	for _, job := range jobs {
+		if statusMatcher != nil && !statusMatcher(job.Status) {
+			continue
+		}
+		if driverID != "" && job.AssignedDriverID != driverID {
+			continue
+		}
+		if vehicleID != "" && job.AssignedVehicleID != vehicleID {
+			continue
+		}
+		if query != "" && !jobMatchesQuery(job, query) {
+			continue
+		}
+		filtered = append(filtered, job)
+	}
+
+	sort.SliceStable(filtered, func(i, j int) bool {
+		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+	})
+	return filtered, nil
+}
+
 func (u *JobLifecycleUseCase) GetTimeline(_ context.Context, tenantID, jobID string) ([]domain.JobTimelineEntry, error) {
 	job, err := u.findJobForTenant(tenantID, jobID)
 	if err != nil {
@@ -519,4 +561,47 @@ func buildDriverInstructionMessage(job domain.Job) string {
 		job.Dropoff.Address,
 		job.Priority,
 	)
+}
+
+func buildJobStatusMatcher(raw string) (func(domain.JobStatus) bool, error) {
+	status := strings.ToLower(strings.TrimSpace(raw))
+	switch status {
+	case "", "all":
+		return nil, nil
+	case "pending":
+		return func(current domain.JobStatus) bool { return current == domain.StatusCreated }, nil
+	case "in_progress", "in-progress":
+		return func(current domain.JobStatus) bool {
+			return current == domain.StatusAssigned ||
+				current == domain.StatusEnRoute ||
+				current == domain.StatusArrived ||
+				current == domain.StatusLoaded
+		}, nil
+	case "completed":
+		return func(current domain.JobStatus) bool { return current == domain.StatusDelivered }, nil
+	default:
+		normalized, err := domain.NormalizeStatus(status)
+		if err != nil {
+			return nil, err
+		}
+		return func(current domain.JobStatus) bool { return current == normalized }, nil
+	}
+}
+
+func jobMatchesQuery(job domain.Job, query string) bool {
+	for _, field := range []string{
+		job.ID,
+		job.Reference,
+		job.Pickup.Address,
+		job.Dropoff.Address,
+		job.CargoType,
+		job.CargoDescription,
+		job.AssignedDriverID,
+		job.AssignedVehicleID,
+	} {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(field)), query) {
+			return true
+		}
+	}
+	return false
 }

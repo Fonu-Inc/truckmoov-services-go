@@ -48,6 +48,7 @@ Per bounded context:
 Public API remains:
 - `GET /dispatch/health`
 - `GET /dispatch/eta`
+- `GET /dispatch/jobs`
 - `POST /dispatch/jobs`
 - `PATCH /dispatch/jobs/{job_id}/scheduling`
 - `POST /dispatch/jobs/{job_id}/assign`
