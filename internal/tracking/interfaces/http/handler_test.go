@@ -3,7 +3,11 @@ package trackinghttp
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,6 +16,7 @@ import (
 	"github.com/truckmoov/services-go/internal/tracking/application"
 	"github.com/truckmoov/services-go/internal/tracking/domain"
 	"github.com/truckmoov/services-go/internal/tracking/infrastructure"
+	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
 type fakeTrackingPublisher struct{}
@@ -31,6 +36,15 @@ func (f fixedTrackingClock) Now() time.Time { return f.now }
 type fixedTrackingID struct{ value string }
 
 func (f fixedTrackingID) New(prefix string) string { return prefix + "-" + f.value }
+
+func makeTrackingBearerToken(secret, tenantID, role string) string {
+	payload := []byte(`{"sub":"user-1","email":"tracking@example.com","role":"` + role + `","tenantId":"` + tenantID + `","exp":` + fmt.Sprint(time.Now().Add(time.Hour).Unix()) + `}`)
+	encodedPayload := base64.RawURLEncoding.EncodeToString(payload)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(encodedPayload))
+	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return encodedPayload + "." + signature
+}
 
 func buildTrackingTestHandler() *Handler {
 	clock := fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)}
@@ -109,6 +123,7 @@ func TestHandler_ListVehiclesContract(t *testing.T) {
 	handler := buildTrackingTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
+	server := httpx.WithAuthContext(mux, "replace-me")
 
 	body := bytes.NewBufferString(`{"tenant_id":"tenant-1","vehicle_id":"vehicle-1","device_id":"device-1","lat":6.5,"lng":3.4}`)
 	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", body)
@@ -119,9 +134,10 @@ func TestHandler_ListVehiclesContract(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusAccepted, res.Code)
 	}
 
-	listReq := httptest.NewRequest(http.MethodGet, "/tracking/vehicles?tenant_id=tenant-1", nil)
+	listReq := httptest.NewRequest(http.MethodGet, "/tracking/vehicles", nil)
+	listReq.Header.Set("Authorization", "Bearer "+makeTrackingBearerToken("replace-me", "tenant-1", "DISPATCHER"))
 	listRes := httptest.NewRecorder()
-	mux.ServeHTTP(listRes, listReq)
+	server.ServeHTTP(listRes, listReq)
 	if listRes.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, listRes.Code)
 	}
@@ -143,6 +159,7 @@ func TestHandler_VehicleHistoryContract(t *testing.T) {
 	handler := buildTrackingTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
+	server := httpx.WithAuthContext(mux, "replace-me")
 
 	lines := []string{
 		`{"tenant_id":"tenant-2","vehicle_id":"vehicle-2","device_id":"device-2","lat":6.6,"lng":3.7,"fix_time":"2026-02-02T11:00:00Z"}`,
@@ -158,9 +175,10 @@ func TestHandler_VehicleHistoryContract(t *testing.T) {
 		}
 	}
 
-	historyReq := httptest.NewRequest(http.MethodGet, "/tracking/vehicles/vehicle-2/history?tenant_id=tenant-2&limit=1", nil)
+	historyReq := httptest.NewRequest(http.MethodGet, "/tracking/vehicles/vehicle-2/history?limit=1", nil)
+	historyReq.Header.Set("Authorization", "Bearer "+makeTrackingBearerToken("replace-me", "tenant-2", "DISPATCHER"))
 	historyRes := httptest.NewRecorder()
-	mux.ServeHTTP(historyRes, historyReq)
+	server.ServeHTTP(historyRes, historyReq)
 	if historyRes.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, historyRes.Code)
 	}
@@ -180,5 +198,29 @@ func TestHandler_VehicleHistoryContract(t *testing.T) {
 	}
 	if historyPayload.History[0]["fix_time"] != "2026-02-02T11:05:00Z" {
 		t.Fatalf("expected most recent fix_time, got %#v", historyPayload.History[0]["fix_time"])
+	}
+}
+
+func TestHandler_ListVehiclesRejectsTenantQuery(t *testing.T) {
+	handler := buildTrackingTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	server := httpx.WithAuthContext(mux, "replace-me")
+
+	body := bytes.NewBufferString(`{"tenant_id":"tenant-1","vehicle_id":"vehicle-1","device_id":"device-1","lat":6.5,"lng":3.4}`)
+	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", body)
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+	mux.ServeHTTP(res, req)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d", http.StatusAccepted, res.Code)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/tracking/vehicles?tenant_id=client-tenant", nil)
+	listReq.Header.Set("Authorization", "Bearer "+makeTrackingBearerToken("replace-me", "tenant-1", "DISPATCHER"))
+	listRes := httptest.NewRecorder()
+	server.ServeHTTP(listRes, listReq)
+	if listRes.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, listRes.Code, listRes.Body.String())
 	}
 }

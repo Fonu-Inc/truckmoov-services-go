@@ -12,10 +12,10 @@ import (
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
 	trackinggrpc "github.com/truckmoov/services-go/pkg/grpc"
+	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
 type statusRequest struct {
-	TenantID       string `json:"tenant_id"`
 	JobID          string `json:"job_id"`
 	PreviousStatus string `json:"previous_status,omitempty"`
 	NewStatus      string `json:"new_status"`
@@ -41,7 +41,6 @@ type timeWindowRequest struct {
 }
 
 type createJobRequest struct {
-	TenantID                string            `json:"tenant_id,omitempty"`
 	JobID                   string            `json:"job_id,omitempty"`
 	Reference               string            `json:"reference,omitempty"`
 	VehicleID               string            `json:"vehicleId,omitempty"`
@@ -74,42 +73,35 @@ type createJobRequest struct {
 }
 
 type updateJobSchedulingRequest struct {
-	TenantID   string            `json:"tenant_id,omitempty"`
 	Priority   string            `json:"priority,omitempty"`
 	TimeWindow timeWindowRequest `json:"time_window,omitempty"`
 }
 
 type assignJobRequest struct {
-	TenantID  string `json:"tenant_id,omitempty"`
 	DriverID  string `json:"driver_id"`
 	VehicleID string `json:"vehicle_id"`
 	Reason    string `json:"reason,omitempty"`
 }
 
 type cancelJobRequest struct {
-	TenantID string `json:"tenant_id,omitempty"`
-	Reason   string `json:"reason"`
+	Reason string `json:"reason"`
 }
 
 type acknowledgeJobRequest struct {
-	TenantID string `json:"tenant_id,omitempty"`
 	DriverID string `json:"driver_id,omitempty"`
 }
 
 type updateJobStatusRequest struct {
-	TenantID string `json:"tenant_id,omitempty"`
-	Status   string `json:"status"`
+	Status string `json:"status"`
 }
 
 type addPODAttachmentRequest struct {
-	TenantID   string `json:"tenant_id,omitempty"`
 	Kind       string `json:"kind"`
 	URL        string `json:"url"`
 	UploadedBy string `json:"uploaded_by,omitempty"`
 }
 
 type addJobNoteRequest struct {
-	TenantID string `json:"tenant_id,omitempty"`
 	Text     string `json:"text"`
 	AuthorID string `json:"author_id,omitempty"`
 }
@@ -135,7 +127,6 @@ type driverShiftRequest struct {
 }
 
 type suggestRouteRequest struct {
-	TenantID      string                `json:"tenant_id,omitempty"`
 	JobID         string                `json:"job_id"`
 	Origin        routeLocationRequest  `json:"origin"`
 	Vehicle       vehicleProfileRequest `json:"vehicle"`
@@ -144,7 +135,6 @@ type suggestRouteRequest struct {
 }
 
 type optimizeRouteRequest struct {
-	TenantID      string                `json:"tenant_id,omitempty"`
 	JobIDs        []string              `json:"job_ids"`
 	Origin        routeLocationRequest  `json:"origin"`
 	Vehicle       vehicleProfileRequest `json:"vehicle"`
@@ -247,7 +237,7 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 	var req createJobRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -269,8 +259,13 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	job, err := h.jobLifecycleUseCase.CreateJob(r.Context(), application.CreateJobCommand{
-		TenantID:                req.TenantID,
+		TenantID:                tenantID,
 		JobID:                   req.JobID,
 		Reference:               req.Reference,
 		VehicleID:               req.vehicleID(),
@@ -297,8 +292,52 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, job)
 }
 
+func (h *Handler) resolveTenantID(r *http.Request) (string, error) {
+	tenantID := strings.TrimSpace(httpx.TenantIDFromRequest(r))
+	if tenantID == "" {
+		return "", errors.New("authenticated tenant context is required")
+	}
+	return tenantID, nil
+}
+
+func (h *Handler) requireTenantID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	tenantID, err := h.resolveTenantID(r)
+	if err != nil {
+		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		return "", false
+	}
+	return tenantID, true
+}
+
+func decodeJSONBody(r *http.Request, dest any) error {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(dest)
+}
+
+func rejectClientTenantQuery(w http.ResponseWriter, r *http.Request) bool {
+	query := r.URL.Query()
+	if _, ok := query["tenant_id"]; ok {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id must not be supplied; tenant context is derived from the access token"})
+		return true
+	}
+	if _, ok := query["tenantId"]; ok {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantId must not be supplied; tenant context is derived from the access token"})
+		return true
+	}
+	return false
+}
+
 func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
-	jobs, err := h.jobLifecycleUseCase.ListJobs(r.Context(), r.URL.Query().Get("tenant_id"), application.ListJobsFilter{
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+	if rejectClientTenantQuery(w, r) {
+		return
+	}
+
+	jobs, err := h.jobLifecycleUseCase.ListJobs(r.Context(), tenantID, application.ListJobsFilter{
 		Status:    r.URL.Query().Get("status"),
 		Query:     r.URL.Query().Get("query"),
 		DriverID:  r.URL.Query().Get("driver_id"),
@@ -353,7 +392,11 @@ func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, jobID string) {
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	job, err := h.jobLifecycleUseCase.GetJob(r.Context(), tenantID, jobID)
 	if err != nil {
 		respondLifecycleError(w, err)
@@ -369,7 +412,7 @@ func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jo
 	}
 
 	var req updateJobSchedulingRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -380,8 +423,13 @@ func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jo
 		return
 	}
 
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	job, err := h.jobLifecycleUseCase.UpdateScheduling(r.Context(), application.UpdateJobSchedulingCommand{
-		TenantID:   req.TenantID,
+		TenantID:   tenantID,
 		JobID:      jobID,
 		Priority:   req.Priority,
 		TimeWindow: timeWindow,
@@ -400,13 +448,18 @@ func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string
 	}
 
 	var req assignJobRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	job, err := h.jobLifecycleUseCase.AssignJob(r.Context(), application.AssignJobCommand{
-		TenantID:  req.TenantID,
+		TenantID:  tenantID,
 		JobID:     jobID,
 		DriverID:  req.DriverID,
 		VehicleID: req.VehicleID,
@@ -426,13 +479,18 @@ func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request, jobID string
 	}
 
 	var req cancelJobRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	job, err := h.jobLifecycleUseCase.CancelJob(r.Context(), application.CancelJobCommand{
-		TenantID: req.TenantID,
+		TenantID: tenantID,
 		JobID:    jobID,
 		Reason:   req.Reason,
 	})
@@ -450,13 +508,18 @@ func (h *Handler) acknowledgeJob(w http.ResponseWriter, r *http.Request, jobID s
 	}
 
 	var req acknowledgeJobRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	job, err := h.jobLifecycleUseCase.AcknowledgeJob(r.Context(), application.AcknowledgeJobCommand{
-		TenantID: req.TenantID,
+		TenantID: tenantID,
 		JobID:    jobID,
 		DriverID: req.DriverID,
 	})
@@ -474,13 +537,18 @@ func (h *Handler) updateJobLifecycleStatus(w http.ResponseWriter, r *http.Reques
 	}
 
 	var req updateJobStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	job, err := h.jobLifecycleUseCase.UpdateJobStatus(r.Context(), application.UpdateJobStatusCommand{
-		TenantID: req.TenantID,
+		TenantID: tenantID,
 		JobID:    jobID,
 		Status:   req.Status,
 	})
@@ -497,7 +565,11 @@ func (h *Handler) getJobTimeline(w http.ResponseWriter, r *http.Request, jobID s
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	timeline, err := h.jobLifecycleUseCase.GetTimeline(r.Context(), tenantID, jobID)
 	if err != nil {
 		respondLifecycleError(w, err)
@@ -516,13 +588,18 @@ func (h *Handler) addPODAttachment(w http.ResponseWriter, r *http.Request, jobID
 	}
 
 	var req addPODAttachmentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	job, err := h.jobLifecycleUseCase.AddPODAttachment(r.Context(), application.AddJobPODAttachmentCommand{
-		TenantID:   req.TenantID,
+		TenantID:   tenantID,
 		JobID:      jobID,
 		Kind:       req.Kind,
 		URL:        req.URL,
@@ -542,13 +619,18 @@ func (h *Handler) addJobNote(w http.ResponseWriter, r *http.Request, jobID strin
 	}
 
 	var req addJobNoteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	job, err := h.jobLifecycleUseCase.AddNote(r.Context(), application.AddJobNoteCommand{
-		TenantID: req.TenantID,
+		TenantID: tenantID,
 		JobID:    jobID,
 		Text:     req.Text,
 		AuthorID: req.AuthorID,
@@ -567,13 +649,18 @@ func (h *Handler) updateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req statusRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	result, err := h.publishJobStatusUseCase.Execute(r.Context(), application.PublishJobStatusChangedCommand{
-		TenantID:          req.TenantID,
+		TenantID:          tenantID,
 		JobID:             req.JobID,
 		PreviousStatus:    req.PreviousStatus,
 		NewStatus:         req.NewStatus,
@@ -599,11 +686,19 @@ func (h *Handler) computeETA(w http.ResponseWriter, r *http.Request) {
 	jobID := r.URL.Query().Get("job_id")
 	destination := r.URL.Query().Get("destination")
 
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+	if rejectClientTenantQuery(w, r) {
+		return
+	}
+
 	if h.routingUseCase != nil && strings.TrimSpace(jobID) != "" {
 		if origin, ok := h.lookupVehicleLocation(vehicleID); ok {
 			plan, err := h.routingUseCase.EstimateETAFromLocation(
 				r.Context(),
-				r.URL.Query().Get("tenant_id"),
+				tenantID,
 				jobID,
 				origin,
 				application.RouteVehicleProfile{VehicleID: vehicleID},
@@ -643,7 +738,7 @@ func (h *Handler) suggestRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req suggestRouteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -659,8 +754,13 @@ func (h *Handler) suggestRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	plan, err := h.routingUseCase.SuggestRoute(r.Context(), application.SuggestRouteCommand{
-		TenantID:      req.TenantID,
+		TenantID:      tenantID,
 		JobID:         req.JobID,
 		Origin:        req.Origin.toDomain(),
 		Vehicle:       req.Vehicle.toDomain(),
@@ -686,7 +786,7 @@ func (h *Handler) optimizeRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req optimizeRouteRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
@@ -702,8 +802,13 @@ func (h *Handler) optimizeRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
 	plan, err := h.routingUseCase.OptimizeRoute(r.Context(), application.OptimizeRouteCommand{
-		TenantID:      req.TenantID,
+		TenantID:      tenantID,
 		JobIDs:        req.JobIDs,
 		Origin:        req.Origin.toDomain(),
 		Vehicle:       req.Vehicle.toDomain(),

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/truckmoov/services-go/internal/tracking/application"
+	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
 type ingestRequest struct {
@@ -183,13 +184,42 @@ func (h *Handler) listVehicles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
+	tenantID, ok := h.resolveTenantID(r)
+	if !ok {
+		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authenticated tenant context is required"})
+		return
+	}
+	if rejectClientTenantQuery(w, r) {
+		return
+	}
+
 	locations, err := h.trackingQueryUseCase.ListLatestLocations(r.Context(), tenantID)
 	if err != nil {
 		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"vehicles": locations})
+}
+
+func (h *Handler) resolveTenantID(r *http.Request) (string, bool) {
+	tenantID := strings.TrimSpace(httpx.TenantIDFromRequest(r))
+	if tenantID == "" {
+		return "", false
+	}
+	return tenantID, true
+}
+
+func rejectClientTenantQuery(w http.ResponseWriter, r *http.Request) bool {
+	query := r.URL.Query()
+	if _, ok := query["tenant_id"]; ok {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id must not be supplied; tenant context is derived from the access token"})
+		return true
+	}
+	if _, ok := query["tenantId"]; ok {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantId must not be supplied; tenant context is derived from the access token"})
+		return true
+	}
+	return false
 }
 
 func (h *Handler) vehiclesResource(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +249,15 @@ func (h *Handler) vehicleHistory(w http.ResponseWriter, r *http.Request, vehicle
 		return
 	}
 
-	tenantID := r.URL.Query().Get("tenant_id")
+	tenantID, ok := h.resolveTenantID(r)
+	if !ok {
+		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authenticated tenant context is required"})
+		return
+	}
+	if rejectClientTenantQuery(w, r) {
+		return
+	}
+
 	limit := parseLimit(r.URL.Query().Get("limit"))
 	history, err := h.trackingQueryUseCase.VehicleHistory(r.Context(), tenantID, vehicleID, limit)
 	if err != nil {

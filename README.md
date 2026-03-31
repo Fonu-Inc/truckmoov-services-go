@@ -26,6 +26,7 @@ go test ./...
 Core vars used by notification, tracking, and dispatch:
 - `NOTIFICATION_PORT`, `TRACKING_PORT`, `DISPATCH_PORT`
 - `DEFAULT_TENANT`
+- `JWT_SECRET` (must match the auth service signing secret when tenant should be derived from bearer tokens)
 - `CORS_ALLOWED_ORIGINS`
 - `NATS_URL`, `NATS_STREAM` (use a JetStream-safe stream name such as `truckmoov_events`)
 
@@ -84,7 +85,7 @@ Dispatch job state is now backed by Postgres instead of per-process memory, whil
 - Kong unified docs URL: `GET http://localhost:8000/docs/dispatch`
 
 ## Dispatch lifecycle endpoints (Epic D)
-- `GET /dispatch/jobs` list jobs for the Dispatch Center. Supports `tenant_id`, `status`, `query`, `driver_id`, and `vehicle_id` filters.
+- `GET /dispatch/jobs` list jobs for the Dispatch Center. Supports `status`, `query`, `driver_id`, and `vehicle_id` filters. Tenant scope is derived from the bearer token.
 - `POST /dispatch/jobs` create job from the original Dispatch Center modal payload (`vehicleId`, optional `driverId`, `pickupLocation`, `deliveryLocation`, optional `cargoDescription`, `priority`, `notes`). The older richer flat payload and nested pickup/dropoff payload are still accepted.
 - `PATCH /dispatch/jobs/{job_id}/scheduling` set priority/time windows.
 - `POST /dispatch/jobs/{job_id}/assign` assign/reassign driver + vehicle.

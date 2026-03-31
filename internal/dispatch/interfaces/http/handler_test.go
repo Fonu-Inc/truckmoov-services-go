@@ -3,6 +3,9 @@ package dispatchhttp
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,6 +18,7 @@ import (
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
 	"github.com/truckmoov/services-go/internal/dispatch/infrastructure"
 	trackinggrpc "github.com/truckmoov/services-go/pkg/grpc"
+	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
 type fakeJobStatusPublisher struct{}
@@ -41,6 +45,15 @@ func (s *sequenceDispatchID) New() string {
 }
 
 type fakeDriverInstructionNotifier struct{}
+
+func makeDispatchBearerToken(secret, tenantID, role string) string {
+	payload := fmt.Sprintf(`{"sub":"user-1","email":"ops@example.com","role":"%s","tenantId":"%s","exp":%d}`, role, tenantID, time.Now().Add(time.Hour).Unix())
+	encodedPayload := base64.RawURLEncoding.EncodeToString([]byte(payload))
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(encodedPayload))
+	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return encodedPayload + "." + signature
+}
 
 func (f *fakeDriverInstructionNotifier) NotifyJobInstruction(
 	_ context.Context,
@@ -74,9 +87,20 @@ func buildDispatchTestHandler() *Handler {
 
 func dispatchRequest(
 	t *testing.T,
-	mux *http.ServeMux,
+	handler http.Handler,
 	method, path string,
 	body string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	return dispatchRequestWithHeaders(t, handler, method, path, body, nil)
+}
+
+func dispatchRequestWithHeaders(
+	t *testing.T,
+	handler http.Handler,
+	method, path string,
+	body string,
+	headers map[string]string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -90,9 +114,19 @@ func dispatchRequest(
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	handler = httpx.WithAuthContext(handler, "replace-me")
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	if _, ok := headers["Authorization"]; !ok {
+		headers["Authorization"] = "Bearer " + makeDispatchBearerToken("replace-me", "default", "DISPATCHER")
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
 
 	res := httptest.NewRecorder()
-	mux.ServeHTTP(res, req)
+	handler.ServeHTTP(res, req)
 	return res
 }
 
@@ -145,10 +179,7 @@ func TestHandler_ETAContract(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	req := httptest.NewRequest(http.MethodGet, "/dispatch/eta?job_id=job-1&vehicle_id=vehicle-1&destination=dest", nil)
-	res := httptest.NewRecorder()
-
-	mux.ServeHTTP(res, req)
+	res := dispatchRequest(t, mux, http.MethodGet, "/dispatch/eta?job_id=job-1&vehicle_id=vehicle-1&destination=dest", "")
 
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
@@ -680,5 +711,108 @@ func TestHandler_OptimizeRouteConstraintViolationReported(t *testing.T) {
 	}
 	if len(payload.InfeasibilityReasons) < 2 {
 		t.Fatalf("expected multiple infeasibility reasons, got %#v", payload.InfeasibilityReasons)
+	}
+}
+
+func TestHandler_CreateJobRejectsClientTenantField(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	server := httpx.WithAuthContext(mux, "replace-me")
+	authHeader := map[string]string{"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "tenant-from-token", "DISPATCHER")}
+
+	createRes := dispatchRequestWithHeaders(
+		t,
+		server,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"tenant_id":"client-tenant",
+			"reference":"TM-3002",
+			"vehicleId":"vehicle-2",
+			"pickupLocation":"Apapa Port",
+			"deliveryLocation":"Lekki Free Zone",
+			"priority":"normal"
+		}`,
+		authHeader,
+	)
+	if createRes.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, createRes.Code, createRes.Body.String())
+	}
+}
+
+func TestHandler_CreateAndListJobsUseTokenTenant(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	server := httpx.WithAuthContext(mux, "replace-me")
+	authHeader := map[string]string{"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "tenant-from-token", "DISPATCHER")}
+
+	createRes := dispatchRequestWithHeaders(
+		t,
+		server,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"reference":"TM-3002",
+			"vehicleId":"vehicle-2",
+			"pickupLocation":"Apapa Port",
+			"deliveryLocation":"Lekki Free Zone",
+			"priority":"normal"
+		}`,
+		authHeader,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+
+	var created domain.Job
+	if err := json.Unmarshal(createRes.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+	if created.TenantID != "tenant-from-token" {
+		t.Fatalf("expected token tenant, got %q", created.TenantID)
+	}
+
+	listRes := dispatchRequestWithHeaders(t, server, http.MethodGet, "/dispatch/jobs", "", authHeader)
+	if listRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, listRes.Code, listRes.Body.String())
+	}
+
+	var jobs []domain.Job
+	if err := json.Unmarshal(listRes.Body.Bytes(), &jobs); err != nil {
+		t.Fatalf("decode jobs list: %v", err)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected one tenant-scoped job, got %d", len(jobs))
+	}
+	if jobs[0].TenantID != "tenant-from-token" {
+		t.Fatalf("expected tenant-from-token, got %q", jobs[0].TenantID)
+	}
+}
+
+func TestHandler_ListJobsRejectsTenantQuery(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	server := httpx.WithAuthContext(mux, "replace-me")
+	authHeader := map[string]string{"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "tenant-from-token", "DISPATCHER")}
+
+	listRes := dispatchRequestWithHeaders(t, server, http.MethodGet, "/dispatch/jobs?tenant_id=client-tenant", "", authHeader)
+	if listRes.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, listRes.Code, listRes.Body.String())
+	}
+}
+
+func TestHandler_ETARejectsTenantQuery(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	server := httpx.WithAuthContext(mux, "replace-me")
+	authHeader := map[string]string{"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "tenant-from-token", "DISPATCHER")}
+
+	res := dispatchRequestWithHeaders(t, server, http.MethodGet, "/dispatch/eta?tenant_id=client-tenant&vehicle_id=vehicle-1&destination=Apapa", "", authHeader)
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, res.Code, res.Body.String())
 	}
 }

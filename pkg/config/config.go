@@ -14,6 +14,7 @@ type Config struct {
 	NATSURL           string
 	NATSStream        string
 	DefaultTenant     string
+	JWTSecret         string
 	PostgresHost      string
 	PostgresPort      string
 	PostgresUser      string
@@ -39,6 +40,7 @@ func Load(serviceName, defaultPort string) Config {
 		NATSURL:           getEnv("NATS_URL", "nats://localhost:4222"),
 		NATSStream:        getEnv("NATS_STREAM", "truckmoov_events"),
 		DefaultTenant:     getEnv("DEFAULT_TENANT", "default"),
+		JWTSecret:         getEnv("JWT_SECRET", "replace-me"),
 		PostgresHost:      getEnv("POSTGRES_HOST", "localhost"),
 		PostgresPort:      getEnv("POSTGRES_PORT", "5432"),
 		PostgresUser:      getEnv("POSTGRES_USER", "truckmoov"),

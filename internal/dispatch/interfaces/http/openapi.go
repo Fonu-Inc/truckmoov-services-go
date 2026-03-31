@@ -55,14 +55,6 @@ func dispatchOpenAPISpec() map[string]any {
 			"type": "string",
 		},
 	}
-	tenantQueryParameter := map[string]any{
-		"name": "tenant_id",
-		"in":   "query",
-		"schema": map[string]any{
-			"type": "string",
-		},
-	}
-
 	return map[string]any{
 		"openapi": "3.0.3",
 		"info": map[string]any{
@@ -93,9 +85,9 @@ func dispatchOpenAPISpec() map[string]any {
 				"get": map[string]any{
 					"tags":        []string{"dispatch"},
 					"summary":     "Compute ETA",
+					"description": "Computes ETA for the authenticated tenant.",
 					"operationId": "computeETA",
 					"parameters": []map[string]any{
-						{"name": "tenant_id", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "job_id", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "vehicle_id", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "destination", "in": "query", "schema": map[string]any{"type": "string"}},
@@ -214,9 +206,8 @@ func dispatchOpenAPISpec() map[string]any {
 					"tags":        []string{"dispatch"},
 					"summary":     "List jobs",
 					"operationId": "listJobs",
-					"description": "Returns dispatch jobs for a tenant. Supports simple filtering for the Dispatch Center page.",
+					"description": "Returns dispatch jobs for the authenticated tenant. Supports simple filtering for the Dispatch Center page.",
 					"parameters": []map[string]any{
-						{"name": "tenant_id", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "status", "in": "query", "schema": map[string]any{"type": "string", "enum": []string{"all", "pending", "created", "assigned", "in_progress", "en-route", "arrived", "loaded", "completed", "delivered", "cancelled"}}},
 						{"name": "query", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "driver_id", "in": "query", "schema": map[string]any{"type": "string"}},
@@ -288,7 +279,7 @@ func dispatchOpenAPISpec() map[string]any {
 					"tags":        []string{"dispatch"},
 					"summary":     "Get job details",
 					"operationId": "getJob",
-					"parameters":  []any{jobIDParameter, tenantQueryParameter},
+					"parameters":  []any{jobIDParameter},
 					"responses": map[string]any{
 						"200": map[string]any{
 							"description": "Job details",
@@ -467,7 +458,7 @@ func dispatchOpenAPISpec() map[string]any {
 					"tags":        []string{"dispatch"},
 					"summary":     "Get job timeline",
 					"operationId": "getJobTimeline",
-					"parameters":  []any{jobIDParameter, tenantQueryParameter},
+					"parameters":  []any{jobIDParameter},
 					"responses": map[string]any{
 						"200": map[string]any{
 							"description": "Timeline response",
@@ -570,7 +561,6 @@ func dispatchOpenAPISpec() map[string]any {
 					"type":        "object",
 					"description": "Preferred request shape for the original Dispatch Center modal, with legacy field aliases still supported.",
 					"properties": map[string]any{
-						"tenant_id":                 map[string]any{"type": "string"},
 						"job_id":                    map[string]any{"type": "string", "description": "Optional internal job identifier. The service generates one when omitted."},
 						"reference":                 map[string]any{"type": "string", "description": "Business-visible job reference shown in the UI."},
 						"vehicleId":                 map[string]any{"type": "string", "description": "Selected vehicle from the create-dispatch modal."},
@@ -633,7 +623,6 @@ func dispatchOpenAPISpec() map[string]any {
 				"SuggestRouteRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"tenant_id":      map[string]any{"type": "string"},
 						"job_id":         map[string]any{"type": "string"},
 						"origin":         map[string]any{"$ref": "#/components/schemas/RouteLocation"},
 						"vehicle":        map[string]any{"$ref": "#/components/schemas/VehicleProfile"},
@@ -645,7 +634,6 @@ func dispatchOpenAPISpec() map[string]any {
 				"OptimizeRouteRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"tenant_id":      map[string]any{"type": "string"},
 						"job_ids":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 						"origin":         map[string]any{"$ref": "#/components/schemas/RouteLocation"},
 						"vehicle":        map[string]any{"$ref": "#/components/schemas/VehicleProfile"},
@@ -689,7 +677,6 @@ func dispatchOpenAPISpec() map[string]any {
 				"UpdateJobSchedulingRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"tenant_id":   map[string]any{"type": "string"},
 						"priority":    map[string]any{"type": "string", "enum": []string{"low", "normal", "high", "urgent"}},
 						"time_window": map[string]any{"$ref": "#/components/schemas/JobTimeWindow"},
 					},
@@ -697,7 +684,6 @@ func dispatchOpenAPISpec() map[string]any {
 				"AssignJobRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"tenant_id":  map[string]any{"type": "string"},
 						"driver_id":  map[string]any{"type": "string"},
 						"vehicle_id": map[string]any{"type": "string"},
 						"reason":     map[string]any{"type": "string"},
@@ -707,7 +693,6 @@ func dispatchOpenAPISpec() map[string]any {
 				"CancelJobRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"tenant_id": map[string]any{"type": "string"},
 						"reason":    map[string]any{"type": "string"},
 					},
 					"required": []string{"reason"},
@@ -715,14 +700,12 @@ func dispatchOpenAPISpec() map[string]any {
 				"AcknowledgeJobRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"tenant_id": map[string]any{"type": "string"},
 						"driver_id": map[string]any{"type": "string"},
 					},
 				},
 				"UpdateJobStatusRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"tenant_id": map[string]any{"type": "string"},
 						"status": map[string]any{
 							"type": "string",
 							"enum": []string{"created", "assigned", "en-route", "arrived", "loaded", "delivered", "cancelled"},
@@ -733,7 +716,6 @@ func dispatchOpenAPISpec() map[string]any {
 				"AddPODAttachmentRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"tenant_id":   map[string]any{"type": "string"},
 						"kind":        map[string]any{"type": "string"},
 						"url":         map[string]any{"type": "string"},
 						"uploaded_by": map[string]any{"type": "string"},
@@ -743,7 +725,6 @@ func dispatchOpenAPISpec() map[string]any {
 				"AddJobNoteRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"tenant_id": map[string]any{"type": "string"},
 						"text":      map[string]any{"type": "string"},
 						"author_id": map[string]any{"type": "string"},
 					},
@@ -752,7 +733,6 @@ func dispatchOpenAPISpec() map[string]any {
 				"LegacyStatusRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"tenant_id":       map[string]any{"type": "string"},
 						"job_id":          map[string]any{"type": "string"},
 						"previous_status": map[string]any{"type": "string"},
 						"new_status":      map[string]any{"type": "string"},
@@ -807,7 +787,6 @@ func dispatchOpenAPISpec() map[string]any {
 					"properties": map[string]any{
 						"id":                        map[string]any{"type": "string"},
 						"reference":                 map[string]any{"type": "string"},
-						"tenant_id":                 map[string]any{"type": "string"},
 						"pickup":                    map[string]any{"$ref": "#/components/schemas/Stop"},
 						"dropoff":                   map[string]any{"$ref": "#/components/schemas/Stop"},
 						"cargo_type":                map[string]any{"type": "string"},

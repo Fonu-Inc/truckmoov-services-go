@@ -76,6 +76,7 @@ func main() {
 	handler.RegisterRoutes(mux)
 	handlerWithCORS := httpx.WithCORS(mux, cfg.CORSOrigins)
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
+	handlerWithCORS = httpx.WithAuthContext(handlerWithCORS, cfg.JWTSecret)
 
 	// cmd/tracking is kept as composition root only: all business rules live in internal/tracking.
 	if runErr := httpx.Run(ctx, ":"+cfg.Port, httpx.WithLogging(handlerWithCORS, log), log); runErr != nil {
