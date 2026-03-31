@@ -693,7 +693,7 @@ func dispatchOpenAPISpec() map[string]any {
 				"CancelJobRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"reason":    map[string]any{"type": "string"},
+						"reason": map[string]any{"type": "string"},
 					},
 					"required": []string{"reason"},
 				},
