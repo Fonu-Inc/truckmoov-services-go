@@ -347,7 +347,7 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, jobs)
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": jobs})
 }
 
 func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
@@ -402,7 +402,7 @@ func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, jobID string) {
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, job)
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
 }
 
 func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -575,10 +575,10 @@ func (h *Handler) getJobTimeline(w http.ResponseWriter, r *http.Request, jobID s
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": map[string]any{
 		"job_id":   jobID,
 		"timeline": timeline,
-	})
+	}})
 }
 
 func (h *Handler) addPODAttachment(w http.ResponseWriter, r *http.Request, jobID string) {

@@ -219,15 +219,22 @@ func TestHandler_ListJobsContract(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, res.Code, res.Body.String())
 	}
 
-	var jobs []domain.Job
-	if err := json.Unmarshal(res.Body.Bytes(), &jobs); err != nil {
+	var payload struct {
+		Status  bool         `json:"status"`
+		Message string       `json:"message"`
+		Data    []domain.Job `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode jobs list: %v", err)
 	}
-	if len(jobs) != 1 {
-		t.Fatalf("expected one filtered job, got %d", len(jobs))
+	if !payload.Status || payload.Message != "success" {
+		t.Fatalf("unexpected response envelope: %#v", payload)
 	}
-	if jobs[0].Reference != "TM-2850" {
-		t.Fatalf("expected TM-2850, got %q", jobs[0].Reference)
+	if len(payload.Data) != 1 {
+		t.Fatalf("expected one filtered job, got %d", len(payload.Data))
+	}
+	if payload.Data[0].Reference != "TM-2850" {
+		t.Fatalf("expected TM-2850, got %q", payload.Data[0].Reference)
 	}
 }
 
@@ -341,17 +348,49 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, noteRes.Code)
 	}
 
+	jobRes := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs/"+jobID, "")
+	if jobRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, jobRes.Code)
+	}
+
+	var jobPayload struct {
+		Status  bool       `json:"status"`
+		Message string     `json:"message"`
+		Data    domain.Job `json:"data"`
+	}
+	if err := json.Unmarshal(jobRes.Body.Bytes(), &jobPayload); err != nil {
+		t.Fatalf("failed to decode job response: %v", err)
+	}
+	if !jobPayload.Status || jobPayload.Message != "success" {
+		t.Fatalf("unexpected job response envelope: %#v", jobPayload)
+	}
+	if jobPayload.Data.ID != jobID {
+		t.Fatalf("expected job payload for %q, got %q", jobID, jobPayload.Data.ID)
+	}
+
 	timelineRes := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs/"+jobID+"/timeline", "")
 	if timelineRes.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, timelineRes.Code)
 	}
 
-	var timelinePayload map[string]any
+	var timelinePayload struct {
+		Status  bool   `json:"status"`
+		Message string `json:"message"`
+		Data    struct {
+			JobID    string           `json:"job_id"`
+			Timeline []map[string]any `json:"timeline"`
+		} `json:"data"`
+	}
 	if err := json.Unmarshal(timelineRes.Body.Bytes(), &timelinePayload); err != nil {
 		t.Fatalf("failed to decode timeline response: %v", err)
 	}
-	timeline, ok := timelinePayload["timeline"].([]any)
-	if !ok || len(timeline) == 0 {
+	if !timelinePayload.Status || timelinePayload.Message != "success" {
+		t.Fatalf("unexpected timeline response envelope: %#v", timelinePayload)
+	}
+	if timelinePayload.Data.JobID != jobID {
+		t.Fatalf("expected timeline job id %q, got %q", jobID, timelinePayload.Data.JobID)
+	}
+	if len(timelinePayload.Data.Timeline) == 0 {
 		t.Fatalf("expected timeline entries to be present")
 	}
 }
@@ -779,15 +818,22 @@ func TestHandler_CreateAndListJobsUseTokenTenant(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, listRes.Code, listRes.Body.String())
 	}
 
-	var jobs []domain.Job
-	if err := json.Unmarshal(listRes.Body.Bytes(), &jobs); err != nil {
+	var payload struct {
+		Status  bool         `json:"status"`
+		Message string       `json:"message"`
+		Data    []domain.Job `json:"data"`
+	}
+	if err := json.Unmarshal(listRes.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode jobs list: %v", err)
 	}
-	if len(jobs) != 1 {
-		t.Fatalf("expected one tenant-scoped job, got %d", len(jobs))
+	if !payload.Status || payload.Message != "success" {
+		t.Fatalf("unexpected response envelope: %#v", payload)
 	}
-	if jobs[0].TenantID != "tenant-from-token" {
-		t.Fatalf("expected tenant-from-token, got %q", jobs[0].TenantID)
+	if len(payload.Data) != 1 {
+		t.Fatalf("expected one tenant-scoped job, got %d", len(payload.Data))
+	}
+	if payload.Data[0].TenantID != "tenant-from-token" {
+		t.Fatalf("expected tenant-from-token, got %q", payload.Data[0].TenantID)
 	}
 }
 

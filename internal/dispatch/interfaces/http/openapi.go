@@ -219,8 +219,7 @@ func dispatchOpenAPISpec() map[string]any {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"type":  "array",
-										"items": map[string]any{"$ref": "#/components/schemas/Job"},
+										"$ref": "#/components/schemas/JobListResponse",
 									},
 								},
 							},
@@ -286,7 +285,7 @@ func dispatchOpenAPISpec() map[string]any {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"$ref": "#/components/schemas/Job",
+										"$ref": "#/components/schemas/JobResponse",
 									},
 								},
 							},
@@ -820,13 +819,40 @@ func dispatchOpenAPISpec() map[string]any {
 						},
 					},
 				},
-				"JobTimelineResponse": map[string]any{
+				"JobResponse": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"status":  map[string]any{"type": "boolean"},
+						"message": map[string]any{"type": "string"},
+						"data":    map[string]any{"$ref": "#/components/schemas/Job"},
+					},
+				},
+				"JobTimelinePayload": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"job_id": map[string]any{"type": "string"},
 						"timeline": map[string]any{
 							"type":  "array",
 							"items": map[string]any{"$ref": "#/components/schemas/JobTimelineEntry"},
+						},
+					},
+				},
+				"JobTimelineResponse": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"status":  map[string]any{"type": "boolean"},
+						"message": map[string]any{"type": "string"},
+						"data":    map[string]any{"$ref": "#/components/schemas/JobTimelinePayload"},
+					},
+				},
+				"JobListResponse": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"status":  map[string]any{"type": "boolean"},
+						"message": map[string]any{"type": "string"},
+						"data": map[string]any{
+							"type":  "array",
+							"items": map[string]any{"$ref": "#/components/schemas/Job"},
 						},
 					},
 				},

@@ -85,15 +85,15 @@ Dispatch job state is now backed by Postgres instead of per-process memory, whil
 - Kong unified docs URL: `GET http://localhost:8000/docs/dispatch`
 
 ## Dispatch lifecycle endpoints (Epic D)
-- `GET /dispatch/jobs` list jobs for the Dispatch Center. Supports `status`, `query`, `driver_id`, and `vehicle_id` filters. Tenant scope is derived from the bearer token.
+- `GET /dispatch/jobs` list jobs for the Dispatch Center. Supports `status`, `query`, `driver_id`, and `vehicle_id` filters. Tenant scope is derived from the bearer token. Returns the standard envelope: `{ "status": true, "message": "success", "data": [...] }`.
 - `POST /dispatch/jobs` create job from the original Dispatch Center modal payload (`vehicleId`, optional `driverId`, `pickupLocation`, `deliveryLocation`, optional `cargoDescription`, `priority`, `notes`). The older richer flat payload and nested pickup/dropoff payload are still accepted.
 - `PATCH /dispatch/jobs/{job_id}/scheduling` set priority/time windows.
 - `POST /dispatch/jobs/{job_id}/assign` assign/reassign driver + vehicle.
 - `POST /dispatch/jobs/{job_id}/cancel` cancel with reason.
 - `POST /dispatch/jobs/{job_id}/acknowledge` driver acknowledgement.
 - `POST /dispatch/jobs/{job_id}/status` update status (`en-route|arrived|loaded|delivered`).
-- `GET /dispatch/jobs/{job_id}` fetch job details.
-- `GET /dispatch/jobs/{job_id}/timeline` fetch lifecycle history.
+- `GET /dispatch/jobs/{job_id}` fetch job details. Returns the standard envelope: `{ "status": true, "message": "success", "data": { ... } }`.
+- `GET /dispatch/jobs/{job_id}/timeline` fetch lifecycle history. Returns the standard envelope: `{ "status": true, "message": "success", "data": { "job_id": "...", "timeline": [...] } }`.
 - `POST /dispatch/jobs/{job_id}/pod-attachments` add proof-of-delivery attachment.
 - `POST /dispatch/jobs/{job_id}/notes` add dispatcher note.
 - `POST /dispatch/jobs/status` legacy compatibility endpoint for direct status event publishing.
