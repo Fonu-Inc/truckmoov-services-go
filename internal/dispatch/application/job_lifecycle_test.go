@@ -284,8 +284,8 @@ func TestJobLifecycleUseCase_CreateJobMapsUIDetails(t *testing.T) {
 	if job.AmountNgn != 900000 {
 		t.Fatalf("expected amount 900000, got %v", job.AmountNgn)
 	}
-	if job.Priority != domain.PriorityCritical {
-		t.Fatalf("expected urgent to normalize to %q, got %q", domain.PriorityCritical, job.Priority)
+	if job.Priority != domain.PriorityUrgent {
+		t.Fatalf("expected urgent to normalize to %q, got %q", domain.PriorityUrgent, job.Priority)
 	}
 	if job.Deadline == nil || !job.Deadline.Equal(deadline) {
 		t.Fatalf("expected deadline to be stored")

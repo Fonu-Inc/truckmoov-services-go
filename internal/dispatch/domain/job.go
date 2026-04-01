@@ -10,10 +10,13 @@ import (
 type JobPriority string
 
 const (
-	PriorityLow      JobPriority = "low"
-	PriorityNormal   JobPriority = "normal"
-	PriorityHigh     JobPriority = "high"
-	PriorityCritical JobPriority = "critical"
+	PriorityLow    JobPriority = "low"
+	PriorityNormal JobPriority = "normal"
+	PriorityHigh   JobPriority = "high"
+	PriorityUrgent JobPriority = "urgent"
+	// Deprecated alias kept so legacy code paths still compile while the
+	// persisted and returned value stays aligned with the frontend vocabulary.
+	PriorityCritical JobPriority = PriorityUrgent
 )
 
 type JobStatus string
@@ -180,8 +183,8 @@ func NormalizePriority(value string) (JobPriority, error) {
 		return PriorityLow, nil
 	case string(PriorityHigh):
 		return PriorityHigh, nil
-	case "urgent", string(PriorityCritical):
-		return PriorityCritical, nil
+	case "urgent", "critical":
+		return PriorityUrgent, nil
 	default:
 		return "", fmt.Errorf("priority must be one of low, normal, high, urgent")
 	}

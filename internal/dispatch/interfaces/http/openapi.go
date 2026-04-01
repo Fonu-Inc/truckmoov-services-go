@@ -796,7 +796,7 @@ func dispatchOpenAPISpec() map[string]any {
 						"load_weight_kg":            map[string]any{"type": "number"},
 						"load_volume_m3":            map[string]any{"type": "number"},
 						"estimated_service_minutes": map[string]any{"type": "integer"},
-						"priority":                  map[string]any{"type": "string"},
+						"priority":                  map[string]any{"type": "string", "enum": []string{"low", "normal", "high", "urgent"}},
 						"time_window":               map[string]any{"$ref": "#/components/schemas/JobTimeWindow"},
 						"status":                    map[string]any{"type": "string"},
 						"assigned_driver_id":        map[string]any{"type": "string"},

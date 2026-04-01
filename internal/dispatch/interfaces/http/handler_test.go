@@ -429,8 +429,8 @@ func TestHandler_CreateJobOriginalModalVehicleOnlyStillPersistsSelection(t *test
 	if createdJob.AssignedDriverID != "" {
 		t.Fatalf("expected no assigned driver, got %q", createdJob.AssignedDriverID)
 	}
-	if createdJob.Priority != domain.PriorityCritical {
-		t.Fatalf("expected urgent to normalize to %q, got %q", domain.PriorityCritical, createdJob.Priority)
+	if createdJob.Priority != domain.PriorityUrgent {
+		t.Fatalf("expected urgent to normalize to %q, got %q", domain.PriorityUrgent, createdJob.Priority)
 	}
 }
 
@@ -533,8 +533,8 @@ func TestHandler_CreateJobLegacyPayloadStillAccepted(t *testing.T) {
 	if createdJob.Reference != "job-legacy-1" {
 		t.Fatalf("expected legacy payload to default reference to job id, got %q", createdJob.Reference)
 	}
-	if createdJob.Priority != domain.PriorityCritical {
-		t.Fatalf("expected priority %q, got %q", domain.PriorityCritical, createdJob.Priority)
+	if createdJob.Priority != domain.PriorityUrgent {
+		t.Fatalf("expected legacy priority alias to normalize to %q, got %q", domain.PriorityUrgent, createdJob.Priority)
 	}
 }
 
@@ -658,7 +658,7 @@ func TestHandler_OptimizeRouteContract(t *testing.T) {
 
 	for _, body := range []string{
 		`{"job_id":"job-a","pickup":{"address":"Apapa","latitude":6.4500,"longitude":3.3600},"dropoff":{"address":"Victoria Island","latitude":6.4281,"longitude":3.4219},"priority":"normal"}`,
-		`{"job_id":"job-b","pickup":{"address":"Ikeja","latitude":6.6018,"longitude":3.3515},"dropoff":{"address":"Yaba","latitude":6.5095,"longitude":3.3711},"priority":"critical"}`,
+		`{"job_id":"job-b","pickup":{"address":"Ikeja","latitude":6.6018,"longitude":3.3515},"dropoff":{"address":"Yaba","latitude":6.5095,"longitude":3.3711},"priority":"urgent"}`,
 	} {
 		res := dispatchRequest(t, mux, http.MethodPost, "/dispatch/jobs", body)
 		if res.Code != http.StatusCreated {

@@ -86,7 +86,7 @@ Dispatch job state is now backed by Postgres instead of per-process memory, whil
 
 ## Dispatch lifecycle endpoints (Epic D)
 - `GET /dispatch/jobs` list jobs for the Dispatch Center. Supports `status`, `query`, `driver_id`, and `vehicle_id` filters. Tenant scope is derived from the bearer token. Returns the standard envelope: `{ "status": true, "message": "success", "data": [...] }`.
-- `POST /dispatch/jobs` create job from the original Dispatch Center modal payload (`vehicleId`, optional `driverId`, `pickupLocation`, `deliveryLocation`, optional `cargoDescription`, `priority`, `notes`). The older richer flat payload and nested pickup/dropoff payload are still accepted.
+- `POST /dispatch/jobs` create job from the original Dispatch Center modal payload (`vehicleId`, optional `driverId`, `pickupLocation`, `deliveryLocation`, optional `cargoDescription`, `priority`, `notes`). Canonical priorities are `low|normal|high|urgent`; legacy `medium` and `critical` inputs are still accepted and normalized to `normal` and `urgent`. The older richer flat payload and nested pickup/dropoff payload are still accepted.
 - `PATCH /dispatch/jobs/{job_id}/scheduling` set priority/time windows.
 - `POST /dispatch/jobs/{job_id}/assign` assign/reassign driver + vehicle.
 - `POST /dispatch/jobs/{job_id}/cancel` cancel with reason.

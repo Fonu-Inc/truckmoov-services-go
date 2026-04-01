@@ -326,7 +326,7 @@ func routeSortScore(origin RouteLocation, job domain.Job) float64 {
 	}
 	score := haversineKm(origin.Latitude, origin.Longitude, pickup.Latitude, pickup.Longitude)
 	switch job.Priority {
-	case domain.PriorityCritical:
+	case domain.PriorityUrgent:
 		score -= 20
 	case domain.PriorityHigh:
 		score -= 10

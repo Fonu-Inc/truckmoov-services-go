@@ -60,6 +60,40 @@ func (r *PostgresJobRepository) EnsureSchema(ctx context.Context) error {
 	if _, err := r.db.ExecContext(ctx, dispatchJobSchema); err != nil {
 		return fmt.Errorf("ensure dispatch job schema: %w", err)
 	}
+
+	// Canonicalize older persisted priority values so the database, API responses,
+	// and frontend all use the same vocabulary: low, normal, high, urgent.
+	if _, err := r.db.ExecContext(ctx, `
+UPDATE dispatch_jobs
+SET
+    priority = CASE
+        WHEN lower(priority) = 'critical' THEN 'urgent'
+        WHEN lower(priority) = 'medium' THEN 'normal'
+        ELSE lower(priority)
+    END,
+    payload = jsonb_set(
+        payload,
+        '{priority}',
+        to_jsonb(
+            CASE
+                WHEN lower(coalesce(payload->>'priority', '')) = 'critical' THEN 'urgent'
+                WHEN lower(coalesce(payload->>'priority', '')) = 'medium' THEN 'normal'
+                WHEN coalesce(payload->>'priority', '') = '' THEN CASE
+                    WHEN lower(priority) = 'critical' THEN 'urgent'
+                    WHEN lower(priority) = 'medium' THEN 'normal'
+                    ELSE lower(priority)
+                END
+                ELSE lower(payload->>'priority')
+            END
+        ),
+        true
+    )
+WHERE lower(priority) IN ('critical', 'medium')
+   OR lower(coalesce(payload->>'priority', '')) IN ('critical', 'medium')
+   OR coalesce(payload->>'priority', '') = ''
+`); err != nil {
+		return fmt.Errorf("normalize dispatch job priorities: %w", err)
+	}
 	return nil
 }
 
@@ -188,6 +222,12 @@ func decodeStoredJob(payload []byte) (domain.Job, error) {
 	if err := json.Unmarshal(payload, &job); err != nil {
 		return domain.Job{}, fmt.Errorf("unmarshal dispatch job: %w", err)
 	}
+
+	priority, err := domain.NormalizePriority(string(job.Priority))
+	if err != nil {
+		return domain.Job{}, fmt.Errorf("normalize dispatch job priority: %w", err)
+	}
+	job.Priority = priority
 
 	if job.Notes == nil {
 		job.Notes = []domain.JobNote{}
