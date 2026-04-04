@@ -196,37 +196,6 @@ func TestRoutingUseCase_ShiftConstraint_ExceedsShiftEnd(t *testing.T) {
 	}
 }
 
-func TestRoutingUseCase_EstimateETA_HappyPath(t *testing.T) {
-	job := makeJobWithCoords("job-5", "tenant-e")
-	uc := buildRoutingUseCase(job)
-
-	plan, err := uc.EstimateETAFromLocation(context.Background(), "tenant-e", "job-5",
-		RouteLocation{Latitude: 6.50, Longitude: 3.30},
-		RouteVehicleProfile{AverageSpeedKPH: 60},
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if plan.ETASeconds <= 0 {
-		t.Fatalf("expected positive ETA")
-	}
-	if len(plan.OrderedSteps) != 1 {
-		t.Fatalf("expected 1 step (dropoff only)")
-	}
-}
-
-func TestRoutingUseCase_EstimateETA_MissingOriginCoords(t *testing.T) {
-	job := makeJobWithCoords("job-5", "tenant-e")
-	uc := buildRoutingUseCase(job)
-	_, err := uc.EstimateETAFromLocation(context.Background(), "tenant-e", "job-5",
-		RouteLocation{},
-		RouteVehicleProfile{},
-	)
-	if err == nil {
-		t.Fatalf("expected error for missing origin coords")
-	}
-}
-
 func TestHaversineKm_KnownDistance(t *testing.T) {
 	// Lagos to Abuja roughly 480km
 	dist := haversineKm(6.45, 3.35, 9.07, 7.40)

@@ -17,7 +17,6 @@ import (
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
 	"github.com/truckmoov/services-go/internal/dispatch/infrastructure"
-	trackinggrpc "github.com/truckmoov/services-go/pkg/grpc"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
@@ -82,7 +81,7 @@ func buildDispatchTestHandler() *Handler {
 	)
 	routingUseCase := application.NewRoutingUseCase(repository, clock, "default")
 
-	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase, trackinggrpc.NewStubTrackingClient())
+	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase)
 }
 
 func dispatchRequest(
@@ -152,7 +151,6 @@ func TestHandler_UpdateStatusContract(t *testing.T) {
 			fixedDispatchClock{now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)},
 			"default",
 		),
-		trackinggrpc.NewStubTrackingClient(),
 	)
 
 	mux := http.NewServeMux()
@@ -170,19 +168,6 @@ func TestHandler_UpdateStatusContract(t *testing.T) {
 	}
 	if payload["published"] != true {
 		t.Fatalf("expected published=true")
-	}
-}
-
-func TestHandler_ETAContract(t *testing.T) {
-	handler := buildDispatchTestHandler()
-
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	res := dispatchRequest(t, mux, http.MethodGet, "/dispatch/eta?job_id=job-1&vehicle_id=vehicle-1&destination=dest", "")
-
-	if res.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
 	}
 }
 
@@ -847,18 +832,5 @@ func TestHandler_ListJobsRejectsTenantQuery(t *testing.T) {
 	listRes := dispatchRequestWithHeaders(t, server, http.MethodGet, "/dispatch/jobs?tenant_id=client-tenant", "", authHeader)
 	if listRes.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, listRes.Code, listRes.Body.String())
-	}
-}
-
-func TestHandler_ETARejectsTenantQuery(t *testing.T) {
-	handler := buildDispatchTestHandler()
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-	server := httpx.WithAuthContext(mux, "replace-me")
-	authHeader := map[string]string{"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "tenant-from-token", "DISPATCHER")}
-
-	res := dispatchRequestWithHeaders(t, server, http.MethodGet, "/dispatch/eta?tenant_id=client-tenant&vehicle_id=vehicle-1&destination=Apapa", "", authHeader)
-	if res.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, res.Code, res.Body.String())
 	}
 }

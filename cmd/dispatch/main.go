@@ -15,7 +15,6 @@ import (
 	dispatchhttp "github.com/truckmoov/services-go/internal/dispatch/interfaces/http"
 	"github.com/truckmoov/services-go/pkg/config"
 	"github.com/truckmoov/services-go/pkg/eventbus"
-	trackinggrpc "github.com/truckmoov/services-go/pkg/grpc"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 	"github.com/truckmoov/services-go/pkg/logger"
 	"github.com/truckmoov/services-go/pkg/otel"
@@ -114,19 +113,7 @@ func main() {
 		publishJobStatusUseCase,
 		jobLifecycleUseCase,
 		routingUseCase,
-		trackinggrpc.NewStubTrackingClient(),
 	)
-
-	if _, subErr := bus.Subscribe(
-		ctx,
-		"tm.*.vehicle.location.updated",
-		"dispatch-consumer",
-		func(c context.Context, envelope eventbus.EventEnvelope) error {
-			return handler.HandleLocationEvent(c, envelope.Data)
-		},
-	); subErr != nil {
-		log.Warn("location_subscription_failed", "error", subErr.Error())
-	}
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)

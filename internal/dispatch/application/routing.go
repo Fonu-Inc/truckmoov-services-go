@@ -111,54 +111,6 @@ func (u *RoutingUseCase) OptimizeRoute(ctx context.Context, command OptimizeRout
 	return u.planRoute(jobs, command.Origin, command.Vehicle, command.DriverShift, command.DepartureTime)
 }
 
-func (u *RoutingUseCase) EstimateETAFromLocation(_ context.Context, tenantID, jobID string, origin RouteLocation, vehicle RouteVehicleProfile) (RoutePlan, error) {
-	job, err := u.findJob(tenantID, jobID)
-	if err != nil {
-		return RoutePlan{}, err
-	}
-
-	departure := u.clock.Now().UTC()
-	start := normalizeRouteLocation(origin)
-	if !hasCoordinates(start.Latitude, start.Longitude) {
-		return RoutePlan{}, errors.New("origin coordinates are required to estimate eta")
-	}
-	destination, err := stopToLocation("dropoff", job.Dropoff)
-	if err != nil {
-		return RoutePlan{}, err
-	}
-
-	distanceKm := haversineKm(start.Latitude, start.Longitude, destination.Latitude, destination.Longitude)
-	travelSeconds := estimateTravelSeconds(distanceKm, vehicle.AverageSpeedKPH)
-	arrival := departure.Add(time.Duration(travelSeconds) * time.Second)
-
-	step := RouteStep{
-		Sequence:               1,
-		JobID:                  job.ID,
-		StopType:               "dropoff",
-		Address:                destination.Address,
-		Label:                  destination.Label,
-		Latitude:               destination.Latitude,
-		Longitude:              destination.Longitude,
-		DistanceFromPreviousKm: roundDistance(distanceKm),
-		TravelSecondsFromPrev:  travelSeconds,
-		ArrivalAt:              arrival,
-		DepartureAt:            arrival,
-		ETASeconds:             travelSeconds,
-	}
-
-	return RoutePlan{
-		Feasible:             true,
-		VehicleID:            strings.TrimSpace(vehicle.VehicleID),
-		VehicleType:          strings.TrimSpace(vehicle.VehicleType),
-		DepartureTime:        departure,
-		CompletionTime:       arrival,
-		ETASeconds:           travelSeconds,
-		TotalDistanceKm:      roundDistance(distanceKm),
-		TotalDurationSeconds: travelSeconds,
-		OrderedSteps:         []RouteStep{step},
-	}, nil
-}
-
 func (u *RoutingUseCase) findJob(tenantID, jobID string) (domain.Job, error) {
 	resolvedTenant := strings.TrimSpace(tenantID)
 	if resolvedTenant == "" {
