@@ -86,10 +86,12 @@ func toVroomRequest(jobs []domain.Job, cmd application.OptimizeRouteCommand) (Vr
 		shipments = append(shipments, Shipment{
 			ID: shipmentID,
 			Pickup: StopTask{
+				ID:       shipmentID*2 - 1,
 				Location: []float64{*job.Pickup.Longitude, *job.Pickup.Latitude},
 				Service:  serviceSeconds,
 			},
 			Delivery: StopTask{
+				ID:       shipmentID * 2,
 				Location: []float64{*job.Dropoff.Longitude, *job.Dropoff.Latitude},
 				Service:  serviceSeconds,
 			},
