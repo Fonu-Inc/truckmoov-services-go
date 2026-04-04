@@ -96,10 +96,15 @@ func dispatchOpenAPISpec() map[string]any {
 					},
 					"responses": map[string]any{
 						"200": map[string]any{
-							"description": "Optimized route plan",
+							"description": "Optimized route plan or raw Vroom response",
 							"content": map[string]any{
 								"application/json": map[string]any{
-									"schema": map[string]any{"$ref": "#/components/schemas/RoutePlan"},
+									"schema": map[string]any{
+										"oneOf": []any{
+											map[string]any{"$ref": "#/components/schemas/RoutePlan"},
+											map[string]any{"$ref": "#/components/schemas/VroomResponse"},
+										},
+									},
 								},
 							},
 						},
@@ -571,8 +576,44 @@ func dispatchOpenAPISpec() map[string]any {
 						"vehicle":        map[string]any{"$ref": "#/components/schemas/VehicleProfile"},
 						"driver_shift":   map[string]any{"$ref": "#/components/schemas/DriverShift"},
 						"departure_time": map[string]any{"type": "string", "format": "date-time"},
+						"vroom":          map[string]any{"$ref": "#/components/schemas/VroomRequest"},
 					},
-					"required": []string{"job_ids", "origin", "vehicle"},
+					"description": "Provide either the route-planning fields (`job_ids`, `origin`, `vehicle`) or a raw `vroom` payload to bypass dispatch job lookups.",
+				},
+				"VroomRequest": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"vehicles":  map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/VroomVehicle"}},
+						"shipments": map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/VroomShipment"}},
+					},
+					"required": []string{"vehicles", "shipments"},
+				},
+				"VroomVehicle": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":      map[string]any{"type": "integer"},
+						"start":   map[string]any{"type": "array", "items": map[string]any{"type": "number"}},
+						"profile": map[string]any{"type": "string"},
+					},
+					"required": []string{"id", "start", "profile"},
+				},
+				"VroomShipment": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":       map[string]any{"type": "integer"},
+						"pickup":   map[string]any{"$ref": "#/components/schemas/VroomStopTask"},
+						"delivery": map[string]any{"$ref": "#/components/schemas/VroomStopTask"},
+					},
+					"required": []string{"id", "pickup", "delivery"},
+				},
+				"VroomStopTask": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":       map[string]any{"type": "integer"},
+						"location": map[string]any{"type": "array", "items": map[string]any{"type": "number"}},
+						"service":  map[string]any{"type": "integer"},
+					},
+					"required": []string{"location"},
 				},
 				"RouteStep": map[string]any{
 					"type": "object",
@@ -604,6 +645,48 @@ func dispatchOpenAPISpec() map[string]any {
 						"total_distance_km":      map[string]any{"type": "number"},
 						"total_duration_seconds": map[string]any{"type": "integer"},
 						"ordered_steps":          map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/RouteStep"}},
+					},
+				},
+				"VroomSummary": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"cost":     map[string]any{"type": "integer"},
+						"duration": map[string]any{"type": "integer"},
+						"distance": map[string]any{"type": "integer"},
+					},
+				},
+				"VroomStep": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"type":     map[string]any{"type": "string"},
+						"job":      map[string]any{"type": "integer"},
+						"arrival":  map[string]any{"type": "integer"},
+						"duration": map[string]any{"type": "integer"},
+						"distance": map[string]any{"type": "integer"},
+						"location": map[string]any{"type": "array", "items": map[string]any{"type": "number"}},
+					},
+				},
+				"VroomRoute": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"vehicle": map[string]any{"type": "integer"},
+						"steps":   map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/VroomStep"}},
+					},
+				},
+				"VroomUnassigned": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id": map[string]any{"type": "integer"},
+					},
+				},
+				"VroomResponse": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"code":       map[string]any{"type": "integer"},
+						"summary":    map[string]any{"$ref": "#/components/schemas/VroomSummary"},
+						"routes":     map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/VroomRoute"}},
+						"unassigned": map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/VroomUnassigned"}},
+						"error":      map[string]any{"type": "string"},
 					},
 				},
 				"UpdateJobSchedulingRequest": map[string]any{

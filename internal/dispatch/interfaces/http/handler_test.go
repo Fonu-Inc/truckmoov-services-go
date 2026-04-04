@@ -81,7 +81,7 @@ func buildDispatchTestHandler() *Handler {
 	)
 	routingUseCase := application.NewRoutingUseCase(repository, clock, "default")
 
-	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase)
+	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase, nil)
 }
 
 func dispatchRequest(
@@ -151,6 +151,7 @@ func TestHandler_UpdateStatusContract(t *testing.T) {
 			fixedDispatchClock{now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)},
 			"default",
 		),
+		nil,
 	)
 
 	mux := http.NewServeMux()

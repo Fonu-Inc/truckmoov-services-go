@@ -9,6 +9,7 @@ import (
 
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
+	"github.com/truckmoov/services-go/internal/dispatch/infrastructure"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
@@ -124,28 +125,32 @@ type driverShiftRequest struct {
 }
 
 type optimizeRouteRequest struct {
-	JobIDs        []string              `json:"job_ids"`
-	Origin        routeLocationRequest  `json:"origin"`
-	Vehicle       vehicleProfileRequest `json:"vehicle"`
-	DriverShift   driverShiftRequest    `json:"driver_shift,omitempty"`
-	DepartureTime *string               `json:"departure_time,omitempty"`
+	JobIDs        []string                     `json:"job_ids"`
+	Origin        routeLocationRequest         `json:"origin"`
+	Vehicle       vehicleProfileRequest        `json:"vehicle"`
+	DriverShift   driverShiftRequest           `json:"driver_shift,omitempty"`
+	DepartureTime *string                      `json:"departure_time,omitempty"`
+	Vroom         *infrastructure.VroomRequest `json:"vroom,omitempty"`
 }
 
 type Handler struct {
 	publishJobStatusUseCase *application.PublishJobStatusChangedUseCase
 	jobLifecycleUseCase     *application.JobLifecycleUseCase
 	routingUseCase          *application.RoutingUseCase
+	vroomClient             *infrastructure.VroomClient
 }
 
 func NewHandler(
 	publishJobStatusUseCase *application.PublishJobStatusChangedUseCase,
 	jobLifecycleUseCase *application.JobLifecycleUseCase,
 	routingUseCase *application.RoutingUseCase,
+	vroomClient *infrastructure.VroomClient,
 ) *Handler {
 	return &Handler{
 		publishJobStatusUseCase: publishJobStatusUseCase,
 		jobLifecycleUseCase:     jobLifecycleUseCase,
 		routingUseCase:          routingUseCase,
+		vroomClient:             vroomClient,
 	}
 }
 
@@ -653,6 +658,20 @@ func (h *Handler) optimizeRoute(w http.ResponseWriter, r *http.Request) {
 	var req optimizeRouteRequest
 	if err := decodeJSONBody(r, &req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if req.Vroom != nil {
+		if h.vroomClient == nil {
+			respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "vroom is not configured"})
+			return
+		}
+		resp, err := h.vroomClient.Optimize(r.Context(), *req.Vroom)
+		if err != nil {
+			respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+		respondJSON(w, http.StatusOK, resp)
 		return
 	}
 

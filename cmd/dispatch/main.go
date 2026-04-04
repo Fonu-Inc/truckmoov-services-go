@@ -113,6 +113,7 @@ func main() {
 		publishJobStatusUseCase,
 		jobLifecycleUseCase,
 		routingUseCase,
+		vroomClient,
 	)
 
 	mux := http.NewServeMux()
