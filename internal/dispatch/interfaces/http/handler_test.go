@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -81,7 +82,84 @@ func buildDispatchTestHandler() *Handler {
 	)
 	routingUseCase := application.NewRoutingUseCase(repository, clock, "default")
 
-	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase, nil)
+	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase, repository, nil, nil)
+}
+
+func buildDispatchOptimizeTestHandler() *Handler {
+	clock := fixedDispatchClock{now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)}
+	ids := &sequenceDispatchID{}
+	repository := infrastructure.NewInMemoryJobRepository()
+	publishUseCase := application.NewPublishJobStatusChangedUseCase(
+		&fakeJobStatusPublisher{},
+		clock,
+		ids,
+		"default",
+	)
+	lifecycleUseCase := application.NewJobLifecycleUseCase(
+		repository,
+		publishUseCase,
+		&fakeDriverInstructionNotifier{},
+		clock,
+		ids,
+		"default",
+	)
+	routingUseCase := application.NewRoutingUseCase(repository, clock, "default")
+
+	vroomClient := infrastructure.NewVroomClientWithConfig("http://vroom.test", &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			payload, err := json.Marshal(infrastructure.VroomResponse{
+				Code: 0,
+				Routes: []infrastructure.VroomRoute{
+					{
+						Vehicle: 1,
+						Steps: []infrastructure.VroomStep{
+							{Type: "start", Location: []float64{3.3958, 6.4550}},
+							{Type: "pickup", Job: 1, Location: []float64{3.3649, 6.4448}},
+							{Type: "delivery", Job: 1, Location: []float64{4.0096, 6.4294}},
+						},
+					},
+				},
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(bytes.NewReader(payload)),
+			}, nil
+		}),
+	})
+	osrmClient := infrastructure.NewOsrmClientWithConfig("http://osrm.test", &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			payload, err := json.Marshal(infrastructure.OsrmResponse{
+				Code: "Ok",
+				Routes: []infrastructure.OsrmRoute{
+					{
+						Distance: 2000,
+						Duration: 600,
+						Geometry: infrastructure.Geometry{Type: "LineString"},
+					},
+				},
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(bytes.NewReader(payload)),
+			}, nil
+		}),
+	})
+
+	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase, repository, vroomClient, osrmClient)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }
 
 func dispatchRequest(
@@ -151,6 +229,8 @@ func TestHandler_UpdateStatusContract(t *testing.T) {
 			fixedDispatchClock{now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)},
 			"default",
 		),
+		infrastructure.NewInMemoryJobRepository(),
+		nil,
 		nil,
 	)
 
@@ -584,7 +664,7 @@ func TestHandler_DocsContract(t *testing.T) {
 }
 
 func TestHandler_OptimizeRouteSingleJobContract(t *testing.T) {
-	handler := buildDispatchTestHandler()
+	handler := buildDispatchOptimizeTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
@@ -624,21 +704,27 @@ func TestHandler_OptimizeRouteSingleJobContract(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, routeRes.Code, routeRes.Body.String())
 	}
 
-	var payload map[string]any
+	var payload struct {
+		Code      string                        `json:"code"`
+		Routes    []infrastructure.OsrmRoute    `json:"routes"`
+		Waypoints []infrastructure.OsrmWaypoint `json:"waypoints"`
+	}
 	if err := json.Unmarshal(routeRes.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if payload["feasible"] != true {
-		t.Fatalf("expected feasible route, got %v", payload["feasible"])
+	if payload.Code != "Ok" {
+		t.Fatalf("expected osrm response code Ok, got %q", payload.Code)
 	}
-	steps, ok := payload["ordered_steps"].([]any)
-	if !ok || len(steps) != 2 {
-		t.Fatalf("expected 2 ordered steps, got %#v", payload["ordered_steps"])
+	if len(payload.Routes) != 1 {
+		t.Fatalf("expected 1 route, got %d", len(payload.Routes))
+	}
+	if len(payload.Waypoints) != 3 {
+		t.Fatalf("expected 3 waypoints from vroom coordinates, got %d", len(payload.Waypoints))
 	}
 }
 
 func TestHandler_OptimizeRouteContract(t *testing.T) {
-	handler := buildDispatchTestHandler()
+	handler := buildDispatchOptimizeTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
@@ -669,24 +755,26 @@ func TestHandler_OptimizeRouteContract(t *testing.T) {
 	}
 
 	var payload struct {
-		OrderedSteps []struct {
-			JobID    string `json:"job_id"`
-			StopType string `json:"stop_type"`
-		} `json:"ordered_steps"`
+		Code      string                        `json:"code"`
+		Routes    []infrastructure.OsrmRoute    `json:"routes"`
+		Waypoints []infrastructure.OsrmWaypoint `json:"waypoints"`
 	}
 	if err := json.Unmarshal(routeRes.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if len(payload.OrderedSteps) != 4 {
-		t.Fatalf("expected 4 steps, got %d", len(payload.OrderedSteps))
+	if payload.Code != "Ok" {
+		t.Fatalf("expected osrm response code Ok, got %q", payload.Code)
 	}
-	if payload.OrderedSteps[0].JobID != "job-b" || payload.OrderedSteps[0].StopType != "pickup" {
-		t.Fatalf("expected job-b pickup first due to proximity/priority, got %+v", payload.OrderedSteps[0])
+	if len(payload.Routes) != 1 {
+		t.Fatalf("expected 1 route, got %d", len(payload.Routes))
+	}
+	if len(payload.Waypoints) != 3 {
+		t.Fatalf("expected vroom-derived waypoints in final osrm response, got %d", len(payload.Waypoints))
 	}
 }
 
 func TestHandler_OptimizeRouteConstraintViolationReported(t *testing.T) {
-	handler := buildDispatchTestHandler()
+	handler := buildDispatchOptimizeTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
@@ -725,17 +813,18 @@ func TestHandler_OptimizeRouteConstraintViolationReported(t *testing.T) {
 	}
 
 	var payload struct {
-		Feasible             bool     `json:"feasible"`
-		InfeasibilityReasons []string `json:"infeasibility_reasons"`
+		Code      string                        `json:"code"`
+		Routes    []infrastructure.OsrmRoute    `json:"routes"`
+		Waypoints []infrastructure.OsrmWaypoint `json:"waypoints"`
 	}
 	if err := json.Unmarshal(routeRes.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if payload.Feasible {
-		t.Fatalf("expected infeasible route")
+	if payload.Code != "Ok" {
+		t.Fatalf("expected osrm response code Ok, got %q", payload.Code)
 	}
-	if len(payload.InfeasibilityReasons) < 2 {
-		t.Fatalf("expected multiple infeasibility reasons, got %#v", payload.InfeasibilityReasons)
+	if len(payload.Routes) != 1 {
+		t.Fatalf("expected 1 route, got %d", len(payload.Routes))
 	}
 }
 

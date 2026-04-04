@@ -52,7 +52,7 @@ func (v *VroomRouteOptimizer) OptimizeRoute(ctx context.Context, cmd application
 	}
 
 	departure := v.resolveDepartureTime(cmd.DepartureTime, cmd.DriverShift)
-	req, jobIndex, err := toVroomRequest(jobs, cmd)
+	req, jobIndex, err := buildVroomRequest(jobs, cmd)
 	if err != nil {
 		return application.RoutePlan{}, err
 	}
@@ -65,7 +65,12 @@ func (v *VroomRouteOptimizer) OptimizeRoute(ctx context.Context, cmd application
 	return toRoutePlan(resp, jobIndex, cmd, departure), nil
 }
 
-func toVroomRequest(jobs []domain.Job, cmd application.OptimizeRouteCommand) (VroomRequest, map[int]domain.Job, error) {
+func BuildVroomRequest(jobs []domain.Job, cmd application.OptimizeRouteCommand) (VroomRequest, error) {
+	req, _, err := buildVroomRequest(jobs, cmd)
+	return req, err
+}
+
+func buildVroomRequest(jobs []domain.Job, cmd application.OptimizeRouteCommand) (VroomRequest, map[int]domain.Job, error) {
 	if cmd.Origin.Latitude == 0 && cmd.Origin.Longitude == 0 {
 		return VroomRequest{}, nil, errors.New("origin coordinates are required")
 	}

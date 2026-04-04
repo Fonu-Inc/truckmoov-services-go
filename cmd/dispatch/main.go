@@ -76,6 +76,7 @@ func main() {
 		cfg.DefaultTenant,
 	)
 	vroomClient := infrastructure.NewVroomClient()
+	osrmClient := infrastructure.NewOsrmClient()
 	routeOptimizer := infrastructure.NewVroomRouteOptimizer(
 		vroomClient,
 		jobRepository,
@@ -113,7 +114,9 @@ func main() {
 		publishJobStatusUseCase,
 		jobLifecycleUseCase,
 		routingUseCase,
+		jobRepository,
 		vroomClient,
+		osrmClient,
 	)
 
 	mux := http.NewServeMux()

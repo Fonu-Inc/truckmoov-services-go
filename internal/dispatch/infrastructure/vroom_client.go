@@ -40,10 +40,16 @@ type VroomClient struct {
 }
 
 func NewVroomClient() *VroomClient {
+	return NewVroomClientWithConfig("http://vroom:6969", &http.Client{Timeout: 30 * time.Second})
+}
+
+func NewVroomClientWithConfig(baseURL string, httpClient *http.Client) *VroomClient {
+	if httpClient == nil {
+		httpClient = &http.Client{Timeout: 30 * time.Second}
+	}
 	return &VroomClient{
-		// NOTE: changing this string would mean you have changed the configs in the manifest file on k8s repo
-		baseURL:    "http://vroom:6969",
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		baseURL:    baseURL,
+		httpClient: httpClient,
 	}
 }
 

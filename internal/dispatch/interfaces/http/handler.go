@@ -137,20 +137,26 @@ type Handler struct {
 	publishJobStatusUseCase *application.PublishJobStatusChangedUseCase
 	jobLifecycleUseCase     *application.JobLifecycleUseCase
 	routingUseCase          *application.RoutingUseCase
+	jobRepository           application.JobRepository
 	vroomClient             *infrastructure.VroomClient
+	osrmClient              *infrastructure.OsrmClient
 }
 
 func NewHandler(
 	publishJobStatusUseCase *application.PublishJobStatusChangedUseCase,
 	jobLifecycleUseCase *application.JobLifecycleUseCase,
 	routingUseCase *application.RoutingUseCase,
+	jobRepository application.JobRepository,
 	vroomClient *infrastructure.VroomClient,
+	osrmClient *infrastructure.OsrmClient,
 ) *Handler {
 	return &Handler{
 		publishJobStatusUseCase: publishJobStatusUseCase,
 		jobLifecycleUseCase:     jobLifecycleUseCase,
 		routingUseCase:          routingUseCase,
+		jobRepository:           jobRepository,
 		vroomClient:             vroomClient,
+		osrmClient:              osrmClient,
 	}
 }
 
@@ -646,10 +652,6 @@ func (h *Handler) updateStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) optimizeRoute(w http.ResponseWriter, r *http.Request) {
-	if h.routingUseCase == nil {
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "routing is not configured"})
-		return
-	}
 	if r.Method != http.MethodPost {
 		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
@@ -662,46 +664,66 @@ func (h *Handler) optimizeRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Vroom != nil {
-		if h.vroomClient == nil {
-			respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "vroom is not configured"})
-			return
-		}
-		resp, err := h.vroomClient.Optimize(r.Context(), *req.Vroom)
-		if err != nil {
-			respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-			return
-		}
-		respondJSON(w, http.StatusOK, resp)
+		h.respondOptimizedRoute(w, r, *req.Vroom)
 		return
 	}
-
-	driverShift, err := req.DriverShift.toDomain()
-	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	departureTime, err := parseTimeValue(req.DepartureTime)
-	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	if h.jobRepository == nil {
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "routing is not configured"})
 		return
 	}
 
 	tenantID, _ := h.resolveTenantID(r)
+	jobs := make([]domain.Job, 0, len(req.JobIDs))
+	for _, jobID := range req.JobIDs {
+		job, ok := h.jobRepository.FindByTenantAndID(tenantID, strings.TrimSpace(jobID))
+		if !ok {
+			respondLifecycleError(w, application.ErrJobNotFound)
+			return
+		}
+		jobs = append(jobs, job)
+	}
 
-	plan, err := h.routingUseCase.OptimizeRoute(r.Context(), application.OptimizeRouteCommand{
-		TenantID:      tenantID,
-		JobIDs:        req.JobIDs,
-		Origin:        req.Origin.toDomain(),
-		Vehicle:       req.Vehicle.toDomain(),
-		DriverShift:   driverShift,
-		DepartureTime: departureTime,
+	vroomReq, err := infrastructure.BuildVroomRequest(jobs, application.OptimizeRouteCommand{
+		TenantID: tenantID,
+		JobIDs:   req.JobIDs,
+		Origin:   req.Origin.toDomain(),
+		Vehicle:  req.Vehicle.toDomain(),
 	})
 	if err != nil {
 		respondLifecycleError(w, err)
 		return
 	}
 
-	respondJSON(w, http.StatusOK, plan)
+	h.respondOptimizedRoute(w, r, vroomReq)
+}
+
+func (h *Handler) respondOptimizedRoute(w http.ResponseWriter, r *http.Request, vroomReq infrastructure.VroomRequest) {
+	if h.vroomClient == nil {
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "vroom is not configured"})
+		return
+	}
+	if h.osrmClient == nil {
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "osrm is not configured"})
+		return
+	}
+
+	resp, err := h.vroomClient.Optimize(r.Context(), vroomReq)
+	if err != nil {
+		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	osrmInput, err := infrastructure.OsrmInputFromVroom(resp)
+	if err != nil {
+		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	osrmResp, err := h.osrmClient.CallRouteService(r.Context(), osrmInput)
+	if err != nil {
+		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+
+	respondJSON(w, http.StatusOK, osrmResp)
 }
 
 func parseJobResourcePath(path string) (jobID, action string, ok bool) {

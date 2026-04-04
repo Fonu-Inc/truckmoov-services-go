@@ -26,7 +26,7 @@ func TestToVroomRequest_AssignsPickupAndDeliveryIDs(t *testing.T) {
 		EstimatedServiceMinutes: 5,
 	}
 
-	req, _, err := toVroomRequest([]domain.Job{job}, application.OptimizeRouteCommand{
+	req, err := BuildVroomRequest([]domain.Job{job}, application.OptimizeRouteCommand{
 		Origin: application.RouteLocation{Latitude: 6.50, Longitude: 3.30},
 		Vehicle: application.RouteVehicleProfile{
 			VehicleType: "car",
