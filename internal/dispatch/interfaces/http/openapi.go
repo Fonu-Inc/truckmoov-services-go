@@ -112,31 +112,6 @@ func dispatchOpenAPISpec() map[string]any {
 					},
 				},
 			},
-			"/dispatch/routes/suggest": map[string]any{
-				"post": map[string]any{
-					"tags":        []string{"dispatch"},
-					"summary":     "Suggest an optimal route for a job",
-					"operationId": "suggestRoute",
-					"requestBody": map[string]any{
-						"required": true,
-						"content": map[string]any{
-							"application/json": map[string]any{
-								"schema": map[string]any{"$ref": "#/components/schemas/SuggestRouteRequest"},
-							},
-						},
-					},
-					"responses": map[string]any{
-						"200": map[string]any{
-							"description": "Route plan",
-							"content": map[string]any{
-								"application/json": map[string]any{
-									"schema": map[string]any{"$ref": "#/components/schemas/RoutePlan"},
-								},
-							},
-						},
-					},
-				},
-			},
 			"/dispatch/routes/optimize": map[string]any{
 				"post": map[string]any{
 					"tags":        []string{"dispatch"},
@@ -618,17 +593,6 @@ func dispatchOpenAPISpec() map[string]any {
 						"start": map[string]any{"type": "string", "format": "date-time"},
 						"end":   map[string]any{"type": "string", "format": "date-time"},
 					},
-				},
-				"SuggestRouteRequest": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"job_id":         map[string]any{"type": "string"},
-						"origin":         map[string]any{"$ref": "#/components/schemas/RouteLocation"},
-						"vehicle":        map[string]any{"$ref": "#/components/schemas/VehicleProfile"},
-						"driver_shift":   map[string]any{"$ref": "#/components/schemas/DriverShift"},
-						"departure_time": map[string]any{"type": "string", "format": "date-time"},
-					},
-					"required": []string{"job_id", "origin", "vehicle"},
 				},
 				"OptimizeRouteRequest": map[string]any{
 					"type": "object",

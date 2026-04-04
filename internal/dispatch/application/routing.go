@@ -62,15 +62,6 @@ type RoutePlan struct {
 	OrderedSteps         []RouteStep `json:"ordered_steps"`
 }
 
-type SuggestRouteCommand struct {
-	TenantID      string
-	JobID         string
-	Origin        RouteLocation
-	Vehicle       RouteVehicleProfile
-	DriverShift   DriverShift
-	DepartureTime *time.Time
-}
-
 type OptimizeRouteCommand struct {
 	TenantID      string
 	JobIDs        []string
@@ -81,30 +72,31 @@ type OptimizeRouteCommand struct {
 }
 
 type RoutingUseCase struct {
+	optimizer     RouteOptimizer
 	repository    JobRepository
 	clock         Clock
 	defaultTenant string
 }
 
-func NewRoutingUseCase(repository JobRepository, clock Clock, defaultTenant string) *RoutingUseCase {
+func NewRoutingUseCase(repository JobRepository, clock Clock, defaultTenant string, optimizer ...RouteOptimizer) *RoutingUseCase {
+	var selectedOptimizer RouteOptimizer
+	if len(optimizer) > 0 {
+		selectedOptimizer = optimizer[0]
+	}
 	return &RoutingUseCase{
 		repository:    repository,
 		clock:         clock,
 		defaultTenant: defaultTenant,
+		optimizer:     selectedOptimizer,
 	}
 }
 
-func (u *RoutingUseCase) SuggestRoute(_ context.Context, command SuggestRouteCommand) (RoutePlan, error) {
-	job, err := u.findJob(command.TenantID, command.JobID)
-	if err != nil {
-		return RoutePlan{}, err
-	}
-	return u.planRoute([]domain.Job{job}, command.Origin, command.Vehicle, command.DriverShift, command.DepartureTime)
-}
-
-func (u *RoutingUseCase) OptimizeRoute(_ context.Context, command OptimizeRouteCommand) (RoutePlan, error) {
+func (u *RoutingUseCase) OptimizeRoute(ctx context.Context, command OptimizeRouteCommand) (RoutePlan, error) {
 	if len(command.JobIDs) == 0 {
 		return RoutePlan{}, errors.New("at least one job_id is required")
+	}
+	if u.optimizer != nil {
+		return u.optimizer.OptimizeRoute(ctx, command)
 	}
 
 	jobs := make([]domain.Job, 0, len(command.JobIDs))

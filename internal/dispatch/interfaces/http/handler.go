@@ -126,14 +126,6 @@ type driverShiftRequest struct {
 	End   *string `json:"end,omitempty"`
 }
 
-type suggestRouteRequest struct {
-	JobID         string                `json:"job_id"`
-	Origin        routeLocationRequest  `json:"origin"`
-	Vehicle       vehicleProfileRequest `json:"vehicle"`
-	DriverShift   driverShiftRequest    `json:"driver_shift,omitempty"`
-	DepartureTime *string               `json:"departure_time,omitempty"`
-}
-
 type optimizeRouteRequest struct {
 	JobIDs        []string              `json:"job_ids"`
 	Origin        routeLocationRequest  `json:"origin"`
@@ -178,7 +170,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/docs/dispatch/openapi.json", h.docsOpenAPI)
 	mux.HandleFunc("/dispatch/jobs", h.jobsCollection)
 	mux.HandleFunc("/dispatch/jobs/", h.jobResource)
-	mux.HandleFunc("/dispatch/routes/suggest", h.suggestRoute)
 	mux.HandleFunc("/dispatch/routes/optimize", h.optimizeRoute)
 	// Legacy contract kept for existing integrations that publish status events directly.
 	mux.HandleFunc("/dispatch/jobs/status", h.updateStatus)
@@ -725,54 +716,6 @@ func (h *Handler) computeETA(w http.ResponseWriter, r *http.Request) {
 		"eta_seconds": etaSeconds,
 		"source":      "tracking-client",
 	})
-}
-
-func (h *Handler) suggestRoute(w http.ResponseWriter, r *http.Request) {
-	if h.routingUseCase == nil {
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "routing is not configured"})
-		return
-	}
-	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
-		return
-	}
-
-	var req suggestRouteRequest
-	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-
-	driverShift, err := req.DriverShift.toDomain()
-	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	departureTime, err := parseTimeValue(req.DepartureTime)
-	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-
-	tenantID, ok := h.requireTenantID(w, r)
-	if !ok {
-		return
-	}
-
-	plan, err := h.routingUseCase.SuggestRoute(r.Context(), application.SuggestRouteCommand{
-		TenantID:      tenantID,
-		JobID:         req.JobID,
-		Origin:        req.Origin.toDomain(),
-		Vehicle:       req.Vehicle.toDomain(),
-		DriverShift:   driverShift,
-		DepartureTime: departureTime,
-	})
-	if err != nil {
-		respondLifecycleError(w, err)
-		return
-	}
-
-	respondJSON(w, http.StatusOK, plan)
 }
 
 func (h *Handler) optimizeRoute(w http.ResponseWriter, r *http.Request) {

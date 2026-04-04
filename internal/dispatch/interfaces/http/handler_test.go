@@ -597,7 +597,7 @@ func TestHandler_DocsContract(t *testing.T) {
 	}
 }
 
-func TestHandler_SuggestRouteContract(t *testing.T) {
+func TestHandler_OptimizeRouteSingleJobContract(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -626,9 +626,9 @@ func TestHandler_SuggestRouteContract(t *testing.T) {
 		t,
 		mux,
 		http.MethodPost,
-		"/dispatch/routes/suggest",
+		"/dispatch/routes/optimize",
 		`{
-			"job_id":"job-route-1",
+			"job_ids":["job-route-1"],
 			"origin":{"address":"Truck Yard","latitude":6.4550,"longitude":3.3958},
 			"vehicle":{"vehicle_id":"veh-1","vehicle_type":"flatbed","capacity_weight_kg":7000,"capacity_volume_m3":20,"average_speed_kph":40},
 			"driver_shift":{"start":"2026-01-01T09:00:00Z","end":"2026-01-01T18:00:00Z"}
@@ -726,9 +726,9 @@ func TestHandler_OptimizeRouteConstraintViolationReported(t *testing.T) {
 		t,
 		mux,
 		http.MethodPost,
-		"/dispatch/routes/suggest",
+		"/dispatch/routes/optimize",
 		`{
-			"job_id":"job-heavy",
+			"job_ids":["job-heavy"],
 			"origin":{"address":"Depot","latitude":6.4500,"longitude":3.4000},
 			"vehicle":{"vehicle_id":"veh-3","vehicle_type":"bike","capacity_weight_kg":200,"capacity_volume_m3":1,"average_speed_kph":25},
 			"driver_shift":{"start":"2026-01-01T10:00:00Z","end":"2026-01-01T11:00:00Z"}
