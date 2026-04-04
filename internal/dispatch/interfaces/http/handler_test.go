@@ -138,7 +138,7 @@ func buildDispatchOptimizeTestHandler() *Handler {
 					{
 						Distance: 2000,
 						Duration: 600,
-						Geometry: infrastructure.Geometry{Type: "LineString"},
+						Geometry: "encoded-polyline",
 					},
 				},
 			})

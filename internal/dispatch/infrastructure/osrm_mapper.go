@@ -40,14 +40,9 @@ type OsrmWaypoint struct {
 }
 
 type OsrmRoute struct {
-	Distance float64  `json:"distance"`
-	Duration float64  `json:"duration"`
-	Geometry Geometry `json:"geometry"`
-}
-
-type Geometry struct {
-	Coordinates [][]float64 `json:"coordinates"`
-	Type        string      `json:"type"`
+	Distance float64 `json:"distance"`
+	Duration float64 `json:"duration"`
+	Geometry string  `json:"geometry"`
 }
 
 func NewOsrmClient() *OsrmClient {

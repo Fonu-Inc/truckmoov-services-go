@@ -62,7 +62,7 @@ func TestOsrmClientCallRouteService(t *testing.T) {
 				{
 					Distance: 1200,
 					Duration: 300,
-					Geometry: Geometry{Type: "LineString"},
+					Geometry: "encoded-polyline",
 				},
 			},
 			Waypoints: []OsrmWaypoint{
