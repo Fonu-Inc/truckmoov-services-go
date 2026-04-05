@@ -65,6 +65,7 @@ type RoutePlan struct {
 type OptimizeRouteCommand struct {
 	TenantID      string
 	JobIDs        []string
+	Jobs          []domain.Job
 	Origin        RouteLocation
 	Vehicle       RouteVehicleProfile
 	DriverShift   DriverShift
@@ -95,20 +96,28 @@ func (u *RoutingUseCase) OptimizeRoute(ctx context.Context, command OptimizeRout
 	if len(command.JobIDs) == 0 {
 		return RoutePlan{}, errors.New("at least one job_id is required")
 	}
+
+	jobs := append([]domain.Job(nil), command.Jobs...)
+	if len(jobs) == 0 {
+		jobs = make([]domain.Job, 0, len(command.JobIDs))
+		for _, jobID := range command.JobIDs {
+			job, err := u.findJob(command.TenantID, jobID)
+			if err != nil {
+				return RoutePlan{}, err
+			}
+			jobs = append(jobs, job)
+		}
+	}
+
+	departure := u.resolveDepartureTime(command.DepartureTime, command.DriverShift)
+	command.Jobs = jobs
+	command.DepartureTime = &departure
+
 	if u.optimizer != nil {
 		return u.optimizer.OptimizeRoute(ctx, command)
 	}
 
-	jobs := make([]domain.Job, 0, len(command.JobIDs))
-	for _, jobID := range command.JobIDs {
-		job, err := u.findJob(command.TenantID, jobID)
-		if err != nil {
-			return RoutePlan{}, err
-		}
-		jobs = append(jobs, job)
-	}
-
-	return u.planRoute(jobs, command.Origin, command.Vehicle, command.DriverShift, command.DepartureTime)
+	return u.planRoute(jobs, command.Origin, command.Vehicle, command.DriverShift, &departure)
 }
 
 func (u *RoutingUseCase) findJob(tenantID, jobID string) (domain.Job, error) {

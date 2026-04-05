@@ -23,6 +23,8 @@ type Config struct {
 	PostgresSSLMode   string
 	RedisAddr         string
 	RedisDB           string
+	RouteSolverAddr   string
+	ValhallaURL       string
 	CORSOrigins       []string
 	MaxAccuracyM      float64
 	MaxSpeedKPH       float64
@@ -49,6 +51,8 @@ func Load(serviceName, defaultPort string) Config {
 		PostgresSSLMode:   getEnv("POSTGRES_SSLMODE", "disable"),
 		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6380"),
 		RedisDB:           getEnv("REDIS_DB", "0"),
+		RouteSolverAddr:   getEnv("ROUTE_SOLVER_ADDR", ""),
+		ValhallaURL:       getEnv("VALHALLA_URL", "http://valhalla:8002"),
 		MaxAccuracyM:      getEnvFloat("TELEMETRY_MAX_ACCURACY_M", 500.0),
 		MaxSpeedKPH:       getEnvFloat("TELEMETRY_MAX_SPEED_KPH", 250.0),
 		HistoryTTLSeconds: getEnvInt("TRACKING_HISTORY_TTL_SECONDS", 7*24*3600),

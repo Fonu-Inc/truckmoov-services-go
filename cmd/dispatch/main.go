@@ -10,6 +10,7 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	solverv1 "github.com/truckmoov/services-go/api/proto/gen/proto/solver/v1"
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	"github.com/truckmoov/services-go/internal/dispatch/infrastructure"
 	dispatchhttp "github.com/truckmoov/services-go/internal/dispatch/interfaces/http"
@@ -18,6 +19,8 @@ import (
 	httpx "github.com/truckmoov/services-go/pkg/http"
 	"github.com/truckmoov/services-go/pkg/logger"
 	"github.com/truckmoov/services-go/pkg/otel"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -75,14 +78,28 @@ func main() {
 		infrastructure.TimeIDGenerator{},
 		cfg.DefaultTenant,
 	)
-	vroomClient := infrastructure.NewVroomClient()
-	osrmClient := infrastructure.NewOsrmClient()
-	routeOptimizer := infrastructure.NewVroomRouteOptimizer(
-		vroomClient,
-		jobRepository,
-		infrastructure.SystemClock{},
-		cfg.DefaultTenant,
-	)
+
+	var routeOptimizer application.RouteOptimizer
+	if cfg.RouteSolverAddr != "" {
+		conn, dialErr := grpc.DialContext(
+			ctx,
+			cfg.RouteSolverAddr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if dialErr != nil {
+			log.Error("route_solver_dial_failed", "error", dialErr.Error(), "address", cfg.RouteSolverAddr)
+			os.Exit(1)
+		}
+		defer func() {
+			_ = conn.Close()
+		}()
+
+		routeOptimizer = infrastructure.NewSolverRouteOptimizer(
+			solverv1.NewRouteSolverClient(conn),
+			infrastructure.NewValhallaClient(cfg.ValhallaURL),
+		)
+	}
+
 	routingUseCase := application.NewRoutingUseCase(
 		jobRepository,
 		infrastructure.SystemClock{},
@@ -115,8 +132,6 @@ func main() {
 		jobLifecycleUseCase,
 		routingUseCase,
 		jobRepository,
-		vroomClient,
-		osrmClient,
 	)
 
 	mux := http.NewServeMux()

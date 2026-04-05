@@ -2,6 +2,6 @@ syntax = "proto3";
 
 package truckmoov.dispatch.v1;
 
-option go_package = "github.com/truckmoov/services-go/api/proto/gen/dispatch/v1;dispatchv1";
+option go_package = "github.com/truckmoov/services-go/api/proto/gen/proto/dispatch/v1;dispatchv1";
 
 service DispatchService {}
