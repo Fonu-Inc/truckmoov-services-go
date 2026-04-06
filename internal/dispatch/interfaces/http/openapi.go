@@ -89,62 +89,6 @@ func dispatchOpenAPISpec() map[string]any {
 					},
 				},
 			},
-			"/dispatch/eta": map[string]any{
-				"get": map[string]any{
-					"tags":        []string{"dispatch"},
-					"summary":     "Compute ETA",
-					"description": "Computes ETA for the authenticated tenant.",
-					"operationId": "computeETA",
-					"parameters": []map[string]any{
-						{"name": "job_id", "in": "query", "schema": map[string]any{"type": "string"}},
-						{"name": "vehicle_id", "in": "query", "schema": map[string]any{"type": "string"}},
-						{"name": "destination", "in": "query", "schema": map[string]any{"type": "string"}},
-					},
-					"responses": map[string]any{
-						"200": map[string]any{
-							"description": "ETA response",
-							"content": map[string]any{
-								"application/json": map[string]any{
-									"schema": map[string]any{
-										"type": "object",
-										"properties": map[string]any{
-											"eta_seconds":           map[string]any{"type": "integer"},
-											"distance_km":           map[string]any{"type": "number"},
-											"planned_completion_at": map[string]any{"type": "string", "format": "date-time"},
-											"source":                map[string]any{"type": "string"},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-			"/dispatch/routes/suggest": map[string]any{
-				"post": map[string]any{
-					"tags":        []string{"dispatch"},
-					"summary":     "Suggest an optimal route for a job",
-					"operationId": "suggestRoute",
-					"requestBody": map[string]any{
-						"required": true,
-						"content": map[string]any{
-							"application/json": map[string]any{
-								"schema": map[string]any{"$ref": "#/components/schemas/SuggestRouteRequest"},
-							},
-						},
-					},
-					"responses": map[string]any{
-						"200": map[string]any{
-							"description": "Route plan",
-							"content": map[string]any{
-								"application/json": map[string]any{
-									"schema": map[string]any{"$ref": "#/components/schemas/RoutePlan"},
-								},
-							},
-						},
-					},
-				},
-			},
 			"/dispatch/routes/optimize": map[string]any{
 				"post": map[string]any{
 					"tags":        []string{"dispatch"},
@@ -751,17 +695,6 @@ func dispatchOpenAPISpec() map[string]any {
 						"end":   map[string]any{"type": "string", "format": "date-time"},
 					},
 				},
-				"SuggestRouteRequest": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"job_id":         map[string]any{"type": "string"},
-						"origin":         map[string]any{"$ref": "#/components/schemas/RouteLocation"},
-						"vehicle":        map[string]any{"$ref": "#/components/schemas/VehicleProfile"},
-						"driver_shift":   map[string]any{"$ref": "#/components/schemas/DriverShift"},
-						"departure_time": map[string]any{"type": "string", "format": "date-time"},
-					},
-					"required": []string{"job_id", "origin", "vehicle"},
-				},
 				"OptimizeRouteRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -771,7 +704,7 @@ func dispatchOpenAPISpec() map[string]any {
 						"driver_shift":   map[string]any{"$ref": "#/components/schemas/DriverShift"},
 						"departure_time": map[string]any{"type": "string", "format": "date-time"},
 					},
-					"required": []string{"job_ids", "origin", "vehicle"},
+					"description": "Route-planning payload built from dispatch jobs and vehicle context.",
 				},
 				"RouteStep": map[string]any{
 					"type": "object",

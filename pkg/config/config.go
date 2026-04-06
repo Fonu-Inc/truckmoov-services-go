@@ -42,6 +42,8 @@ type Config struct {
 	SMSServiceUsername         string
 	SMSServicePassword         string
 	SMSServiceSenderID         string
+	RouteSolverAddr            string
+	ValhallaURL                string
 }
 
 func Load(serviceName, defaultPort string) Config {
@@ -78,6 +80,8 @@ func Load(serviceName, defaultPort string) Config {
 		SMSServiceUsername:         getEnv("SMS_SERVICE_USER_NAME", ""),
 		SMSServicePassword:         getEnv("SMS_SERVICE_PASSWORD", ""),
 		SMSServiceSenderID:         getEnv("SMS_SERVICE_SENDER_ID", ""),
+		RouteSolverAddr:            getEnv("ROUTE_SOLVER_ADDR", ""),
+		ValhallaURL:                getEnv("VALHALLA_URL", "http://valhalla:8002"),
 		CORSOrigins: parseCSVEnv(
 			"CORS_ALLOWED_ORIGINS",
 			"http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000",

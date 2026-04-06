@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package truckmoov.common.v1;
 
-option go_package = "github.com/truckmoov/services-go/api/proto/gen/common/v1;commonv1";
+option go_package = "github.com/truckmoov/services-go/api/proto/gen/proto/common/v1;commonv1";
 
 message Coordinates {
   double lat = 1;

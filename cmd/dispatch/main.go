@@ -10,15 +10,17 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	solverv1 "github.com/truckmoov/services-go/api/proto/gen/proto/solver/v1"
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	"github.com/truckmoov/services-go/internal/dispatch/infrastructure"
 	dispatchhttp "github.com/truckmoov/services-go/internal/dispatch/interfaces/http"
 	"github.com/truckmoov/services-go/pkg/config"
 	"github.com/truckmoov/services-go/pkg/eventbus"
-	trackinggrpc "github.com/truckmoov/services-go/pkg/grpc"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 	"github.com/truckmoov/services-go/pkg/logger"
 	"github.com/truckmoov/services-go/pkg/otel"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -76,10 +78,33 @@ func main() {
 		infrastructure.TimeIDGenerator{},
 		cfg.DefaultTenant,
 	)
+
+	var routeOptimizer application.RouteOptimizer
+	if cfg.RouteSolverAddr != "" {
+		conn, dialErr := grpc.DialContext(
+			ctx,
+			cfg.RouteSolverAddr,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if dialErr != nil {
+			log.Error("route_solver_dial_failed", "error", dialErr.Error(), "address", cfg.RouteSolverAddr)
+			os.Exit(1)
+		}
+		defer func() {
+			_ = conn.Close()
+		}()
+
+		routeOptimizer = infrastructure.NewSolverRouteOptimizer(
+			solverv1.NewRouteSolverClient(conn),
+			infrastructure.NewValhallaClient(cfg.ValhallaURL),
+		)
+	}
+
 	routingUseCase := application.NewRoutingUseCase(
 		jobRepository,
 		infrastructure.SystemClock{},
 		cfg.DefaultTenant,
+		routeOptimizer,
 	)
 	jobInstructionSender := infrastructure.NewNotificationJobInstructionSender(cfg.NotificationServiceURL, cfg.JWTSecret, nil)
 	sendJobInstructionUseCase := application.NewSendJobInstructionUseCase(
@@ -115,25 +140,12 @@ func main() {
 		jobLifecycleUseCase,
 		routingUseCase,
 		sendJobInstructionUseCase,
-		trackinggrpc.NewStubTrackingClient(),
 	)
-
-	if _, subErr := bus.Subscribe(
-		ctx,
-		"tm.*.vehicle.location.updated",
-		"dispatch-consumer",
-		func(c context.Context, envelope eventbus.EventEnvelope) error {
-			return handler.HandleLocationEvent(c, envelope.Data)
-		},
-	); subErr != nil {
-		log.Warn("location_subscription_failed", "error", subErr.Error())
-	}
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	handlerWithCORS := httpx.WithCORS(mux, cfg.CORSOrigins)
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
-	handlerWithCORS = httpx.WithAuthContext(handlerWithCORS, cfg.JWTSecret)
 
 	if runErr := httpx.Run(ctx, ":"+cfg.Port, httpx.WithLogging(handlerWithCORS, log), log); runErr != nil {
 		log.Error("service_stopped", "error", runErr.Error())

@@ -62,18 +62,10 @@ type RoutePlan struct {
 	OrderedSteps         []RouteStep `json:"ordered_steps"`
 }
 
-type SuggestRouteCommand struct {
-	TenantID      string
-	JobID         string
-	Origin        RouteLocation
-	Vehicle       RouteVehicleProfile
-	DriverShift   DriverShift
-	DepartureTime *time.Time
-}
-
 type OptimizeRouteCommand struct {
 	TenantID      string
 	JobIDs        []string
+	Jobs          []domain.Job
 	Origin        RouteLocation
 	Vehicle       RouteVehicleProfile
 	DriverShift   DriverShift
@@ -81,90 +73,51 @@ type OptimizeRouteCommand struct {
 }
 
 type RoutingUseCase struct {
+	optimizer     RouteOptimizer
 	repository    JobRepository
 	clock         Clock
 	defaultTenant string
 }
 
-func NewRoutingUseCase(repository JobRepository, clock Clock, defaultTenant string) *RoutingUseCase {
+func NewRoutingUseCase(repository JobRepository, clock Clock, defaultTenant string, optimizer ...RouteOptimizer) *RoutingUseCase {
+	var selectedOptimizer RouteOptimizer
+	if len(optimizer) > 0 {
+		selectedOptimizer = optimizer[0]
+	}
 	return &RoutingUseCase{
 		repository:    repository,
 		clock:         clock,
 		defaultTenant: defaultTenant,
+		optimizer:     selectedOptimizer,
 	}
 }
 
-func (u *RoutingUseCase) SuggestRoute(_ context.Context, command SuggestRouteCommand) (RoutePlan, error) {
-	job, err := u.findJob(command.TenantID, command.JobID)
-	if err != nil {
-		return RoutePlan{}, err
-	}
-	return u.planRoute([]domain.Job{job}, command.Origin, command.Vehicle, command.DriverShift, command.DepartureTime)
-}
-
-func (u *RoutingUseCase) OptimizeRoute(_ context.Context, command OptimizeRouteCommand) (RoutePlan, error) {
+func (u *RoutingUseCase) OptimizeRoute(ctx context.Context, command OptimizeRouteCommand) (RoutePlan, error) {
 	if len(command.JobIDs) == 0 {
 		return RoutePlan{}, errors.New("at least one job_id is required")
 	}
 
-	jobs := make([]domain.Job, 0, len(command.JobIDs))
-	for _, jobID := range command.JobIDs {
-		job, err := u.findJob(command.TenantID, jobID)
-		if err != nil {
-			return RoutePlan{}, err
+	jobs := append([]domain.Job(nil), command.Jobs...)
+	if len(jobs) == 0 {
+		jobs = make([]domain.Job, 0, len(command.JobIDs))
+		for _, jobID := range command.JobIDs {
+			job, err := u.findJob(command.TenantID, jobID)
+			if err != nil {
+				return RoutePlan{}, err
+			}
+			jobs = append(jobs, job)
 		}
-		jobs = append(jobs, job)
 	}
 
-	return u.planRoute(jobs, command.Origin, command.Vehicle, command.DriverShift, command.DepartureTime)
-}
+	departure := u.resolveDepartureTime(command.DepartureTime, command.DriverShift)
+	command.Jobs = jobs
+	command.DepartureTime = &departure
 
-func (u *RoutingUseCase) EstimateETAFromLocation(_ context.Context, tenantID, jobID string, origin RouteLocation, vehicle RouteVehicleProfile) (RoutePlan, error) {
-	job, err := u.findJob(tenantID, jobID)
-	if err != nil {
-		return RoutePlan{}, err
+	if u.optimizer != nil {
+		return u.optimizer.OptimizeRoute(ctx, command)
 	}
 
-	departure := u.clock.Now().UTC()
-	start := normalizeRouteLocation(origin)
-	if !hasCoordinates(start.Latitude, start.Longitude) {
-		return RoutePlan{}, errors.New("origin coordinates are required to estimate eta")
-	}
-	destination, err := stopToLocation("dropoff", job.Dropoff)
-	if err != nil {
-		return RoutePlan{}, err
-	}
-
-	distanceKm := haversineKm(start.Latitude, start.Longitude, destination.Latitude, destination.Longitude)
-	travelSeconds := estimateTravelSeconds(distanceKm, vehicle.AverageSpeedKPH)
-	arrival := departure.Add(time.Duration(travelSeconds) * time.Second)
-
-	step := RouteStep{
-		Sequence:               1,
-		JobID:                  job.ID,
-		StopType:               "dropoff",
-		Address:                destination.Address,
-		Label:                  destination.Label,
-		Latitude:               destination.Latitude,
-		Longitude:              destination.Longitude,
-		DistanceFromPreviousKm: roundDistance(distanceKm),
-		TravelSecondsFromPrev:  travelSeconds,
-		ArrivalAt:              arrival,
-		DepartureAt:            arrival,
-		ETASeconds:             travelSeconds,
-	}
-
-	return RoutePlan{
-		Feasible:             true,
-		VehicleID:            strings.TrimSpace(vehicle.VehicleID),
-		VehicleType:          strings.TrimSpace(vehicle.VehicleType),
-		DepartureTime:        departure,
-		CompletionTime:       arrival,
-		ETASeconds:           travelSeconds,
-		TotalDistanceKm:      roundDistance(distanceKm),
-		TotalDurationSeconds: travelSeconds,
-		OrderedSteps:         []RouteStep{step},
-	}, nil
+	return u.planRoute(jobs, command.Origin, command.Vehicle, command.DriverShift, &departure)
 }
 
 func (u *RoutingUseCase) findJob(tenantID, jobID string) (domain.Job, error) {

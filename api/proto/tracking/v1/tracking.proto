@@ -2,17 +2,16 @@ syntax = "proto3";
 
 package truckmoov.tracking.v1;
 
-option go_package = "github.com/truckmoov/services-go/api/proto/gen/tracking/v1;trackingv1";
+option go_package = "github.com/truckmoov/services-go/api/proto/gen/proto/tracking/v1;trackingv1";
 
-import "common/v1/common.proto";
+import "proto/common/v1/common.proto";
 
 service TrackingService {
-  rpc GetLatestLocation(GetLatestLocationRequest) returns (GetLatestLocationResponse);
+  rpc GetLatestLocation(GetLatestLocationRequest)
+      returns (GetLatestLocationResponse);
 }
 
-message GetLatestLocationRequest {
-  string vehicle_id = 1;
-}
+message GetLatestLocationRequest { string vehicle_id = 1; }
 
 message GetLatestLocationResponse {
   string vehicle_id = 1;

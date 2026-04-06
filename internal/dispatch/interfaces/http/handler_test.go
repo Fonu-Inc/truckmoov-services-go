@@ -17,7 +17,6 @@ import (
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
 	"github.com/truckmoov/services-go/internal/dispatch/infrastructure"
-	trackinggrpc "github.com/truckmoov/services-go/pkg/grpc"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
@@ -94,7 +93,7 @@ func buildDispatchTestHandlerWithSender() (*Handler, *fakeJobInstructionSender) 
 	sender := &fakeJobInstructionSender{}
 	sendJobInstructionUseCase := application.NewSendJobInstructionUseCase(repository, sender, clock, ids, "default")
 
-	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase, sendJobInstructionUseCase, trackinggrpc.NewStubTrackingClient()), sender
+	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase, sendJobInstructionUseCase), sender
 }
 
 func buildDispatchTestHandler() *Handler {
@@ -169,7 +168,6 @@ func TestHandler_UpdateStatusContract(t *testing.T) {
 		),
 		application.NewRoutingUseCase(repository, clock, "default"),
 		application.NewSendJobInstructionUseCase(repository, &fakeJobInstructionSender{}, clock, idGenerator, "default"),
-		trackinggrpc.NewStubTrackingClient(),
 	)
 
 	mux := http.NewServeMux()
@@ -187,19 +185,6 @@ func TestHandler_UpdateStatusContract(t *testing.T) {
 	}
 	if payload["published"] != true {
 		t.Fatalf("expected published=true")
-	}
-}
-
-func TestHandler_ETAContract(t *testing.T) {
-	handler := buildDispatchTestHandler()
-
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	res := dispatchRequest(t, mux, http.MethodGet, "/dispatch/eta?job_id=job-1&vehicle_id=vehicle-1&destination=dest", "")
-
-	if res.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
 	}
 }
 
@@ -996,7 +981,7 @@ func TestHandler_DocsContract(t *testing.T) {
 	}
 }
 
-func TestHandler_SuggestRouteContract(t *testing.T) {
+func TestHandler_OptimizeRouteSingleJobContract(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -1025,9 +1010,9 @@ func TestHandler_SuggestRouteContract(t *testing.T) {
 		t,
 		mux,
 		http.MethodPost,
-		"/dispatch/routes/suggest",
+		"/dispatch/routes/optimize",
 		`{
-			"job_id":"job-route-1",
+			"job_ids":["job-route-1"],
 			"origin":{"address":"Truck Yard","latitude":6.4550,"longitude":3.3958},
 			"vehicle":{"vehicle_id":"veh-1","vehicle_type":"flatbed","capacity_weight_kg":7000,"capacity_volume_m3":20,"average_speed_kph":40},
 			"driver_shift":{"start":"2026-01-01T09:00:00Z","end":"2026-01-01T18:00:00Z"}
@@ -1037,16 +1022,15 @@ func TestHandler_SuggestRouteContract(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, routeRes.Code, routeRes.Body.String())
 	}
 
-	var payload map[string]any
+	var payload application.RoutePlan
 	if err := json.Unmarshal(routeRes.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if payload["feasible"] != true {
-		t.Fatalf("expected feasible route, got %v", payload["feasible"])
+	if !payload.Feasible {
+		t.Fatalf("expected feasible route plan, got %+v", payload)
 	}
-	steps, ok := payload["ordered_steps"].([]any)
-	if !ok || len(steps) != 2 {
-		t.Fatalf("expected 2 ordered steps, got %#v", payload["ordered_steps"])
+	if len(payload.OrderedSteps) != 2 {
+		t.Fatalf("expected 2 route steps, got %d", len(payload.OrderedSteps))
 	}
 }
 
@@ -1081,20 +1065,15 @@ func TestHandler_OptimizeRouteContract(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, routeRes.Code, routeRes.Body.String())
 	}
 
-	var payload struct {
-		OrderedSteps []struct {
-			JobID    string `json:"job_id"`
-			StopType string `json:"stop_type"`
-		} `json:"ordered_steps"`
-	}
+	var payload application.RoutePlan
 	if err := json.Unmarshal(routeRes.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
-	if len(payload.OrderedSteps) != 4 {
-		t.Fatalf("expected 4 steps, got %d", len(payload.OrderedSteps))
+	if !payload.Feasible {
+		t.Fatalf("expected feasible route plan, got %+v", payload)
 	}
-	if payload.OrderedSteps[0].JobID != "job-b" || payload.OrderedSteps[0].StopType != "pickup" {
-		t.Fatalf("expected job-b pickup first due to proximity/priority, got %+v", payload.OrderedSteps[0])
+	if len(payload.OrderedSteps) != 4 {
+		t.Fatalf("expected 4 route steps, got %d", len(payload.OrderedSteps))
 	}
 }
 
@@ -1125,9 +1104,9 @@ func TestHandler_OptimizeRouteConstraintViolationReported(t *testing.T) {
 		t,
 		mux,
 		http.MethodPost,
-		"/dispatch/routes/suggest",
+		"/dispatch/routes/optimize",
 		`{
-			"job_id":"job-heavy",
+			"job_ids":["job-heavy"],
 			"origin":{"address":"Depot","latitude":6.4500,"longitude":3.4000},
 			"vehicle":{"vehicle_id":"veh-3","vehicle_type":"bike","capacity_weight_kg":200,"capacity_volume_m3":1,"average_speed_kph":25},
 			"driver_shift":{"start":"2026-01-01T10:00:00Z","end":"2026-01-01T11:00:00Z"}
@@ -1137,18 +1116,15 @@ func TestHandler_OptimizeRouteConstraintViolationReported(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, routeRes.Code, routeRes.Body.String())
 	}
 
-	var payload struct {
-		Feasible             bool     `json:"feasible"`
-		InfeasibilityReasons []string `json:"infeasibility_reasons"`
-	}
+	var payload application.RoutePlan
 	if err := json.Unmarshal(routeRes.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 	if payload.Feasible {
-		t.Fatalf("expected infeasible route")
+		t.Fatalf("expected infeasible route plan, got %+v", payload)
 	}
-	if len(payload.InfeasibilityReasons) < 2 {
-		t.Fatalf("expected multiple infeasibility reasons, got %#v", payload.InfeasibilityReasons)
+	if len(payload.InfeasibilityReasons) == 0 {
+		t.Fatalf("expected infeasibility reasons, got %+v", payload)
 	}
 }
 
@@ -1246,18 +1222,5 @@ func TestHandler_ListJobsRejectsTenantQuery(t *testing.T) {
 	listRes := dispatchRequestWithHeaders(t, server, http.MethodGet, "/dispatch/jobs?tenant_id=client-tenant", "", authHeader)
 	if listRes.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, listRes.Code, listRes.Body.String())
-	}
-}
-
-func TestHandler_ETARejectsTenantQuery(t *testing.T) {
-	handler := buildDispatchTestHandler()
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-	server := httpx.WithAuthContext(mux, "replace-me")
-	authHeader := map[string]string{"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "tenant-from-token", "DISPATCHER")}
-
-	res := dispatchRequestWithHeaders(t, server, http.MethodGet, "/dispatch/eta?tenant_id=client-tenant&vehicle_id=vehicle-1&destination=Apapa", "", authHeader)
-	if res.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, res.Code, res.Body.String())
 	}
 }

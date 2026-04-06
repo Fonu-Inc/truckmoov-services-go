@@ -1,0 +1,53 @@
+
+syntax = "proto3";
+
+package solver;
+option go_package = "github.com/truckmoov/services-go/api/proto/gen/proto/solver/v1;solverv1";
+
+service RouteSolver {
+  rpc SolvePDP(PDPRequest) returns (PDPSolution);
+  rpc Health(Empty) returns (HealthResponse);
+}
+
+message PDPRequest {
+  repeated int64 duration_matrix = 1;
+  int32 matrix_size = 2;
+  repeated Job jobs = 3;
+  optional int32 vehicle_capacity = 4;
+  optional int64 max_route_duration = 5;
+}
+
+message Job {
+  string id = 1;
+  int32 pickup_index = 2;
+  int32 delivery_index = 3;
+  optional int32 demand = 4;
+}
+
+message PDPSolution {
+  repeated Stop ordered_stops = 1;
+  int64 total_duration = 2;
+  SolveStatus status = 3;
+}
+
+message Stop {
+  int32 index = 1;
+  string job_id = 2;
+  StopType stop_type = 3;
+  int64 cumulative_duration = 4;
+}
+
+enum SolveStatus {
+  SUCCESS = 0;
+  NO_SOLUTION = 1;
+  TIMEOUT = 2;
+}
+
+enum StopType {
+  PICKUP = 0;
+  DELIVERY = 1;
+}
+
+message Empty {}
+
+message HealthResponse { string status = 1; }

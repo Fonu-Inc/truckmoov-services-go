@@ -60,13 +60,13 @@ func buildRoutingUseCase(jobs ...domain.Job) *RoutingUseCase {
 	)
 }
 
-func TestRoutingUseCase_SuggestRoute_HappyPath(t *testing.T) {
+func TestRoutingUseCase_OptimizeRoute_SingleJobHappyPath(t *testing.T) {
 	job := makeJobWithCoords("job-1", "tenant-a")
 	uc := buildRoutingUseCase(job)
 
-	plan, err := uc.SuggestRoute(context.Background(), SuggestRouteCommand{
+	plan, err := uc.OptimizeRoute(context.Background(), OptimizeRouteCommand{
 		TenantID: "tenant-a",
-		JobID:    "job-1",
+		JobIDs:   []string{"job-1"},
 		Origin:   RouteLocation{Latitude: 6.50, Longitude: 3.30},
 		Vehicle:  RouteVehicleProfile{VehicleID: "v1", AverageSpeedKPH: 50},
 	})
@@ -87,11 +87,11 @@ func TestRoutingUseCase_SuggestRoute_HappyPath(t *testing.T) {
 	}
 }
 
-func TestRoutingUseCase_SuggestRoute_JobNotFound(t *testing.T) {
+func TestRoutingUseCase_OptimizeRoute_JobNotFound(t *testing.T) {
 	uc := buildRoutingUseCase()
-	_, err := uc.SuggestRoute(context.Background(), SuggestRouteCommand{
+	_, err := uc.OptimizeRoute(context.Background(), OptimizeRouteCommand{
 		TenantID: "tenant-a",
-		JobID:    "missing",
+		JobIDs:   []string{"missing"},
 		Origin:   RouteLocation{Latitude: 6.5, Longitude: 3.3},
 	})
 	if err == nil {
@@ -99,11 +99,11 @@ func TestRoutingUseCase_SuggestRoute_JobNotFound(t *testing.T) {
 	}
 }
 
-func TestRoutingUseCase_SuggestRoute_MissingOriginCoords(t *testing.T) {
+func TestRoutingUseCase_OptimizeRoute_MissingOriginCoords(t *testing.T) {
 	job := makeJobWithCoords("job-1", "default")
 	uc := buildRoutingUseCase(job)
-	_, err := uc.SuggestRoute(context.Background(), SuggestRouteCommand{
-		JobID:  "job-1",
+	_, err := uc.OptimizeRoute(context.Background(), OptimizeRouteCommand{
+		JobIDs: []string{"job-1"},
 		Origin: RouteLocation{},
 	})
 	if err == nil {
@@ -159,9 +159,9 @@ func TestRoutingUseCase_InfeasibilityReasons_VehicleTypeMismatch(t *testing.T) {
 	}
 	uc := buildRoutingUseCase(job)
 
-	plan, err := uc.SuggestRoute(context.Background(), SuggestRouteCommand{
+	plan, err := uc.OptimizeRoute(context.Background(), OptimizeRouteCommand{
 		TenantID: "tenant-c",
-		JobID:    "job-3",
+		JobIDs:   []string{"job-3"},
 		Origin:   RouteLocation{Latitude: 6.50, Longitude: 3.30},
 		Vehicle:  RouteVehicleProfile{VehicleType: "flatbed"},
 	})
@@ -181,9 +181,9 @@ func TestRoutingUseCase_ShiftConstraint_ExceedsShiftEnd(t *testing.T) {
 	uc := buildRoutingUseCase(job)
 
 	shiftEnd := time.Date(2026, 3, 1, 8, 1, 0, 0, time.UTC) // only 1 minute
-	plan, err := uc.SuggestRoute(context.Background(), SuggestRouteCommand{
+	plan, err := uc.OptimizeRoute(context.Background(), OptimizeRouteCommand{
 		TenantID:    "tenant-d",
-		JobID:       "job-4",
+		JobIDs:      []string{"job-4"},
 		Origin:      RouteLocation{Latitude: 6.50, Longitude: 3.30},
 		Vehicle:     RouteVehicleProfile{AverageSpeedKPH: 1}, // very slow
 		DriverShift: DriverShift{End: &shiftEnd},
@@ -193,37 +193,6 @@ func TestRoutingUseCase_ShiftConstraint_ExceedsShiftEnd(t *testing.T) {
 	}
 	if plan.Feasible {
 		t.Fatalf("expected infeasible due to shift end exceeded")
-	}
-}
-
-func TestRoutingUseCase_EstimateETA_HappyPath(t *testing.T) {
-	job := makeJobWithCoords("job-5", "tenant-e")
-	uc := buildRoutingUseCase(job)
-
-	plan, err := uc.EstimateETAFromLocation(context.Background(), "tenant-e", "job-5",
-		RouteLocation{Latitude: 6.50, Longitude: 3.30},
-		RouteVehicleProfile{AverageSpeedKPH: 60},
-	)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if plan.ETASeconds <= 0 {
-		t.Fatalf("expected positive ETA")
-	}
-	if len(plan.OrderedSteps) != 1 {
-		t.Fatalf("expected 1 step (dropoff only)")
-	}
-}
-
-func TestRoutingUseCase_EstimateETA_MissingOriginCoords(t *testing.T) {
-	job := makeJobWithCoords("job-5", "tenant-e")
-	uc := buildRoutingUseCase(job)
-	_, err := uc.EstimateETAFromLocation(context.Background(), "tenant-e", "job-5",
-		RouteLocation{},
-		RouteVehicleProfile{},
-	)
-	if err == nil {
-		t.Fatalf("expected error for missing origin coords")
 	}
 }
 
