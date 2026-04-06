@@ -442,7 +442,7 @@ func nullableString(value string) any {
 }
 
 type InMemoryWhatsAppConversationRepository struct {
-	mu              sync.RWMutex
+	mu               sync.RWMutex
 	conversations    map[string]domain.WhatsAppConversation
 	byTenantPhone    map[string]string
 	messages         map[string]domain.WhatsAppConversationMessage

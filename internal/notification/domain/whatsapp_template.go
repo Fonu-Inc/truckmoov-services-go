@@ -38,6 +38,6 @@ type WhatsAppTemplatePaging struct {
 }
 
 type WhatsAppTemplateListResponse struct {
-	Data   []WhatsAppTemplate    `json:"data"`
+	Data   []WhatsAppTemplate      `json:"data"`
 	Paging *WhatsAppTemplatePaging `json:"paging,omitempty"`
 }
