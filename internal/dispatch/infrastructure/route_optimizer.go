@@ -14,6 +14,7 @@ import (
 )
 
 const defaultAverageSpeedKPH = 35.0
+const defaultLegAlternates = 2
 
 var errRouteSolverNoSolution = errors.New("route solver returned no feasible solution")
 
@@ -208,6 +209,10 @@ func buildRoutePlanFromSolution(
 		totalDistance += distance
 		cumulativeSeconds += travelSeconds
 		arrival := departure.Add(time.Duration(cumulativeSeconds) * time.Second)
+		alternateShapes, err := valhallaClient.GetLegAlternates(ctx, orderedNodes[i], node, defaultLegAlternates)
+		if err != nil {
+			return application.RoutePlan{}, err
+		}
 
 		steps = append(steps, application.RouteStep{
 			Sequence:               i + 1,
@@ -223,6 +228,7 @@ func buildRoutePlanFromSolution(
 			DepartureAt:            arrival,
 			ETASeconds:             cumulativeSeconds,
 			Shape:                  strings.TrimSpace(leg.Shape),
+			AlternateShapes:        alternateShapes,
 			Maneuvers:              mapValhallaManeuvers(leg.Maneuvers),
 		})
 	}

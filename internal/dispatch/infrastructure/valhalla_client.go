@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -119,6 +120,7 @@ type OptimizeRouteInput struct {
 	Costing        string              `json:"costing"`
 	Units          string              `json:"units"`
 	DirectionsType string              `json:"directions_type,omitempty"`
+	Alternates     int                 `json:"alternates,omitempty"`
 	ID             string              `json:"id,omitempty"`
 }
 
@@ -155,10 +157,27 @@ type ValhallaRouteTrip struct {
 	Summary ValhallaRouteSummary `json:"summary"`
 }
 
+type ValhallaAlternateRoute struct {
+	Trip    *ValhallaRouteTrip   `json:"trip,omitempty"`
+	Legs    []ValhallaRouteLeg   `json:"legs,omitempty"`
+	Summary ValhallaRouteSummary `json:"summary,omitempty"`
+}
+
+func (a ValhallaAlternateRoute) routeTrip() ValhallaRouteTrip {
+	if a.Trip != nil {
+		return *a.Trip
+	}
+	return ValhallaRouteTrip{
+		Legs:    a.Legs,
+		Summary: a.Summary,
+	}
+}
+
 type ValhallaRouteResponse struct {
-	Trip      ValhallaRouteTrip `json:"trip"`
-	ErrorCode int               `json:"error_code,omitempty"`
-	Error     string            `json:"error,omitempty"`
+	Trip       ValhallaRouteTrip        `json:"trip"`
+	Alternates []ValhallaAlternateRoute `json:"alternates,omitempty"`
+	ErrorCode  int                      `json:"error_code,omitempty"`
+	Error      string                   `json:"error,omitempty"`
 }
 
 func (v *ValhallaClient) OptimizeRoute(ctx context.Context, payload []SolverNodeRef) (*ValhallaRouteResponse, error) {
@@ -256,4 +275,65 @@ func (v *ValhallaClient) GetTurnByTurnDirections(ctx context.Context, payload []
 	}
 
 	return &output, nil
+}
+
+func (v *ValhallaClient) GetLegAlternates(ctx context.Context, from, to SolverNodeRef, alternates int) ([]string, error) {
+	if alternates <= 0 {
+		return nil, nil
+	}
+
+	input := OptimizeRouteInput{
+		Locations: []ValhallaLocStruct{
+			{Lat: from.location.Latitude, Lon: from.location.Longitude},
+			{Lat: to.location.Latitude, Lon: to.location.Longitude},
+		},
+		Costing:        "truck",
+		Units:          "kilometers",
+		DirectionsType: "instructions",
+		Alternates:     alternates,
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("marshal valhalla alternate route request: %w", err)
+	}
+	endpoint := v.baseUrl + "/route?json=" + url.QueryEscape(string(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create valhalla alternate route request: %w", err)
+	}
+	resp, err := v.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("call valhalla alternate route service: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("valhalla alternate route returned status %s", resp.Status)
+	}
+
+	var output ValhallaRouteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&output); err != nil {
+		return nil, fmt.Errorf("decode valhalla alternate route response: %w", err)
+	}
+	if output.Error != "" {
+		return nil, fmt.Errorf("valhalla alternate route error: %s", output.Error)
+	}
+
+	shapes := make([]string, 0, len(output.Alternates))
+	for _, alternate := range output.Alternates {
+		trip := alternate.routeTrip()
+		if len(trip.Legs) == 0 {
+			continue
+		}
+		shape := strings.TrimSpace(trip.Legs[0].Shape)
+		if shape == "" {
+			continue
+		}
+		shapes = append(shapes, shape)
+	}
+
+	if len(shapes) == 0 {
+		return nil, nil
+	}
+	return shapes, nil
 }

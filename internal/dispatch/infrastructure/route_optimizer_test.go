@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,52 @@ func TestBuildRoutePlanFromSolution_IncludesTurnByTurnManeuvers(t *testing.T) {
 		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			if r.URL.Path != "/route" {
 				t.Fatalf("unexpected path %s", r.URL.Path)
+			}
+
+			rawJSON := r.URL.Query().Get("json")
+			decodedJSON, err := url.QueryUnescape(rawJSON)
+			if err != nil {
+				t.Fatalf("unescape query json: %v", err)
+			}
+
+			if strings.Contains(decodedJSON, `"alternates":2`) {
+				body, err := json.Marshal(map[string]any{
+					"trip": map[string]any{
+						"summary": map[string]any{"time": 1128, "length": 10.85},
+						"legs": []map[string]any{
+							{"summary": map[string]any{"time": 1128, "length": 10.85}, "shape": "primary-leg-shape"},
+						},
+					},
+					"alternates": []map[string]any{
+						{
+							"trip": map[string]any{
+								"summary": map[string]any{"time": 1200, "length": 11.2},
+								"legs": []map[string]any{
+									{"summary": map[string]any{"time": 1200, "length": 11.2}, "shape": "alt-shape-1"},
+								},
+							},
+						},
+						{
+							"trip": map[string]any{
+								"summary": map[string]any{"time": 1250, "length": 11.6},
+								"legs": []map[string]any{
+									{"summary": map[string]any{"time": 1250, "length": 11.6}, "shape": "alt-shape-2"},
+								},
+							},
+						},
+					},
+				})
+				if err != nil {
+					t.Fatalf("marshal alternate response: %v", err)
+				}
+
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(string(body))),
+					Request:    r,
+				}, nil
 			}
 
 			body, err := json.Marshal(map[string]any{
@@ -132,6 +179,12 @@ func TestBuildRoutePlanFromSolution_IncludesTurnByTurnManeuvers(t *testing.T) {
 	}
 	if got := plan.OrderedSteps[0].Shape; got != "abc123" {
 		t.Fatalf("unexpected first step shape %q", got)
+	}
+	if got := len(plan.OrderedSteps[0].AlternateShapes); got != 2 {
+		t.Fatalf("expected 2 alternate shapes, got %d", got)
+	}
+	if got := plan.OrderedSteps[0].AlternateShapes[0]; got != "alt-shape-1" {
+		t.Fatalf("unexpected first alternate shape %q", got)
 	}
 	if got := plan.OrderedSteps[0].Maneuvers[1].Instruction; got != "Turn right onto Ikeja Road." {
 		t.Fatalf("unexpected first step maneuver instruction %q", got)
