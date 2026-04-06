@@ -5,20 +5,9 @@ resources:
   - configmap.yaml
   - service.yaml
   - deployment.yaml
-  - doppler-secret.yaml
 images:
   - name: notification-image
     newName: truckmoov-notification
     newTag: latest
 commonLabels:
   app.kubernetes.io/part-of: truckmoov
-patches:
-  - patch: |-
-      apiVersion: secrets.doppler.com/v1alpha1
-      kind: DopplerSecret
-      metadata:
-        name: truckmoov-notification-secrets
-        namespace: doppler-operator-system
-    target:
-      kind: DopplerSecret
-      name: truckmoov-notification-secrets

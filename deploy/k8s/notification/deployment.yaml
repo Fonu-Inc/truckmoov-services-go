@@ -27,6 +27,8 @@ spec:
             - configMapRef:
                 name: truckmoov-notification-config
             - secretRef:
+                name: truckmoov-dispatch-secrets
+            - secretRef:
                 name: truckmoov-notification-secrets
                 optional: true
           readinessProbe:
