@@ -12,3 +12,13 @@ images:
     newTag: latest
 commonLabels:
   app.kubernetes.io/part-of: truckmoov
+patches:
+  - patch: |-
+      apiVersion: secrets.doppler.com/v1alpha1
+      kind: DopplerSecret
+      metadata:
+        name: truckmoov-notification-secrets
+        namespace: doppler-operator-system
+    target:
+      kind: DopplerSecret
+      name: truckmoov-notification-secrets
