@@ -47,6 +47,7 @@ type RouteStep struct {
 	ArrivalAt              time.Time       `json:"arrival_at"`
 	DepartureAt            time.Time       `json:"departure_at"`
 	ETASeconds             int64           `json:"eta_seconds"`
+	Shape                  string          `json:"shape,omitempty"`
 	Maneuvers              []RouteManeuver `json:"maneuvers,omitempty"`
 }
 

@@ -721,6 +721,7 @@ func dispatchOpenAPISpec() map[string]any {
 						"arrival_at":                map[string]any{"type": "string", "format": "date-time"},
 						"departure_at":              map[string]any{"type": "string", "format": "date-time"},
 						"eta_seconds":               map[string]any{"type": "integer"},
+						"shape":                     map[string]any{"type": "string", "description": "Encoded Valhalla polyline for this leg."},
 						"maneuvers":                 map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/RouteManeuver"}},
 					},
 				},

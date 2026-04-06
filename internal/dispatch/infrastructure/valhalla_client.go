@@ -129,6 +129,7 @@ type ValhallaRouteSummary struct {
 
 type ValhallaRouteLeg struct {
 	Summary   ValhallaRouteSummary    `json:"summary"`
+	Shape     string                  `json:"shape,omitempty"`
 	Maneuvers []ValhallaRouteManeuver `json:"maneuvers,omitempty"`
 }
 

@@ -222,6 +222,7 @@ func buildRoutePlanFromSolution(
 			ArrivalAt:              arrival,
 			DepartureAt:            arrival,
 			ETASeconds:             cumulativeSeconds,
+			Shape:                  strings.TrimSpace(leg.Shape),
 			Maneuvers:              mapValhallaManeuvers(leg.Maneuvers),
 		})
 	}

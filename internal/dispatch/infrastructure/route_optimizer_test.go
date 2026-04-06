@@ -30,6 +30,7 @@ func TestBuildRoutePlanFromSolution_IncludesTurnByTurnManeuvers(t *testing.T) {
 					"legs": []map[string]any{
 						{
 							"summary": map[string]any{"time": 1128, "length": 10.85},
+							"shape":   "abc123",
 							"maneuvers": []map[string]any{
 								{"type": 1, "instruction": "Head west.", "time": 60, "length": 0.2, "travel_mode": "drive", "travel_type": "truck"},
 								{"type": 10, "instruction": "Turn right onto Ikeja Road.", "time": 1068, "length": 10.65, "street_names": []string{"Ikeja Road"}, "travel_mode": "drive", "travel_type": "truck"},
@@ -37,18 +38,21 @@ func TestBuildRoutePlanFromSolution_IncludesTurnByTurnManeuvers(t *testing.T) {
 						},
 						{
 							"summary": map[string]any{"time": 1653, "length": 21.98},
+							"shape":   "def456",
 							"maneuvers": []map[string]any{
 								{"type": 8, "instruction": "Continue to Apapa.", "time": 1653, "length": 21.98, "travel_mode": "drive", "travel_type": "truck"},
 							},
 						},
 						{
 							"summary": map[string]any{"time": 1077, "length": 12.67},
+							"shape":   "ghi789",
 							"maneuvers": []map[string]any{
 								{"type": 15, "instruction": "Turn left toward Victoria Island.", "time": 1077, "length": 12.67, "travel_mode": "drive", "travel_type": "truck"},
 							},
 						},
 						{
 							"summary": map[string]any{"time": 1090, "length": 15.07},
+							"shape":   "jkl012",
 							"maneuvers": []map[string]any{
 								{"type": 4, "instruction": "You have arrived at Yaba.", "time": 1090, "length": 15.07, "travel_mode": "drive", "travel_type": "truck"},
 							},
@@ -125,6 +129,9 @@ func TestBuildRoutePlanFromSolution_IncludesTurnByTurnManeuvers(t *testing.T) {
 	}
 	if len(plan.OrderedSteps[0].Maneuvers) != 2 {
 		t.Fatalf("expected maneuvers on first step, got %+v", plan.OrderedSteps[0].Maneuvers)
+	}
+	if got := plan.OrderedSteps[0].Shape; got != "abc123" {
+		t.Fatalf("unexpected first step shape %q", got)
 	}
 	if got := plan.OrderedSteps[0].Maneuvers[1].Instruction; got != "Turn right onto Ikeja Road." {
 		t.Fatalf("unexpected first step maneuver instruction %q", got)
