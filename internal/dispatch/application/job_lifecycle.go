@@ -36,6 +36,7 @@ type CreateJobCommand struct {
 	Reference               string
 	VehicleID               string
 	DriverID                string
+	DriverPhone             string
 	Pickup                  domain.JobStop
 	Dropoff                 domain.JobStop
 	CargoType               string
@@ -59,11 +60,12 @@ type UpdateJobSchedulingCommand struct {
 }
 
 type AssignJobCommand struct {
-	TenantID  string
-	JobID     string
-	DriverID  string
-	VehicleID string
-	Reason    string
+	TenantID    string
+	JobID       string
+	DriverID    string
+	DriverPhone string
+	VehicleID   string
+	Reason      string
 }
 
 type CancelJobCommand struct {
@@ -82,6 +84,24 @@ type UpdateJobStatusCommand struct {
 	TenantID string
 	JobID    string
 	Status   string
+}
+
+type CreateDriverStatusRequestCommand struct {
+	TenantID        string
+	JobID           string
+	DriverID        string
+	DriverPhone     string
+	Keyword         string
+	RawMessage      string
+	SourceMessageID string
+	Channel         string
+}
+
+type ConfirmDriverStatusRequestCommand struct {
+	TenantID    string
+	JobID       string
+	RequestID   string
+	ConfirmedBy string
 }
 
 type AddJobPODAttachmentCommand struct {
@@ -105,6 +125,8 @@ type ListJobsFilter struct {
 	DriverID  string
 	VehicleID string
 }
+
+var ErrDriverStatusRequestNotFound = errors.New("driver status request not found")
 
 type JobLifecycleUseCase struct {
 	repository    JobRepository
@@ -158,6 +180,7 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 
 	assignedVehicleID := strings.TrimSpace(command.VehicleID)
 	assignedDriverID := strings.TrimSpace(command.DriverID)
+	assignedDriverPhone := strings.TrimSpace(command.DriverPhone)
 	if assignedDriverID != "" && assignedVehicleID == "" {
 		return domain.Job{}, errors.New("vehicle id is required when driver id is provided")
 	}
@@ -199,8 +222,9 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 			Summary:    "Job assigned to driver/vehicle",
 			OccurredAt: now,
 			Metadata: map[string]string{
-				"driver_id":  assignedDriverID,
-				"vehicle_id": assignedVehicleID,
+				"driver_id":    assignedDriverID,
+				"driver_phone": assignedDriverPhone,
+				"vehicle_id":   assignedVehicleID,
 			},
 		})
 	}
@@ -223,6 +247,7 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		TimeWindow:              timeWindow,
 		Status:                  status,
 		AssignedDriverID:        assignedDriverID,
+		AssignedDriverPhone:     assignedDriverPhone,
 		AssignedVehicleID:       assignedVehicleID,
 		CreatedAt:               now,
 		UpdatedAt:               now,
@@ -294,7 +319,7 @@ func (u *JobLifecycleUseCase) AssignJob(ctx context.Context, command AssignJobCo
 	}
 
 	previousStatus := job.Status
-	updatedJob, err := job.Assign(command.DriverID, command.VehicleID, u.clock.Now(), u.idGenerator.New())
+	updatedJob, err := job.Assign(command.DriverID, command.DriverPhone, command.VehicleID, u.clock.Now(), u.idGenerator.New())
 	if err != nil {
 		return domain.Job{}, err
 	}
@@ -404,6 +429,75 @@ func (u *JobLifecycleUseCase) UpdateJobStatus(ctx context.Context, command Updat
 	})
 
 	return updatedJob, nil
+}
+
+func (u *JobLifecycleUseCase) CreateDriverStatusRequest(_ context.Context, command CreateDriverStatusRequestCommand) (domain.Job, domain.DriverStatusRequest, error) {
+	job, err := u.findJobForTenant(command.TenantID, command.JobID)
+	if err != nil {
+		return domain.Job{}, domain.DriverStatusRequest{}, err
+	}
+
+	requestedStatus, err := parseDriverStatusKeyword(command.Keyword)
+	if err != nil {
+		return domain.Job{}, domain.DriverStatusRequest{}, err
+	}
+
+	updatedJob, request, err := job.ReportDriverStatusRequest(
+		requestedStatus,
+		command.DriverID,
+		command.DriverPhone,
+		command.Keyword,
+		command.RawMessage,
+		command.SourceMessageID,
+		firstNonEmptyDispatchValue(command.Channel, "whatsapp"),
+		u.clock.Now(),
+		u.idGenerator.New(),
+		u.idGenerator.New(),
+	)
+	if err != nil {
+		return domain.Job{}, domain.DriverStatusRequest{}, err
+	}
+	if err := u.repository.Save(updatedJob); err != nil {
+		return domain.Job{}, domain.DriverStatusRequest{}, fmt.Errorf("save driver status request: %w", err)
+	}
+
+	return updatedJob, request, nil
+}
+
+func (u *JobLifecycleUseCase) ConfirmDriverStatusRequest(ctx context.Context, command ConfirmDriverStatusRequestCommand) (domain.Job, domain.DriverStatusRequest, error) {
+	job, err := u.findJobForTenant(command.TenantID, command.JobID)
+	if err != nil {
+		return domain.Job{}, domain.DriverStatusRequest{}, err
+	}
+
+	previousStatus := job.Status
+	updatedJob, request, err := job.ConfirmDriverStatusRequest(
+		command.RequestID,
+		command.ConfirmedBy,
+		u.clock.Now(),
+		u.idGenerator.New(),
+		u.idGenerator.New(),
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "driver status request not found") {
+			return domain.Job{}, domain.DriverStatusRequest{}, ErrDriverStatusRequestNotFound
+		}
+		return domain.Job{}, domain.DriverStatusRequest{}, err
+	}
+	if err := u.repository.Save(updatedJob); err != nil {
+		return domain.Job{}, domain.DriverStatusRequest{}, fmt.Errorf("save confirmed driver status request: %w", err)
+	}
+
+	u.emitStatusChanged(ctx, PublishJobStatusChangedCommand{
+		TenantID:          updatedJob.TenantID,
+		JobID:             updatedJob.ID,
+		PreviousStatus:    string(previousStatus),
+		NewStatus:         string(updatedJob.Status),
+		AssignedDriverID:  updatedJob.AssignedDriverID,
+		AssignedVehicleID: updatedJob.AssignedVehicleID,
+	})
+
+	return updatedJob, request, nil
 }
 
 func (u *JobLifecycleUseCase) AddPODAttachment(_ context.Context, command AddJobPODAttachmentCommand) (domain.Job, error) {
@@ -585,6 +679,23 @@ func buildJobStatusMatcher(raw string) (func(domain.JobStatus) bool, error) {
 			return nil, err
 		}
 		return func(current domain.JobStatus) bool { return current == normalized }, nil
+	}
+}
+
+func parseDriverStatusKeyword(raw string) (domain.JobStatus, error) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	normalized = strings.NewReplacer("_", "", "-", "", " ", "").Replace(normalized)
+	switch normalized {
+	case "enroute":
+		return domain.StatusEnRoute, nil
+	case "arrived":
+		return domain.StatusArrived, nil
+	case "loaded":
+		return domain.StatusLoaded, nil
+	case "delivered":
+		return domain.StatusDelivered, nil
+	default:
+		return "", fmt.Errorf("unsupported driver status keyword %q", raw)
 	}
 }
 

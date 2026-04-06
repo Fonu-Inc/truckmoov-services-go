@@ -81,6 +81,14 @@ func main() {
 		infrastructure.SystemClock{},
 		cfg.DefaultTenant,
 	)
+	jobInstructionSender := infrastructure.NewNotificationJobInstructionSender(cfg.NotificationServiceURL, cfg.JWTSecret, nil)
+	sendJobInstructionUseCase := application.NewSendJobInstructionUseCase(
+		jobRepository,
+		jobInstructionSender,
+		infrastructure.SystemClock{},
+		infrastructure.TimeIDGenerator{},
+		cfg.DefaultTenant,
+	)
 
 	alertPublisher := infrastructure.NewAlertEventPublisher(bus)
 	etaMonitor := application.NewEtaMonitorUseCase(
@@ -106,6 +114,7 @@ func main() {
 		publishJobStatusUseCase,
 		jobLifecycleUseCase,
 		routingUseCase,
+		sendJobInstructionUseCase,
 		trackinggrpc.NewStubTrackingClient(),
 	)
 

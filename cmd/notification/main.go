@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/truckmoov/services-go/internal/notification/application"
 	"github.com/truckmoov/services-go/internal/notification/infrastructure"
 	notificationhttp "github.com/truckmoov/services-go/internal/notification/interfaces/http"
@@ -34,6 +36,19 @@ func main() {
 		_ = shutdownTelemetry(context.Background())
 	}()
 
+	postgresDB, err := sql.Open("pgx", cfg.PostgresDSN())
+	if err != nil {
+		log.Error("postgres_open_failed", "error", err.Error())
+		os.Exit(1)
+	}
+	defer func() {
+		_ = postgresDB.Close()
+	}()
+	if err := postgresDB.PingContext(ctx); err != nil {
+		log.Error("postgres_ping_failed", "error", err.Error())
+		os.Exit(1)
+	}
+
 	bus := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, log)
 	defer func() {
 		_ = bus.Close()
@@ -41,7 +56,38 @@ func main() {
 
 	redisClient := redisstore.NewStore(cfg.RedisAddr, cfg.RedisDB)
 	outboxRepository := infrastructure.NewRedisOutboxRepository(redisClient)
-	messageProvider := infrastructure.NewMTNMessageProvider()
+	conversationRepository := infrastructure.NewPostgresWhatsAppConversationRepository(postgresDB)
+	if err := conversationRepository.EnsureSchema(ctx); err != nil {
+		log.Error("conversation_schema_failed", "error", err.Error())
+		os.Exit(1)
+	}
+
+	whatsAppMessageProvider := infrastructure.NewMetaWhatsAppMessageProvider(
+		cfg.WhatsAppAPIBaseURL,
+		cfg.WhatsAppPhoneNumberID,
+		cfg.WhatsAppAccessToken,
+	)
+	smsMessageProvider := infrastructure.NewDotgoSMSMessageProvider(
+		cfg.SMSServiceURL,
+		cfg.SMSServiceUsername,
+		cfg.SMSServicePassword,
+		cfg.SMSServiceSenderID,
+	)
+	messageProvider := infrastructure.NewMultiChannelMessageProvider(whatsAppMessageProvider, smsMessageProvider)
+	templateProvider := infrastructure.NewMetaWhatsAppTemplateProvider(
+		cfg.WhatsAppAPIBaseURL,
+		cfg.WhatsAppBusinessAccountID,
+		cfg.WhatsAppAccessToken,
+	)
+	if cfg.WhatsAppAccessToken == "" || cfg.WhatsAppPhoneNumberID == "" {
+		log.Warn("whatsapp_provider_unconfigured", "message", "set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID before sending live WhatsApp notifications")
+	}
+	if cfg.WhatsAppAccessToken == "" || cfg.WhatsAppBusinessAccountID == "" {
+		log.Warn("whatsapp_template_provider_unconfigured", "message", "set WHATSAPP_ACCESS_TOKEN and WHATSAPP_BUSINESS_ACCOUNT_ID before managing live WhatsApp templates")
+	}
+	if cfg.SMSServiceURL == "" || cfg.SMSServiceUsername == "" || cfg.SMSServicePassword == "" || cfg.SMSServiceSenderID == "" {
+		log.Warn("sms_provider_unconfigured", "message", "set SMS_SERVICE_URL, SMS_SERVICE_USER_NAME, SMS_SERVICE_PASSWORD, and SMS_SERVICE_SENDER_ID before enabling SMS fallback delivery")
+	}
 	deliveryPublisher := infrastructure.NewDeliveryEventPublisher(bus)
 	clock := infrastructure.SystemClock{}
 	idGenerator := infrastructure.TimeIDGenerator{}
@@ -61,18 +107,78 @@ func main() {
 		clock,
 		idGenerator,
 	)
+	createWhatsAppTemplateUseCase := application.NewCreateWhatsAppTemplateUseCase(templateProvider)
+	listWhatsAppTemplatesUseCase := application.NewListWhatsAppTemplatesUseCase(templateProvider)
+	sendOtherTemplateUseCase := application.NewSendOtherTemplateUseCase(
+		outboxRepository,
+		conversationRepository,
+		templateProvider,
+		whatsAppMessageProvider,
+		deliveryPublisher,
+		clock,
+		idGenerator,
+		cfg.DefaultTenant,
+	)
+	sendJobInstructionUseCase := application.NewSendJobInstructionUseCase(
+		outboxRepository,
+		conversationRepository,
+		templateProvider,
+		whatsAppMessageProvider,
+		deliveryPublisher,
+		clock,
+		idGenerator,
+		cfg.DefaultTenant,
+	)
+	sendWhatsAppTextMessageUseCase := application.NewSendWhatsAppTextMessageUseCase(
+		outboxRepository,
+		conversationRepository,
+		whatsAppMessageProvider,
+		deliveryPublisher,
+		clock,
+		idGenerator,
+		cfg.DefaultTenant,
+	)
+	sendWhatsAppMediaMessageUseCase := application.NewSendWhatsAppMediaMessageUseCase(
+		outboxRepository,
+		conversationRepository,
+		whatsAppMessageProvider,
+		deliveryPublisher,
+		clock,
+		idGenerator,
+		cfg.DefaultTenant,
+	)
+	listWhatsAppConversationsUseCase := application.NewListWhatsAppConversationsUseCase(conversationRepository, clock, cfg.DefaultTenant)
+	getWhatsAppConversationUseCase := application.NewGetWhatsAppConversationUseCase(conversationRepository, cfg.DefaultTenant)
+	listWhatsAppConversationMessagesUseCase := application.NewListWhatsAppConversationMessagesUseCase(conversationRepository, cfg.DefaultTenant)
+	driverStatusRequestSender := infrastructure.NewDispatchDriverStatusRequestSender(cfg.DispatchServiceURL, cfg.JWTSecret, nil)
+	handleWhatsAppWebhookUseCase := application.NewHandleWhatsAppWebhookUseCase(conversationRepository, outboxRepository, messageProvider, driverStatusRequestSender, deliveryPublisher, clock, idGenerator)
 
 	consumeNotificationUseCase := application.NewConsumeNotificationUseCase(sendMessageUseCase, log)
 	if _, subErr := bus.Subscribe(ctx, "tm.*.notification.send", "notification-send", consumeNotificationUseCase.Handle); subErr != nil {
 		log.Warn("notification_subscribe_failed", "error", subErr.Error())
 	}
 
-	handler := notificationhttp.NewHandler(sendMessageUseCase, retryMessageUseCase)
+	handler := notificationhttp.NewHandler(
+		sendMessageUseCase,
+		retryMessageUseCase,
+		createWhatsAppTemplateUseCase,
+		listWhatsAppTemplatesUseCase,
+		sendOtherTemplateUseCase,
+		sendJobInstructionUseCase,
+		sendWhatsAppTextMessageUseCase,
+		sendWhatsAppMediaMessageUseCase,
+		listWhatsAppConversationsUseCase,
+		getWhatsAppConversationUseCase,
+		listWhatsAppConversationMessagesUseCase,
+		handleWhatsAppWebhookUseCase,
+		clock,
+		cfg.WhatsAppWebhookVerifyToken,
+	)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	handlerWithCORS := httpx.WithCORS(mux, cfg.CORSOrigins)
+	handlerWithAuth := httpx.WithAuthContext(mux, cfg.JWTSecret)
+	handlerWithCORS := httpx.WithCORS(handlerWithAuth, cfg.CORSOrigins)
 
-	// cmd/notification wires adapters and use-cases; domain/application logic stays under internal/notification.
 	if runErr := httpx.Run(ctx, ":"+cfg.Port, httpx.WithLogging(handlerWithCORS, log), log); runErr != nil {
 		log.Error("service_stopped", "error", runErr.Error())
 		os.Exit(1)

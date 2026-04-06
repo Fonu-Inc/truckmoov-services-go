@@ -47,6 +47,8 @@ type createJobRequest struct {
 	VehicleIDSnake          string            `json:"vehicle_id,omitempty"`
 	DriverID                string            `json:"driverId,omitempty"`
 	DriverIDSnake           string            `json:"driver_id,omitempty"`
+	DriverPhone             string            `json:"driverPhone,omitempty"`
+	DriverPhoneSnake        string            `json:"driver_phone,omitempty"`
 	PickupLocation          string            `json:"pickupLocation,omitempty"`
 	PickupAddress           string            `json:"pickupAddress,omitempty"`
 	PickupLat               *float64          `json:"pickupLat,omitempty"`
@@ -78,9 +80,11 @@ type updateJobSchedulingRequest struct {
 }
 
 type assignJobRequest struct {
-	DriverID  string `json:"driver_id"`
-	VehicleID string `json:"vehicle_id"`
-	Reason    string `json:"reason,omitempty"`
+	DriverID       string `json:"driver_id"`
+	DriverPhone    string `json:"driver_phone,omitempty"`
+	DriverPhoneAlt string `json:"driverPhone,omitempty"`
+	VehicleID      string `json:"vehicle_id"`
+	Reason         string `json:"reason,omitempty"`
 }
 
 type cancelJobRequest struct {
@@ -104,6 +108,49 @@ type addPODAttachmentRequest struct {
 type addJobNoteRequest struct {
 	Text     string `json:"text"`
 	AuthorID string `json:"author_id,omitempty"`
+}
+
+type sendJobInstructionHeaderMediaRequest struct {
+	Type     string `json:"type,omitempty"`
+	Link     string `json:"link,omitempty"`
+	ID       string `json:"id,omitempty"`
+	Filename string `json:"filename,omitempty"`
+}
+
+type sendJobInstructionButtonParameterRequest struct {
+	Index   int    `json:"index"`
+	Type    string `json:"type,omitempty"`
+	Text    string `json:"text,omitempty"`
+	Payload string `json:"payload,omitempty"`
+}
+
+type sendJobInstructionRequest struct {
+	DriverID            string                                     `json:"driver_id,omitempty"`
+	DriverIDAlt         string                                     `json:"driverId,omitempty"`
+	To                  string                                     `json:"to,omitempty"`
+	Recipient           string                                     `json:"recipient,omitempty"`
+	TemplateName        string                                     `json:"template_name,omitempty"`
+	TemplateNameAlt     string                                     `json:"templateName,omitempty"`
+	Language            string                                     `json:"language,omitempty"`
+	DriverName          string                                     `json:"driver_name,omitempty"`
+	DriverNameAlt       string                                     `json:"driverName,omitempty"`
+	HeaderMedia         *sendJobInstructionHeaderMediaRequest      `json:"header_media,omitempty"`
+	HeaderMediaAlt      *sendJobInstructionHeaderMediaRequest      `json:"headerMedia,omitempty"`
+	ButtonParameters    []sendJobInstructionButtonParameterRequest `json:"button_parameters,omitempty"`
+	ButtonParametersAlt []sendJobInstructionButtonParameterRequest `json:"buttonParameters,omitempty"`
+}
+
+type createDriverStatusRequestRequest struct {
+	DriverID           string `json:"driver_id,omitempty"`
+	DriverIDAlt        string `json:"driverId,omitempty"`
+	DriverPhone        string `json:"driver_phone,omitempty"`
+	DriverPhoneAlt     string `json:"driverPhone,omitempty"`
+	Keyword            string `json:"keyword,omitempty"`
+	RawMessage         string `json:"raw_message,omitempty"`
+	RawMessageAlt      string `json:"rawMessage,omitempty"`
+	SourceMessageID    string `json:"source_message_id,omitempty"`
+	SourceMessageIDAlt string `json:"sourceMessageID,omitempty"`
+	Channel            string `json:"channel,omitempty"`
 }
 
 type routeLocationRequest struct {
@@ -143,10 +190,11 @@ type optimizeRouteRequest struct {
 }
 
 type Handler struct {
-	publishJobStatusUseCase *application.PublishJobStatusChangedUseCase
-	jobLifecycleUseCase     *application.JobLifecycleUseCase
-	routingUseCase          *application.RoutingUseCase
-	trackingClient          trackinggrpc.TrackingClient
+	publishJobStatusUseCase   *application.PublishJobStatusChangedUseCase
+	jobLifecycleUseCase       *application.JobLifecycleUseCase
+	routingUseCase            *application.RoutingUseCase
+	sendJobInstructionUseCase *application.SendJobInstructionUseCase
+	trackingClient            trackinggrpc.TrackingClient
 
 	mu              sync.RWMutex
 	latestLocations map[string]map[string]any
@@ -156,14 +204,16 @@ func NewHandler(
 	publishJobStatusUseCase *application.PublishJobStatusChangedUseCase,
 	jobLifecycleUseCase *application.JobLifecycleUseCase,
 	routingUseCase *application.RoutingUseCase,
+	sendJobInstructionUseCase *application.SendJobInstructionUseCase,
 	trackingClient trackinggrpc.TrackingClient,
 ) *Handler {
 	return &Handler{
-		publishJobStatusUseCase: publishJobStatusUseCase,
-		jobLifecycleUseCase:     jobLifecycleUseCase,
-		routingUseCase:          routingUseCase,
-		trackingClient:          trackingClient,
-		latestLocations:         make(map[string]map[string]any),
+		publishJobStatusUseCase:   publishJobStatusUseCase,
+		jobLifecycleUseCase:       jobLifecycleUseCase,
+		routingUseCase:            routingUseCase,
+		sendJobInstructionUseCase: sendJobInstructionUseCase,
+		trackingClient:            trackingClient,
+		latestLocations:           make(map[string]map[string]any),
 	}
 }
 
@@ -270,6 +320,7 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 		Reference:               req.Reference,
 		VehicleID:               req.vehicleID(),
 		DriverID:                req.driverID(),
+		DriverPhone:             req.driverPhone(),
 		Pickup:                  req.pickupStop().toDomain(),
 		Dropoff:                 req.dropoffStop().toDomain(),
 		CargoType:               req.CargoType,
@@ -328,6 +379,29 @@ func rejectClientTenantQuery(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
+func authenticatedDispatcherTenantID(r *http.Request) (string, int, bool) {
+	claims, ok := httpx.ClaimsFromRequest(r)
+	if !ok || claims == nil {
+		return "", http.StatusUnauthorized, false
+	}
+	if strings.TrimSpace(claims.TenantID) == "" {
+		return "", http.StatusUnauthorized, false
+	}
+	if !isDispatcherCapableRole(claims.Role) {
+		return "", http.StatusForbidden, false
+	}
+	return strings.TrimSpace(claims.TenantID), http.StatusOK, true
+}
+
+func isDispatcherCapableRole(role string) bool {
+	switch strings.ToUpper(strings.TrimSpace(role)) {
+	case "DISPATCHER", "OPERATIONS_MANAGER", "FLEET_ADMIN", "PLATFORM_ADMIN", "ENTERPRISE_ADMIN":
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := h.requireTenantID(w, r)
 	if !ok {
@@ -377,12 +451,27 @@ func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
 		h.updateJobLifecycleStatus(w, r, jobID)
 	case "timeline":
 		h.getJobTimeline(w, r, jobID)
+	case "send-whatsapp-instruction":
+		h.sendWhatsAppInstruction(w, r, jobID)
+	case "driver-status-requests":
+		h.createDriverStatusRequest(w, r, jobID)
 	case "pod-attachments":
 		h.addPODAttachment(w, r, jobID)
 	case "notes":
 		h.addJobNote(w, r, jobID)
 	default:
+		if strings.HasPrefix(action, "driver-status-requests/") && strings.HasSuffix(action, "/confirm") {
+			requestID := strings.TrimSuffix(strings.TrimPrefix(action, "driver-status-requests/"), "/confirm")
+			requestID = strings.Trim(requestID, "/")
+			if requestID == "" {
+				respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+				return
+			}
+			h.confirmDriverStatusRequest(w, r, jobID, requestID)
+			return
+		}
 		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
 	}
 }
 
@@ -459,11 +548,12 @@ func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string
 	}
 
 	job, err := h.jobLifecycleUseCase.AssignJob(r.Context(), application.AssignJobCommand{
-		TenantID:  tenantID,
-		JobID:     jobID,
-		DriverID:  req.DriverID,
-		VehicleID: req.VehicleID,
-		Reason:    req.Reason,
+		TenantID:    tenantID,
+		JobID:       jobID,
+		DriverID:    req.DriverID,
+		DriverPhone: firstNonEmptyDispatchValue(req.DriverPhone, req.DriverPhoneAlt),
+		VehicleID:   req.VehicleID,
+		Reason:      req.Reason,
 	})
 	if err != nil {
 		respondLifecycleError(w, err)
@@ -536,14 +626,15 @@ func (h *Handler) updateJobLifecycleStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	var req updateJobStatusRequest
-	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
+	if !ok {
+		respondJSON(w, authStatus, map[string]string{"error": http.StatusText(authStatus)})
 		return
 	}
 
-	tenantID, ok := h.requireTenantID(w, r)
-	if !ok {
+	var req updateJobStatusRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
@@ -557,6 +648,92 @@ func (h *Handler) updateJobLifecycleStatus(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	respondJSON(w, http.StatusOK, job)
+}
+
+func (h *Handler) createDriverStatusRequest(w http.ResponseWriter, r *http.Request, jobID string) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
+	if !ok {
+		respondJSON(w, authStatus, map[string]string{"error": http.StatusText(authStatus)})
+		return
+	}
+
+	var req createDriverStatusRequestRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	job, request, err := h.jobLifecycleUseCase.CreateDriverStatusRequest(r.Context(), application.CreateDriverStatusRequestCommand{
+		TenantID:        tenantID,
+		JobID:           jobID,
+		DriverID:        firstNonEmptyDispatchValue(req.DriverID, req.DriverIDAlt),
+		DriverPhone:     firstNonEmptyDispatchValue(req.DriverPhone, req.DriverPhoneAlt),
+		Keyword:         strings.TrimSpace(req.Keyword),
+		RawMessage:      firstNonEmptyDispatchValue(req.RawMessage, req.RawMessageAlt),
+		SourceMessageID: firstNonEmptyDispatchValue(req.SourceMessageID, req.SourceMessageIDAlt),
+		Channel:         firstNonEmptyDispatchValue(req.Channel, "whatsapp"),
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+
+	respondJSON(w, http.StatusCreated, map[string]any{
+		"status":  true,
+		"message": "success",
+		"data": map[string]any{
+			"job":     job,
+			"request": request,
+		},
+	})
+}
+
+func (h *Handler) confirmDriverStatusRequest(w http.ResponseWriter, r *http.Request, jobID, requestID string) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	claims, ok := httpx.ClaimsFromRequest(r)
+	if !ok || claims == nil {
+		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": http.StatusText(http.StatusUnauthorized)})
+		return
+	}
+	if !isDispatcherCapableRole(claims.Role) {
+		respondJSON(w, http.StatusForbidden, map[string]string{"error": http.StatusText(http.StatusForbidden)})
+		return
+	}
+	tenantID := strings.TrimSpace(claims.TenantID)
+	if tenantID == "" {
+		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authenticated tenant context is required"})
+		return
+	}
+	confirmedBy := firstNonEmptyDispatchValue(claims.Subject, claims.Email)
+
+	job, request, err := h.jobLifecycleUseCase.ConfirmDriverStatusRequest(r.Context(), application.ConfirmDriverStatusRequestCommand{
+		TenantID:    tenantID,
+		JobID:       jobID,
+		RequestID:   requestID,
+		ConfirmedBy: confirmedBy,
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"status":  true,
+		"message": "success",
+		"data": map[string]any{
+			"job":     job,
+			"request": request,
+		},
+	})
 }
 
 func (h *Handler) getJobTimeline(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -579,6 +756,65 @@ func (h *Handler) getJobTimeline(w http.ResponseWriter, r *http.Request, jobID s
 		"job_id":   jobID,
 		"timeline": timeline,
 	}})
+}
+
+func (h *Handler) sendWhatsAppInstruction(w http.ResponseWriter, r *http.Request, jobID string) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if h.sendJobInstructionUseCase == nil {
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "job instruction sending is not configured"})
+		return
+	}
+
+	var req sendJobInstructionRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
+	// Dispatch owns the job payload and now persists the assigned driver's WhatsApp number on the job.
+	// The optional request recipient is only accepted as a compatibility check and must match the stored value.
+	job, err := h.sendJobInstructionUseCase.Execute(r.Context(), application.SendJobInstructionCommand{
+		TenantID:         tenantID,
+		JobID:            jobID,
+		DriverID:         firstNonEmptyDispatchValue(req.DriverID, req.DriverIDAlt),
+		Recipient:        firstNonEmptyDispatchValue(req.To, req.Recipient),
+		TemplateName:     firstNonEmptyDispatchValue(req.TemplateName, req.TemplateNameAlt),
+		Language:         strings.TrimSpace(req.Language),
+		DriverName:       firstNonEmptyDispatchValue(req.DriverName, req.DriverNameAlt),
+		HeaderMedia:      normalizeDispatchHeaderMedia(firstNonNilDispatchHeaderMedia(req.HeaderMedia, req.HeaderMediaAlt)),
+		ButtonParameters: normalizeDispatchButtonParameters(req.ButtonParameters, req.ButtonParametersAlt),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, application.ErrJobNotFound):
+			respondJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		case errors.Is(err, application.ErrJobInstructionJobIDRequired),
+			errors.Is(err, application.ErrJobInstructionDriverIDRequired),
+			errors.Is(err, application.ErrJobInstructionTemplateNameRequired),
+			errors.Is(err, application.ErrJobInstructionDriverNameRequired),
+			errors.Is(err, application.ErrJobInstructionCargoRequired):
+			respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		case errors.Is(err, application.ErrJobInstructionJobNotAssigned),
+			errors.Is(err, application.ErrJobInstructionAssignedPhoneRequired),
+			errors.Is(err, application.ErrJobInstructionDriverMismatch),
+			errors.Is(err, application.ErrJobInstructionRecipientMismatch),
+			errors.Is(err, application.ErrJobInstructionStatusNotSendable):
+			respondJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		default:
+			respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
 }
 
 func (h *Handler) addPODAttachment(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -830,20 +1066,29 @@ func parseJobResourcePath(path string) (jobID, action string, ok bool) {
 		return "", "", false
 	}
 
-	// Support exactly /dispatch/jobs/{id} and /dispatch/jobs/{id}/{action}.
 	parts := strings.Split(trimmed, "/")
 	if len(parts) == 1 {
 		return parts[0], "", true
 	}
-	if len(parts) == 2 {
-		return parts[0], parts[1], true
-	}
-	return "", "", false
+	return parts[0], strings.Join(parts[1:], "/"), true
 }
 
 func respondLifecycleError(w http.ResponseWriter, err error) {
 	if err == application.ErrJobNotFound {
 		respondJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	if err == application.ErrDriverStatusRequestNotFound {
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "already has a pending driver status request") ||
+		strings.Contains(strings.ToLower(err.Error()), "must be the next workflow status") ||
+		strings.Contains(strings.ToLower(err.Error()), "belongs to a different driver") ||
+		strings.Contains(strings.ToLower(err.Error()), "phone number does not match") ||
+		strings.Contains(strings.ToLower(err.Error()), "cannot report driver status") ||
+		strings.Contains(strings.ToLower(err.Error()), "cannot confirm driver status request") {
+		respondJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 		return
 	}
 	respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -904,6 +1149,13 @@ func (r createJobRequest) driverID() string {
 		return value
 	}
 	return strings.TrimSpace(r.DriverIDSnake)
+}
+
+func (r createJobRequest) driverPhone() string {
+	if value := strings.TrimSpace(r.DriverPhone); value != "" {
+		return value
+	}
+	return strings.TrimSpace(r.DriverPhoneSnake)
 }
 
 func (r createJobRequest) initialNote() string {
@@ -1052,6 +1304,57 @@ func (h *Handler) lookupVehicleLocation(vehicleID string) (application.RouteLoca
 		Latitude:  latitude,
 		Longitude: longitude,
 	}, true
+}
+
+func firstNonEmptyDispatchValue(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func firstNonNilDispatchHeaderMedia(values ...*sendJobInstructionHeaderMediaRequest) *sendJobInstructionHeaderMediaRequest {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func normalizeDispatchHeaderMedia(value *sendJobInstructionHeaderMediaRequest) *application.JobInstructionHeaderMedia {
+	if value == nil {
+		return nil
+	}
+	return &application.JobInstructionHeaderMedia{
+		Type:     strings.TrimSpace(value.Type),
+		Link:     strings.TrimSpace(value.Link),
+		ID:       strings.TrimSpace(value.ID),
+		Filename: strings.TrimSpace(value.Filename),
+	}
+}
+
+func normalizeDispatchButtonParameters(primary, alternate []sendJobInstructionButtonParameterRequest) []application.JobInstructionButtonParameter {
+	selected := primary
+	if len(selected) == 0 {
+		selected = alternate
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+
+	normalized := make([]application.JobInstructionButtonParameter, 0, len(selected))
+	for _, parameter := range selected {
+		normalized = append(normalized, application.JobInstructionButtonParameter{
+			Index:   parameter.Index,
+			Type:    strings.TrimSpace(parameter.Type),
+			Text:    strings.TrimSpace(parameter.Text),
+			Payload: strings.TrimSpace(parameter.Payload),
+		})
+	}
+	return normalized
 }
 
 func readFloat(value any) (float64, bool) {

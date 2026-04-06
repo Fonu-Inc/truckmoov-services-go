@@ -7,6 +7,7 @@ data:
   NATS_URL: nats://nats:4222
   NATS_STREAM: truckmoov_events
   DEFAULT_TENANT: default
+  NOTIFICATION_SERVICE_URL: http://notification-service:3003
   POSTGRES_HOST: postgres
   POSTGRES_PORT: "10028"
   POSTGRES_USER: truckmoov

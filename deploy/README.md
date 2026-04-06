@@ -27,7 +27,7 @@ These manifests expose the same in-cluster service names already referenced by t
 
 ## Runtime notes
 
-Dispatch now persists jobs through Postgres so business records survive restarts and can be queried relationally. Tracking still uses Redis for low-latency location state. The manifests default to `replicas: 2`, assuming a reachable shared Postgres service for dispatch and Redis service for tracking.
+Dispatch now persists jobs through Postgres so business records survive restarts and can be queried relationally. Notification uses Redis for the outbox and retry workflow plus Meta WhatsApp Cloud API credentials for live message delivery and template management. Tracking still uses Redis for low-latency location state. The manifests default to `replicas: 2`, assuming a reachable shared Postgres service for dispatch plus a Redis service for notification and tracking.
 
 ## Image names
 

@@ -26,6 +26,7 @@ go test ./...
 Core vars used by notification, tracking, and dispatch:
 - `NOTIFICATION_PORT`, `TRACKING_PORT`, `DISPATCH_PORT`
 - `DEFAULT_TENANT`
+- `NOTIFICATION_SERVICE_URL` (dispatch uses this to call the notification service when sending WhatsApp driver instructions)
 - `JWT_SECRET` (must match the auth service signing secret when tenant should be derived from bearer tokens)
 - `CORS_ALLOWED_ORIGINS`
 - `NATS_URL`, `NATS_STREAM` (use a JetStream-safe stream name such as `truckmoov_events`)
@@ -35,6 +36,26 @@ Dispatch persistence vars:
 
 Tracking state/cache vars:
 - `REDIS_ADDR`, `REDIS_DB`
+
+Notification service auth vars:
+- `JWT_SECRET`: must match the auth service signing secret so template-management endpoints can derive tenant scope from bearer tokens.
+
+Notification WhatsApp vars (Meta Cloud API transport):
+- `WHATSAPP_API_BASE_URL`: defaults to `https://graph.facebook.com/v18.0`
+- `WHATSAPP_PHONE_NUMBER_ID`: Meta WhatsApp phone number ID used for outbound messages
+- `WHATSAPP_BUSINESS_ACCOUNT_ID`: Meta WhatsApp Business Account ID used to create and list templates against the Business Manager `message_templates` edge
+- `WHATSAPP_ACCESS_TOKEN`: permanent/system-user access token for the WhatsApp Cloud API
+- `WHATSAPP_WEBHOOK_VERIFY_TOKEN`: reserved for the inbound webhook verification flow
+
+Notification SMS fallback vars (Dotgo, mirrored from `fonu-api` v2):
+- `SMS_SERVICE_URL`
+- `SMS_SERVICE_USER_NAME`
+- `SMS_SERVICE_PASSWORD`
+- `SMS_SERVICE_SENDER_ID`
+
+Migration note from `fonu-api`:
+- Truckmoov uses `WHATSAPP_PHONE_NUMBER_ID` as the canonical env name.
+- `WHATSAPP_BUSINESS_NUMBER_ID` and `WEBHOOK_VERIFY_TOKEN` are also accepted as temporary compatibility aliases during migration.
 
 Tracking- and ingest-specific vars:
 - `TELEMETRY_MAX_ACCURACY_M`: discard obviously bad GPS samples above this accuracy threshold.
@@ -77,6 +98,25 @@ Dispatch job state is now backed by Postgres instead of per-process memory, whil
 - `GET http://localhost:3004/tracking/health`
 - `GET http://localhost:3005/dispatch/health`
 
+## Notification template endpoints
+- `POST /notify/whatsapp/create-template` mirrors the Fonu v2 route shape but now accepts either the shorthand `{ "name", "header", "body" }` payload or a richer Meta-compatible payload with `templateType`, `language`, `category`, `allowCategoryChange`, `parameterFormat`, and full `components` for header media, body examples, and button definitions.
+- Supported `templateType` values are `job_assignment` and `other`. `job_assignment` templates must contain placeholders `{{1}}` to `{{6}}` across their components so the minimum driver job instruction data can be populated at send time.
+- `POST /notify/whatsapp/get-all-templates` mirrors the Fonu v2 route shape and returns the current template list from the configured Meta WhatsApp Business Account, including approval status such as `PENDING`, `APPROVED`, or `REJECTED`.
+- `POST /notify/whatsapp/send-job-instruction` sends a WhatsApp template message to a driver number, but only when the selected template is approved and compatible with the `job_assignment` variable contract. The send payload must provide values for driver name, job reference, pickup location, delivery location, cargo description, and priority, and can optionally supply header media or button parameters when the chosen template requires them.
+- When a driver replies to a job-instruction conversation with one of the dedicated status keywords `ENROUTE`, `ARRIVED`, `LOADED`, or `DELIVERED`, the WhatsApp webhook records the inbound message, reopens the 24-hour conversation window, and forwards a pending driver status request into dispatch. The keyword reply does not directly update the job status; dispatcher confirmation is still required.
+- If Meta later reports that a sent WhatsApp job-instruction message failed delivery through the webhook `statuses[]` callback, notification automatically sends a one-time SMS fallback with the same core job instruction details through Dotgo. Repeated failed callbacks do not trigger repeated SMS sends.
+- `POST /notify/whatsapp/send-other-template` sends an approved non-job-assignment WhatsApp template to a driver or other recipient. The payload supplies `variables` keyed by placeholder index (`"1"`, `"2"`, ...), and the backend rejects the request unless every variable configured on the approved template is present at send time. Header media and dynamic button parameters are also enforced when the template requires them.
+- There is intentionally no delete endpoint here because Fonu v2 does not expose one, and template lifecycle should stay aligned with Meta Business Manager rather than a local catalog.
+- Template approval remains asynchronous on the Meta side; the create endpoint submits the template request and returns the Meta response immediately.
+
+
+## Notification API docs
+- `GET http://localhost:3003/docs/notification` (preferred Swagger UI path)
+- `GET http://localhost:3003/docs/notification/openapi.json` (preferred OpenAPI spec path)
+- `GET http://localhost:3003/notify/docs` (legacy Swagger UI path)
+- `GET http://localhost:3003/notify/docs/openapi.json` (legacy OpenAPI spec path)
+- Kong unified docs URL: `GET http://localhost:8000/docs/notification`
+
 ## Dispatch API docs
 - `GET http://localhost:3005/docs/dispatch` (preferred Swagger UI path)
 - `GET http://localhost:3005/docs/dispatch/openapi.json` (preferred OpenAPI spec path)
@@ -94,6 +134,9 @@ Dispatch job state is now backed by Postgres instead of per-process memory, whil
 - `POST /dispatch/jobs/{job_id}/status` update status (`en-route|arrived|loaded|delivered`).
 - `GET /dispatch/jobs/{job_id}` fetch job details. Returns the standard envelope: `{ "status": true, "message": "success", "data": { ... } }`.
 - `GET /dispatch/jobs/{job_id}/timeline` fetch lifecycle history. Returns the standard envelope: `{ "status": true, "message": "success", "data": { "job_id": "...", "timeline": [...] } }`.
+- `POST /dispatch/jobs/{job_id}/send-whatsapp-instruction` send an approved job-assignment WhatsApp template to the selected driver number using the job data already stored on the dispatch record. The caller still supplies the driver number, driver display name, and template-specific media/button params. Returns the standard envelope with the updated job aggregate after the `driver_instruction_sent` timeline entry is recorded.
+- `POST /dispatch/jobs/{job_id}/driver-status-requests` record a pending driver-reported status request from a recognized WhatsApp keyword reply. Supported keywords are `ENROUTE`, `ARRIVED`, `LOADED`, and `DELIVERED`. This does not update the job status yet; it only appends `driver_status_reported` to the job timeline and stores a pending confirmation request.
+- `POST /dispatch/jobs/{job_id}/driver-status-requests/{request_id}/confirm` confirm a pending driver-reported status request. Only dispatcher-capable roles should call this; confirmation appends `driver_status_confirmed` and then performs the actual job status transition.
 - `POST /dispatch/jobs/{job_id}/pod-attachments` add proof-of-delivery attachment.
 - `POST /dispatch/jobs/{job_id}/notes` add dispatcher note.
 - `POST /dispatch/jobs/status` legacy compatibility endpoint for direct status event publishing.
@@ -105,6 +148,7 @@ Dispatch job state is now backed by Postgres instead of per-process memory, whil
 
 ## Event topics (examples)
 - `tm.<tenant>.vehicle.location.updated`
+- `tm.<tenant>.notification.send`
 - `tm.<tenant>.job.status.changed`
 - `tm.<tenant>.driver.job.instruction`
 - `tm.<tenant>.alert.triggered`

@@ -2,10 +2,15 @@ package notificationhttp
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/truckmoov/services-go/internal/notification/application"
+	"github.com/truckmoov/services-go/internal/notification/domain"
+	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
 type sendRequest struct {
@@ -15,25 +20,197 @@ type sendRequest struct {
 	Content   string `json:"content"`
 }
 
+type createWhatsAppTemplateRequest struct {
+	Name                   string           `json:"name"`
+	TemplateType           string           `json:"template_type,omitempty"`
+	TemplateTypeAlt        string           `json:"templateType,omitempty"`
+	Header                 string           `json:"header,omitempty"`
+	Body                   string           `json:"body,omitempty"`
+	Language               string           `json:"language,omitempty"`
+	Category               string           `json:"category,omitempty"`
+	AllowCategoryChange    *bool            `json:"allow_category_change,omitempty"`
+	AllowCategoryChangeAlt *bool            `json:"allowCategoryChange,omitempty"`
+	ParameterFormat        string           `json:"parameter_format,omitempty"`
+	ParameterFormatAlt     string           `json:"parameterFormat,omitempty"`
+	Components             []map[string]any `json:"components,omitempty"`
+}
+
+type sendJobInstructionHeaderMediaRequest struct {
+	Type     string `json:"type,omitempty"`
+	Link     string `json:"link,omitempty"`
+	ID       string `json:"id,omitempty"`
+	Filename string `json:"filename,omitempty"`
+}
+
+type sendJobInstructionButtonParameterRequest struct {
+	Index   int    `json:"index"`
+	Type    string `json:"type,omitempty"`
+	Text    string `json:"text,omitempty"`
+	Payload string `json:"payload,omitempty"`
+}
+
+type sendOtherTemplateRequest struct {
+	To                   string                                     `json:"to,omitempty"`
+	Recipient            string                                     `json:"recipient,omitempty"`
+	TemplateName         string                                     `json:"template_name,omitempty"`
+	TemplateNameAlt      string                                     `json:"templateName,omitempty"`
+	Language             string                                     `json:"language,omitempty"`
+	Variables            map[string]string                          `json:"variables,omitempty"`
+	TemplateVariables    map[string]string                          `json:"template_variables,omitempty"`
+	TemplateVariablesAlt map[string]string                          `json:"templateVariables,omitempty"`
+	HeaderMedia          *sendJobInstructionHeaderMediaRequest      `json:"header_media,omitempty"`
+	HeaderMediaAlt       *sendJobInstructionHeaderMediaRequest      `json:"headerMedia,omitempty"`
+	ButtonParameters     []sendJobInstructionButtonParameterRequest `json:"button_parameters,omitempty"`
+	ButtonParametersAlt  []sendJobInstructionButtonParameterRequest `json:"buttonParameters,omitempty"`
+}
+
+type sendJobInstructionRequest struct {
+	JobID               string                                     `json:"job_id,omitempty"`
+	JobIDAlt            string                                     `json:"jobId,omitempty"`
+	DriverID            string                                     `json:"driver_id,omitempty"`
+	DriverIDAlt         string                                     `json:"driverId,omitempty"`
+	To                  string                                     `json:"to,omitempty"`
+	Recipient           string                                     `json:"recipient,omitempty"`
+	TemplateName        string                                     `json:"template_name,omitempty"`
+	TemplateNameAlt     string                                     `json:"templateName,omitempty"`
+	Language            string                                     `json:"language,omitempty"`
+	DriverName          string                                     `json:"driver_name,omitempty"`
+	DriverNameAlt       string                                     `json:"driverName,omitempty"`
+	JobReference        string                                     `json:"job_reference,omitempty"`
+	JobReferenceAlt     string                                     `json:"jobReference,omitempty"`
+	PickupLocation      string                                     `json:"pickup_location,omitempty"`
+	PickupLocationAlt   string                                     `json:"pickupLocation,omitempty"`
+	DeliveryLocation    string                                     `json:"delivery_location,omitempty"`
+	DeliveryLocationAlt string                                     `json:"deliveryLocation,omitempty"`
+	CargoDescription    string                                     `json:"cargo_description,omitempty"`
+	CargoDescriptionAlt string                                     `json:"cargoDescription,omitempty"`
+	Priority            string                                     `json:"priority,omitempty"`
+	HeaderMedia         *sendJobInstructionHeaderMediaRequest      `json:"header_media,omitempty"`
+	HeaderMediaAlt      *sendJobInstructionHeaderMediaRequest      `json:"headerMedia,omitempty"`
+	ButtonParameters    []sendJobInstructionButtonParameterRequest `json:"button_parameters,omitempty"`
+	ButtonParametersAlt []sendJobInstructionButtonParameterRequest `json:"buttonParameters,omitempty"`
+}
+
+type sendWhatsAppTextMessageRequest struct {
+	To        string `json:"to,omitempty"`
+	Recipient string `json:"recipient,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Content   string `json:"content,omitempty"`
+}
+
+type sendWhatsAppMediaMessageRequest struct {
+	To           string `json:"to,omitempty"`
+	Recipient    string `json:"recipient,omitempty"`
+	MediaType    string `json:"media_type,omitempty"`
+	MediaTypeAlt string `json:"mediaType,omitempty"`
+	MediaID      string `json:"media_id,omitempty"`
+	MediaIDAlt   string `json:"mediaId,omitempty"`
+	Link         string `json:"link,omitempty"`
+	MediaLink    string `json:"media_link,omitempty"`
+	MediaLinkAlt string `json:"mediaLink,omitempty"`
+	Caption      string `json:"caption,omitempty"`
+	Filename     string `json:"filename,omitempty"`
+}
+
+type whatsAppConversationResponse struct {
+	ID                     string     `json:"id"`
+	TenantID               string     `json:"tenant_id"`
+	DriverPhone            string     `json:"driver_phone"`
+	DriverName             string     `json:"driver_name,omitempty"`
+	LastInboundMessageAt   *time.Time `json:"last_inbound_message_at,omitempty"`
+	LastOutboundMessageAt  *time.Time `json:"last_outbound_message_at,omitempty"`
+	LastTemplateSentAt     *time.Time `json:"last_template_sent_at,omitempty"`
+	WindowExpiresAt        *time.Time `json:"window_expires_at,omitempty"`
+	WindowRemainingSeconds int64      `json:"window_remaining_seconds"`
+	WindowRemainingHours   float64    `json:"window_remaining_hours"`
+	IsLocked               bool       `json:"is_locked"`
+	LastMessageAt          *time.Time `json:"last_message_at,omitempty"`
+	LastMessagePreview     string     `json:"last_message_preview,omitempty"`
+	LastMessageDirection   string     `json:"last_message_direction,omitempty"`
+	LastMessageType        string     `json:"last_message_type,omitempty"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
+}
+
+type whatsAppConversationMessagesPayload struct {
+	Conversation whatsAppConversationResponse         `json:"conversation"`
+	Messages     []domain.WhatsAppConversationMessage `json:"messages"`
+}
+
+type whatsAppConversationSendPayload struct {
+	OutboxMessage domain.OutboxMessage               `json:"outbox_message"`
+	Conversation  whatsAppConversationResponse       `json:"conversation"`
+	Message       domain.WhatsAppConversationMessage `json:"message"`
+}
+
 type Handler struct {
-	sendMessageUseCase  *application.SendMessageUseCase
-	retryMessageUseCase *application.RetryMessageUseCase
+	sendMessageUseCase                      *application.SendMessageUseCase
+	retryMessageUseCase                     *application.RetryMessageUseCase
+	createWhatsAppTemplateUseCase           *application.CreateWhatsAppTemplateUseCase
+	listWhatsAppTemplatesUseCase            *application.ListWhatsAppTemplatesUseCase
+	sendOtherTemplateUseCase                *application.SendOtherTemplateUseCase
+	sendJobInstructionUseCase               *application.SendJobInstructionUseCase
+	sendWhatsAppTextMessageUseCase          *application.SendWhatsAppTextMessageUseCase
+	sendWhatsAppMediaMessageUseCase         *application.SendWhatsAppMediaMessageUseCase
+	listWhatsAppConversationsUseCase        *application.ListWhatsAppConversationsUseCase
+	getWhatsAppConversationUseCase          *application.GetWhatsAppConversationUseCase
+	listWhatsAppConversationMessagesUseCase *application.ListWhatsAppConversationMessagesUseCase
+	handleWhatsAppWebhookUseCase            *application.HandleWhatsAppWebhookUseCase
+	clock                                   application.Clock
+	whatsAppWebhookVerifyToken              string
 }
 
 func NewHandler(
 	sendMessageUseCase *application.SendMessageUseCase,
 	retryMessageUseCase *application.RetryMessageUseCase,
+	createWhatsAppTemplateUseCase *application.CreateWhatsAppTemplateUseCase,
+	listWhatsAppTemplatesUseCase *application.ListWhatsAppTemplatesUseCase,
+	sendOtherTemplateUseCase *application.SendOtherTemplateUseCase,
+	sendJobInstructionUseCase *application.SendJobInstructionUseCase,
+	sendWhatsAppTextMessageUseCase *application.SendWhatsAppTextMessageUseCase,
+	sendWhatsAppMediaMessageUseCase *application.SendWhatsAppMediaMessageUseCase,
+	listWhatsAppConversationsUseCase *application.ListWhatsAppConversationsUseCase,
+	getWhatsAppConversationUseCase *application.GetWhatsAppConversationUseCase,
+	listWhatsAppConversationMessagesUseCase *application.ListWhatsAppConversationMessagesUseCase,
+	handleWhatsAppWebhookUseCase *application.HandleWhatsAppWebhookUseCase,
+	clock application.Clock,
+	whatsAppWebhookVerifyToken string,
 ) *Handler {
 	return &Handler{
-		sendMessageUseCase:  sendMessageUseCase,
-		retryMessageUseCase: retryMessageUseCase,
+		sendMessageUseCase:                      sendMessageUseCase,
+		retryMessageUseCase:                     retryMessageUseCase,
+		createWhatsAppTemplateUseCase:           createWhatsAppTemplateUseCase,
+		listWhatsAppTemplatesUseCase:            listWhatsAppTemplatesUseCase,
+		sendOtherTemplateUseCase:                sendOtherTemplateUseCase,
+		sendJobInstructionUseCase:               sendJobInstructionUseCase,
+		sendWhatsAppTextMessageUseCase:          sendWhatsAppTextMessageUseCase,
+		sendWhatsAppMediaMessageUseCase:         sendWhatsAppMediaMessageUseCase,
+		listWhatsAppConversationsUseCase:        listWhatsAppConversationsUseCase,
+		getWhatsAppConversationUseCase:          getWhatsAppConversationUseCase,
+		listWhatsAppConversationMessagesUseCase: listWhatsAppConversationMessagesUseCase,
+		handleWhatsAppWebhookUseCase:            handleWhatsAppWebhookUseCase,
+		clock:                                   clock,
+		whatsAppWebhookVerifyToken:              strings.TrimSpace(whatsAppWebhookVerifyToken),
 	}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/notify/health", h.health)
+	mux.HandleFunc("/notify/docs", h.docsUI)
+	mux.HandleFunc("/notify/docs/openapi.json", h.docsOpenAPI)
+	mux.HandleFunc("/docs/notification", h.docsUI)
+	mux.HandleFunc("/docs/notification/openapi.json", h.docsOpenAPI)
 	mux.HandleFunc("/notify/messages/send", h.sendMessage)
 	mux.HandleFunc("/notify/messages/retry/", h.retryMessage)
+	mux.HandleFunc("/notify/whatsapp/create-template", h.createWhatsAppTemplate)
+	mux.HandleFunc("/notify/whatsapp/get-all-templates", h.getAllWhatsAppTemplates)
+	mux.HandleFunc("/notify/whatsapp/send-other-template", h.sendOtherTemplate)
+	mux.HandleFunc("/notify/whatsapp/send-job-instruction", h.sendJobInstruction)
+	mux.HandleFunc("/notify/whatsapp/send-message", h.sendWhatsAppTextMessage)
+	mux.HandleFunc("/notify/whatsapp/send-message-with-media", h.sendWhatsAppMediaMessage)
+	mux.HandleFunc("/notify/whatsapp/conversations", h.listWhatsAppConversations)
+	mux.HandleFunc("/notify/whatsapp/conversations/", h.whatsAppConversationByPath)
+	mux.HandleFunc("/notify/whatsapp/webhook", h.whatsAppWebhook)
 	mux.HandleFunc("/health", h.health)
 }
 
@@ -90,6 +267,585 @@ func (h *Handler) retryMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, message)
+}
+
+func (h *Handler) createWhatsAppTemplate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID, ok := authenticatedTenantID(r)
+	if !ok {
+		respondEnvelope(w, http.StatusUnauthorized, "authentication required", nil)
+		return
+	}
+
+	var req createWhatsAppTemplateRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		return
+	}
+
+	template, err := h.createWhatsAppTemplateUseCase.Execute(r.Context(), application.CreateWhatsAppTemplateCommand{
+		TenantID:            tenantID,
+		TemplateType:        firstNonEmpty(req.TemplateType, req.TemplateTypeAlt),
+		Name:                req.Name,
+		Header:              req.Header,
+		Body:                req.Body,
+		Language:            req.Language,
+		Category:            req.Category,
+		AllowCategoryChange: firstNonNilBool(req.AllowCategoryChange, req.AllowCategoryChangeAlt),
+		ParameterFormat:     firstNonEmpty(req.ParameterFormat, req.ParameterFormatAlt),
+		Components:          req.Components,
+	})
+	if err != nil {
+		respondEnvelope(w, http.StatusBadRequest, err.Error(), nil)
+		return
+	}
+
+	respondEnvelope(w, http.StatusOK, "success", template)
+}
+
+func (h *Handler) getAllWhatsAppTemplates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID, ok := authenticatedTenantID(r)
+	if !ok {
+		respondEnvelope(w, http.StatusUnauthorized, "authentication required", nil)
+		return
+	}
+
+	templates, err := h.listWhatsAppTemplatesUseCase.Execute(r.Context(), application.ListWhatsAppTemplatesQuery{TenantID: tenantID})
+	if err != nil {
+		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+		return
+	}
+
+	respondEnvelope(w, http.StatusOK, "success", templates)
+}
+
+func (h *Handler) sendOtherTemplate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
+	if !ok {
+		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		return
+	}
+
+	var req sendOtherTemplateRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		return
+	}
+
+	message, err := h.sendOtherTemplateUseCase.Execute(r.Context(), application.SendOtherTemplateCommand{
+		TenantID:         tenantID,
+		Recipient:        firstNonEmpty(req.To, req.Recipient),
+		TemplateName:     firstNonEmpty(req.TemplateName, req.TemplateNameAlt),
+		Language:         req.Language,
+		Variables:        normalizeOtherTemplateVariables(req.Variables, req.TemplateVariables, req.TemplateVariablesAlt),
+		HeaderMedia:      normalizeJobInstructionHeaderMedia(firstNonNilHeaderMedia(req.HeaderMedia, req.HeaderMediaAlt)),
+		ButtonParameters: normalizeJobInstructionButtonParameters(req.ButtonParameters, req.ButtonParametersAlt),
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(err, application.ErrOtherTemplateTemplateNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, application.ErrOtherTemplateTemplateNotApproved),
+			errors.Is(err, application.ErrOtherTemplateJobAssignmentNotAllowed),
+			errors.Is(err, application.ErrOtherTemplateRecipientRequired),
+			errors.Is(err, application.ErrOtherTemplateTemplateNameRequired),
+			errors.Is(err, application.ErrOtherTemplateVariableRequired),
+			errors.Is(err, application.ErrJobInstructionHeaderMediaRequired),
+			errors.Is(err, application.ErrJobInstructionHeaderMediaTypeMismatch),
+			errors.Is(err, application.ErrJobInstructionHeaderMediaValueRequired),
+			errors.Is(err, application.ErrJobInstructionButtonParameterRequired),
+			errors.Is(err, application.ErrJobInstructionButtonParameterValueNeeded):
+			status = http.StatusBadRequest
+		default:
+			status = http.StatusBadGateway
+		}
+		respondEnvelope(w, status, err.Error(), message)
+		return
+	}
+
+	respondEnvelope(w, http.StatusOK, "success", message)
+}
+
+func (h *Handler) sendJobInstruction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
+	if !ok {
+		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		return
+	}
+
+	var req sendJobInstructionRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		return
+	}
+
+	message, err := h.sendJobInstructionUseCase.Execute(r.Context(), application.SendJobInstructionCommand{
+		TenantID:         tenantID,
+		JobID:            firstNonEmpty(req.JobID, req.JobIDAlt),
+		DriverID:         firstNonEmpty(req.DriverID, req.DriverIDAlt),
+		Recipient:        firstNonEmpty(req.To, req.Recipient),
+		TemplateName:     firstNonEmpty(req.TemplateName, req.TemplateNameAlt),
+		Language:         req.Language,
+		DriverName:       firstNonEmpty(req.DriverName, req.DriverNameAlt),
+		JobReference:     firstNonEmpty(req.JobReference, req.JobReferenceAlt),
+		PickupLocation:   firstNonEmpty(req.PickupLocation, req.PickupLocationAlt),
+		DeliveryLocation: firstNonEmpty(req.DeliveryLocation, req.DeliveryLocationAlt),
+		CargoDescription: firstNonEmpty(req.CargoDescription, req.CargoDescriptionAlt),
+		Priority:         req.Priority,
+		HeaderMedia:      normalizeJobInstructionHeaderMedia(firstNonNilHeaderMedia(req.HeaderMedia, req.HeaderMediaAlt)),
+		ButtonParameters: normalizeJobInstructionButtonParameters(req.ButtonParameters, req.ButtonParametersAlt),
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		switch {
+		case errors.Is(err, application.ErrJobInstructionTemplateNotFound):
+			status = http.StatusNotFound
+		case errors.Is(err, application.ErrJobInstructionTemplateNotApproved),
+			errors.Is(err, application.ErrJobInstructionTemplateNotCompatible),
+			errors.Is(err, application.ErrJobInstructionRecipientRequired),
+			errors.Is(err, application.ErrJobInstructionTemplateNameRequired),
+			errors.Is(err, application.ErrJobInstructionDriverNameRequired),
+			errors.Is(err, application.ErrJobInstructionReferenceRequired),
+			errors.Is(err, application.ErrJobInstructionPickupLocationRequired),
+			errors.Is(err, application.ErrJobInstructionDeliveryLocationRequired),
+			errors.Is(err, application.ErrJobInstructionCargoDescriptionRequired),
+			errors.Is(err, application.ErrJobInstructionPriorityRequired),
+			errors.Is(err, application.ErrJobInstructionHeaderMediaRequired),
+			errors.Is(err, application.ErrJobInstructionHeaderMediaTypeMismatch),
+			errors.Is(err, application.ErrJobInstructionHeaderMediaValueRequired),
+			errors.Is(err, application.ErrJobInstructionButtonParameterRequired),
+			errors.Is(err, application.ErrJobInstructionButtonParameterValueNeeded):
+			status = http.StatusBadRequest
+		default:
+			status = http.StatusBadGateway
+		}
+		respondEnvelope(w, status, err.Error(), message)
+		return
+	}
+
+	respondEnvelope(w, http.StatusOK, "success", message)
+}
+
+func (h *Handler) listWhatsAppConversations(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
+	if !ok {
+		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		return
+	}
+
+	conversations, err := h.listWhatsAppConversationsUseCase.Execute(r.Context(), application.ListWhatsAppConversationsQuery{
+		TenantID: tenantID,
+		Query:    strings.TrimSpace(r.URL.Query().Get("query")),
+		State:    strings.TrimSpace(r.URL.Query().Get("state")),
+	})
+	if err != nil {
+		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+		return
+	}
+
+	now := h.clock.Now()
+	response := make([]whatsAppConversationResponse, 0, len(conversations))
+	for _, conversation := range conversations {
+		response = append(response, buildWhatsAppConversationResponse(conversation, now))
+	}
+
+	respondEnvelope(w, http.StatusOK, "success", response)
+}
+
+func (h *Handler) whatsAppConversationByPath(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/notify/whatsapp/conversations/"), "/")
+	if trimmed == "" {
+		respondEnvelope(w, http.StatusNotFound, "not found", nil)
+		return
+	}
+
+	parts := strings.Split(trimmed, "/")
+	if len(parts) == 1 {
+		h.getWhatsAppConversation(w, r, parts[0])
+		return
+	}
+	if len(parts) == 2 && strings.EqualFold(parts[1], "messages") {
+		h.listWhatsAppConversationMessages(w, r, parts[0])
+		return
+	}
+
+	respondEnvelope(w, http.StatusNotFound, "not found", nil)
+}
+
+func (h *Handler) getWhatsAppConversation(w http.ResponseWriter, r *http.Request, conversationID string) {
+	if r.Method != http.MethodGet {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
+	if !ok {
+		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		return
+	}
+
+	conversation, err := h.getWhatsAppConversationUseCase.Execute(r.Context(), application.GetWhatsAppConversationQuery{
+		TenantID:       tenantID,
+		ConversationID: strings.TrimSpace(conversationID),
+	})
+	if err != nil {
+		respondEnvelope(w, whatsAppConversationErrorStatus(err), err.Error(), nil)
+		return
+	}
+
+	respondEnvelope(w, http.StatusOK, "success", buildWhatsAppConversationResponse(conversation, h.clock.Now()))
+}
+
+func (h *Handler) listWhatsAppConversationMessages(w http.ResponseWriter, r *http.Request, conversationID string) {
+	if r.Method != http.MethodGet {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
+	if !ok {
+		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		return
+	}
+
+	conversation, messages, err := h.listWhatsAppConversationMessagesUseCase.Execute(r.Context(), application.ListWhatsAppConversationMessagesQuery{
+		TenantID:       tenantID,
+		ConversationID: strings.TrimSpace(conversationID),
+	})
+	if err != nil {
+		respondEnvelope(w, whatsAppConversationErrorStatus(err), err.Error(), nil)
+		return
+	}
+
+	respondEnvelope(w, http.StatusOK, "success", whatsAppConversationMessagesPayload{
+		Conversation: buildWhatsAppConversationResponse(conversation, h.clock.Now()),
+		Messages:     messages,
+	})
+}
+
+func (h *Handler) sendWhatsAppTextMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
+	if !ok {
+		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		return
+	}
+
+	var req sendWhatsAppTextMessageRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		return
+	}
+
+	outboxMessage, conversation, message, err := h.sendWhatsAppTextMessageUseCase.Execute(r.Context(), application.SendWhatsAppTextMessageCommand{
+		TenantID:  tenantID,
+		Recipient: firstNonEmpty(req.To, req.Recipient),
+		Message:   firstNonEmpty(req.Message, req.Content),
+	})
+	if err != nil {
+		respondEnvelope(w, whatsAppConversationErrorStatus(err), err.Error(), nil)
+		return
+	}
+
+	respondEnvelope(w, http.StatusOK, "success", whatsAppConversationSendPayload{
+		OutboxMessage: outboxMessage,
+		Conversation:  buildWhatsAppConversationResponse(conversation, h.clock.Now()),
+		Message:       message,
+	})
+}
+
+func (h *Handler) sendWhatsAppMediaMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
+	if !ok {
+		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		return
+	}
+
+	var req sendWhatsAppMediaMessageRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		return
+	}
+
+	outboxMessage, conversation, message, err := h.sendWhatsAppMediaMessageUseCase.Execute(r.Context(), application.SendWhatsAppMediaMessageCommand{
+		TenantID:  tenantID,
+		Recipient: firstNonEmpty(req.To, req.Recipient),
+		MediaType: firstNonEmpty(req.MediaType, req.MediaTypeAlt),
+		MediaID:   firstNonEmpty(req.MediaID, req.MediaIDAlt),
+		MediaLink: firstNonEmpty(req.Link, req.MediaLink, req.MediaLinkAlt),
+		Caption:   req.Caption,
+		Filename:  req.Filename,
+	})
+	if err != nil {
+		respondEnvelope(w, whatsAppConversationErrorStatus(err), err.Error(), nil)
+		return
+	}
+
+	respondEnvelope(w, http.StatusOK, "success", whatsAppConversationSendPayload{
+		OutboxMessage: outboxMessage,
+		Conversation:  buildWhatsAppConversationResponse(conversation, h.clock.Now()),
+		Message:       message,
+	})
+}
+
+func (h *Handler) whatsAppWebhook(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.verifyWhatsAppWebhook(w, r)
+	case http.MethodPost:
+		h.handleWhatsAppWebhook(w, r)
+	default:
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+	}
+}
+
+func (h *Handler) verifyWhatsAppWebhook(w http.ResponseWriter, r *http.Request) {
+	if h.whatsAppWebhookVerifyToken == "" {
+		respondEnvelope(w, http.StatusInternalServerError, "whatsapp webhook verify token is not configured", nil)
+		return
+	}
+
+	mode := strings.TrimSpace(r.URL.Query().Get("hub.mode"))
+	verifyToken := strings.TrimSpace(r.URL.Query().Get("hub.verify_token"))
+	challenge := strings.TrimSpace(r.URL.Query().Get("hub.challenge"))
+	if mode != "subscribe" || challenge == "" {
+		respondEnvelope(w, http.StatusBadRequest, "invalid webhook verification request", nil)
+		return
+	}
+	if verifyToken != h.whatsAppWebhookVerifyToken {
+		respondEnvelope(w, http.StatusForbidden, "invalid webhook verify token", nil)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(challenge))
+}
+
+func (h *Handler) handleWhatsAppWebhook(w http.ResponseWriter, r *http.Request) {
+	payload, err := io.ReadAll(r.Body)
+	if err != nil {
+		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		return
+	}
+	if !json.Valid(payload) {
+		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		return
+	}
+
+	processed, err := h.handleWhatsAppWebhookUseCase.Execute(r.Context(), application.HandleWhatsAppWebhookCommand{Payload: payload})
+	if err != nil {
+		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+		return
+	}
+
+	respondEnvelope(w, http.StatusOK, "received", map[string]any{"processed": processed})
+}
+
+func buildWhatsAppConversationResponse(conversation domain.WhatsAppConversation, now time.Time) whatsAppConversationResponse {
+	return whatsAppConversationResponse{
+		ID:                     conversation.ID,
+		TenantID:               conversation.TenantID,
+		DriverPhone:            conversation.DriverPhone,
+		DriverName:             conversation.DriverName,
+		LastInboundMessageAt:   conversation.LastInboundMessageAt,
+		LastOutboundMessageAt:  conversation.LastOutboundMessageAt,
+		LastTemplateSentAt:     conversation.LastTemplateSentAt,
+		WindowExpiresAt:        conversation.WindowExpiresAt,
+		WindowRemainingSeconds: conversation.WindowRemainingSeconds(now),
+		WindowRemainingHours:   conversation.WindowRemainingHours(now),
+		IsLocked:               conversation.IsLocked(now),
+		LastMessageAt:          conversation.LastMessageAt,
+		LastMessagePreview:     conversation.LastMessagePreview,
+		LastMessageDirection:   conversation.LastMessageDirection,
+		LastMessageType:        conversation.LastMessageType,
+		CreatedAt:              conversation.CreatedAt,
+		UpdatedAt:              conversation.UpdatedAt,
+	}
+}
+
+func whatsAppConversationErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, application.ErrWhatsAppConversationNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, application.ErrWhatsAppConversationLocked):
+		return http.StatusConflict
+	case errors.Is(err, application.ErrWhatsAppConversationIDRequired),
+		errors.Is(err, application.ErrWhatsAppMessageRequired),
+		errors.Is(err, application.ErrWhatsAppMediaTypeRequired),
+		errors.Is(err, application.ErrWhatsAppMediaTypeUnsupported),
+		errors.Is(err, application.ErrWhatsAppMediaValueRequired),
+		errors.Is(err, application.ErrOtherTemplateRecipientRequired):
+		return http.StatusBadRequest
+	default:
+		return http.StatusBadGateway
+	}
+}
+
+func normalizeOtherTemplateVariables(values ...map[string]string) map[string]string {
+	for _, value := range values {
+		if len(value) == 0 {
+			continue
+		}
+		normalized := make(map[string]string, len(value))
+		for key, item := range value {
+			trimmedKey := strings.TrimSpace(key)
+			if trimmedKey == "" {
+				continue
+			}
+			normalized[trimmedKey] = strings.TrimSpace(item)
+		}
+		if len(normalized) > 0 {
+			return normalized
+		}
+	}
+	return nil
+}
+
+func normalizeJobInstructionHeaderMedia(headerMedia *sendJobInstructionHeaderMediaRequest) *application.JobInstructionHeaderMedia {
+	if headerMedia == nil {
+		return nil
+	}
+	return &application.JobInstructionHeaderMedia{
+		Type:     headerMedia.Type,
+		Link:     headerMedia.Link,
+		ID:       headerMedia.ID,
+		Filename: headerMedia.Filename,
+	}
+}
+
+func normalizeJobInstructionButtonParameters(primary, alternate []sendJobInstructionButtonParameterRequest) []application.JobInstructionButtonParameter {
+	requests := primary
+	if len(requests) == 0 {
+		requests = alternate
+	}
+	if len(requests) == 0 {
+		return nil
+	}
+	parameters := make([]application.JobInstructionButtonParameter, 0, len(requests))
+	for _, request := range requests {
+		parameters = append(parameters, application.JobInstructionButtonParameter{
+			Index:   request.Index,
+			Type:    request.Type,
+			Text:    request.Text,
+			Payload: request.Payload,
+		})
+	}
+	return parameters
+}
+
+func authenticatedTenantID(r *http.Request) (string, bool) {
+	tenantID := strings.TrimSpace(httpx.TenantIDFromRequest(r))
+	if tenantID == "" {
+		return "", false
+	}
+	return tenantID, true
+}
+
+func authenticatedDispatcherTenantID(r *http.Request) (string, int, bool) {
+	claims, ok := httpx.ClaimsFromRequest(r)
+	if !ok || claims == nil || strings.TrimSpace(claims.TenantID) == "" {
+		return "", http.StatusUnauthorized, false
+	}
+	if !isDispatcherCapableRole(claims.Role) {
+		return "", http.StatusForbidden, false
+	}
+	return strings.TrimSpace(claims.TenantID), http.StatusOK, true
+}
+
+func isDispatcherCapableRole(role string) bool {
+	switch strings.ToUpper(strings.TrimSpace(role)) {
+	case "DISPATCHER", "OPERATIONS_MANAGER", "FLEET_ADMIN", "PLATFORM_ADMIN", "ENTERPRISE_ADMIN":
+		return true
+	default:
+		return false
+	}
+}
+
+func notificationAuthMessage(status int) string {
+	if status == http.StatusForbidden {
+		return "dispatcher role required"
+	}
+	return "authentication required"
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstNonNilBool(values ...*bool) *bool {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func firstNonNilHeaderMedia(values ...*sendJobInstructionHeaderMediaRequest) *sendJobInstructionHeaderMediaRequest {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func respondEnvelope(w http.ResponseWriter, status int, message string, data any) {
+	respondJSON(w, status, map[string]any{
+		"status":  status < http.StatusBadRequest,
+		"message": message,
+		"data":    data,
+	})
 }
 
 func respondJSON(w http.ResponseWriter, status int, payload any) {

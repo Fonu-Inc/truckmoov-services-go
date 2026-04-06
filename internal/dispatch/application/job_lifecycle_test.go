@@ -110,9 +110,10 @@ func TestJobLifecycleUseCase_HappyPath(t *testing.T) {
 	}
 
 	job, err = useCase.AssignJob(context.Background(), AssignJobCommand{
-		JobID:     job.ID,
-		DriverID:  "driver-1",
-		VehicleID: "vehicle-1",
+		JobID:       job.ID,
+		DriverID:    "driver-1",
+		DriverPhone: "+2348010000001",
+		VehicleID:   "vehicle-1",
 	})
 	if err != nil {
 		t.Fatalf("assign job failed: %v", err)
@@ -257,6 +258,7 @@ func TestJobLifecycleUseCase_CreateJobMapsUIDetails(t *testing.T) {
 		Reference:        "JOB-900",
 		VehicleID:        "veh-1",
 		DriverID:         "driver-1",
+		DriverPhone:      "+2348010000001",
 		CargoType:        "Electronics",
 		CargoDescription: "Fragile televisions",
 		InitialNote:      "Handle with care",
@@ -296,8 +298,8 @@ func TestJobLifecycleUseCase_CreateJobMapsUIDetails(t *testing.T) {
 	if job.Status != domain.StatusAssigned {
 		t.Fatalf("expected create with vehicle and driver to assign immediately, got %q", job.Status)
 	}
-	if job.AssignedVehicleID != "veh-1" || job.AssignedDriverID != "driver-1" {
-		t.Fatalf("expected assigned vehicle/driver to be stored, got vehicle=%q driver=%q", job.AssignedVehicleID, job.AssignedDriverID)
+	if job.AssignedVehicleID != "veh-1" || job.AssignedDriverID != "driver-1" || job.AssignedDriverPhone != "+2348010000001" {
+		t.Fatalf("expected assigned vehicle/driver/phone to be stored, got vehicle=%q driver=%q phone=%q", job.AssignedVehicleID, job.AssignedDriverID, job.AssignedDriverPhone)
 	}
 	if len(job.Notes) != 1 || job.Notes[0].Text != "Handle with care" {
 		t.Fatalf("expected initial note to be stored, got %#v", job.Notes)
@@ -368,5 +370,120 @@ func TestJobLifecycleUseCase_ListJobsSupportsFilters(t *testing.T) {
 	}
 	if len(list) != 1 || list[0].ID != "job-b" {
 		t.Fatalf("expected assigned job-b, got %#v", list)
+	}
+}
+
+func TestJobLifecycleUseCase_CreateAndConfirmDriverStatusRequest(t *testing.T) {
+	repo := newLifecycleRepository()
+	emitter := &lifecycleEmitter{}
+	useCase := NewJobLifecycleUseCase(
+		repo,
+		emitter,
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:       "job-driver-status-1",
+		VehicleID:   "vehicle-1",
+		DriverID:    "driver-1",
+		DriverPhone: "+2348010000001",
+		Pickup:      domain.JobStop{Address: "Apapa Port"},
+		Dropoff:     domain.JobStop{Address: "Lekki Free Zone"},
+	})
+	if err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+
+	updatedJob, request, err := useCase.CreateDriverStatusRequest(context.Background(), CreateDriverStatusRequestCommand{
+		JobID:           job.ID,
+		DriverID:        "driver-1",
+		DriverPhone:     "+2348010000001",
+		Keyword:         "ENROUTE",
+		RawMessage:      "ENROUTE",
+		SourceMessageID: "wamid.inbound.1",
+		Channel:         "whatsapp",
+	})
+	if err != nil {
+		t.Fatalf("create driver status request failed: %v", err)
+	}
+	if request.RequestedStatus != domain.StatusEnRoute {
+		t.Fatalf("expected en-route request, got %q", request.RequestedStatus)
+	}
+	if len(updatedJob.DriverStatusRequests) != 1 {
+		t.Fatalf("expected one driver status request, got %d", len(updatedJob.DriverStatusRequests))
+	}
+	if updatedJob.Status != domain.StatusAssigned {
+		t.Fatalf("expected job status to remain assigned until confirmation, got %q", updatedJob.Status)
+	}
+
+	confirmedJob, confirmedRequest, err := useCase.ConfirmDriverStatusRequest(context.Background(), ConfirmDriverStatusRequestCommand{
+		JobID:       job.ID,
+		RequestID:   request.ID,
+		ConfirmedBy: "dispatcher-1",
+	})
+	if err != nil {
+		t.Fatalf("confirm driver status request failed: %v", err)
+	}
+	if confirmedRequest.State != domain.DriverStatusRequestConfirmed {
+		t.Fatalf("expected confirmed request state, got %q", confirmedRequest.State)
+	}
+	if confirmedJob.Status != domain.StatusEnRoute {
+		t.Fatalf("expected confirmed job status en-route, got %q", confirmedJob.Status)
+	}
+	if len(emitter.commands) == 0 {
+		t.Fatal("expected status change event to be emitted on confirmation")
+	}
+}
+
+func TestJobLifecycleUseCase_RejectsDuplicatePendingDriverStatusRequest(t *testing.T) {
+	repo := newLifecycleRepository()
+	useCase := NewJobLifecycleUseCase(
+		repo,
+		&lifecycleEmitter{},
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:       "job-driver-status-2",
+		VehicleID:   "vehicle-1",
+		DriverID:    "driver-1",
+		DriverPhone: "+2348010000001",
+		Pickup:      domain.JobStop{Address: "Apapa Port"},
+		Dropoff:     domain.JobStop{Address: "Lekki Free Zone"},
+	})
+	if err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+
+	_, _, err = useCase.CreateDriverStatusRequest(context.Background(), CreateDriverStatusRequestCommand{
+		JobID:           job.ID,
+		DriverID:        "driver-1",
+		DriverPhone:     "+2348010000001",
+		Keyword:         "ENROUTE",
+		RawMessage:      "ENROUTE",
+		SourceMessageID: "wamid.inbound.2",
+		Channel:         "whatsapp",
+	})
+	if err != nil {
+		t.Fatalf("initial driver status request failed: %v", err)
+	}
+
+	_, _, err = useCase.CreateDriverStatusRequest(context.Background(), CreateDriverStatusRequestCommand{
+		JobID:           job.ID,
+		DriverID:        "driver-1",
+		DriverPhone:     "+2348010000001",
+		Keyword:         "ENROUTE",
+		RawMessage:      "ENROUTE",
+		SourceMessageID: "wamid.inbound.3",
+		Channel:         "whatsapp",
+	})
+	if err == nil {
+		t.Fatal("expected duplicate pending request to be rejected")
 	}
 }

@@ -10,19 +10,35 @@ import (
 )
 
 type fakeOutboxRepository struct {
-	data map[string]domain.OutboxMessage
+	data              map[string]domain.OutboxMessage
+	providerMessageID map[string]string
 }
 
 func newFakeOutboxRepository() *fakeOutboxRepository {
-	return &fakeOutboxRepository{data: make(map[string]domain.OutboxMessage)}
+	return &fakeOutboxRepository{
+		data:              make(map[string]domain.OutboxMessage),
+		providerMessageID: make(map[string]string),
+	}
 }
 
 func (r *fakeOutboxRepository) Save(message domain.OutboxMessage) error {
 	r.data[message.ID] = message
+	if message.ProviderMessageID != "" {
+		r.providerMessageID[message.ProviderMessageID] = message.ID
+	}
 	return nil
 }
 
 func (r *fakeOutboxRepository) FindByID(id string) (domain.OutboxMessage, bool) {
+	message, ok := r.data[id]
+	return message, ok
+}
+
+func (r *fakeOutboxRepository) FindByProviderMessageID(providerMessageID string) (domain.OutboxMessage, bool) {
+	id, ok := r.providerMessageID[providerMessageID]
+	if !ok {
+		return domain.OutboxMessage{}, false
+	}
 	message, ok := r.data[id]
 	return message, ok
 }

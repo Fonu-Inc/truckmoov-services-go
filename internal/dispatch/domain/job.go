@@ -70,32 +70,56 @@ type JobTimelineEntry struct {
 	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
+type DriverStatusRequestState string
+
+const (
+	DriverStatusRequestPending   DriverStatusRequestState = "pending"
+	DriverStatusRequestConfirmed DriverStatusRequestState = "confirmed"
+)
+
+type DriverStatusRequest struct {
+	ID              string                   `json:"id"`
+	RequestedStatus JobStatus                `json:"requested_status"`
+	Keyword         string                   `json:"keyword"`
+	Channel         string                   `json:"channel"`
+	DriverID        string                   `json:"driver_id"`
+	DriverPhone     string                   `json:"driver_phone,omitempty"`
+	RawMessage      string                   `json:"raw_message,omitempty"`
+	SourceMessageID string                   `json:"source_message_id,omitempty"`
+	State           DriverStatusRequestState `json:"state"`
+	RequestedAt     time.Time                `json:"requested_at"`
+	ConfirmedAt     *time.Time               `json:"confirmed_at,omitempty"`
+	ConfirmedBy     string                   `json:"confirmed_by,omitempty"`
+}
+
 type Job struct {
-	ID                      string             `json:"id"`
-	Reference               string             `json:"reference,omitempty"`
-	TenantID                string             `json:"tenant_id"`
-	Pickup                  JobStop            `json:"pickup"`
-	Dropoff                 JobStop            `json:"dropoff"`
-	CargoType               string             `json:"cargo_type,omitempty"`
-	CargoDescription        string             `json:"cargo_description,omitempty"`
-	AmountNgn               float64            `json:"amount_ngn,omitempty"`
-	Deadline                *time.Time         `json:"deadline,omitempty"`
-	RequiredVehicleType     string             `json:"required_vehicle_type,omitempty"`
-	LoadWeightKg            float64            `json:"load_weight_kg,omitempty"`
-	LoadVolumeM3            float64            `json:"load_volume_m3,omitempty"`
-	EstimatedServiceMinutes int                `json:"estimated_service_minutes,omitempty"`
-	Priority                JobPriority        `json:"priority"`
-	TimeWindow              JobTimeWindow      `json:"time_window"`
-	Status                  JobStatus          `json:"status"`
-	AssignedDriverID        string             `json:"assigned_driver_id,omitempty"`
-	AssignedVehicleID       string             `json:"assigned_vehicle_id,omitempty"`
-	CancellationReason      string             `json:"cancellation_reason,omitempty"`
-	AcknowledgedAt          *time.Time         `json:"acknowledged_at,omitempty"`
-	Notes                   []JobNote          `json:"notes"`
-	PODAttachments          []JobPODAttachment `json:"pod_attachments"`
-	Timeline                []JobTimelineEntry `json:"timeline"`
-	CreatedAt               time.Time          `json:"created_at"`
-	UpdatedAt               time.Time          `json:"updated_at"`
+	ID                      string                `json:"id"`
+	Reference               string                `json:"reference,omitempty"`
+	TenantID                string                `json:"tenant_id"`
+	Pickup                  JobStop               `json:"pickup"`
+	Dropoff                 JobStop               `json:"dropoff"`
+	CargoType               string                `json:"cargo_type,omitempty"`
+	CargoDescription        string                `json:"cargo_description,omitempty"`
+	AmountNgn               float64               `json:"amount_ngn,omitempty"`
+	Deadline                *time.Time            `json:"deadline,omitempty"`
+	RequiredVehicleType     string                `json:"required_vehicle_type,omitempty"`
+	LoadWeightKg            float64               `json:"load_weight_kg,omitempty"`
+	LoadVolumeM3            float64               `json:"load_volume_m3,omitempty"`
+	EstimatedServiceMinutes int                   `json:"estimated_service_minutes,omitempty"`
+	Priority                JobPriority           `json:"priority"`
+	TimeWindow              JobTimeWindow         `json:"time_window"`
+	Status                  JobStatus             `json:"status"`
+	AssignedDriverID        string                `json:"assigned_driver_id,omitempty"`
+	AssignedDriverPhone     string                `json:"assigned_driver_phone,omitempty"`
+	AssignedVehicleID       string                `json:"assigned_vehicle_id,omitempty"`
+	CancellationReason      string                `json:"cancellation_reason,omitempty"`
+	AcknowledgedAt          *time.Time            `json:"acknowledged_at,omitempty"`
+	Notes                   []JobNote             `json:"notes"`
+	PODAttachments          []JobPODAttachment    `json:"pod_attachments"`
+	DriverStatusRequests    []DriverStatusRequest `json:"driver_status_requests"`
+	Timeline                []JobTimelineEntry    `json:"timeline"`
+	CreatedAt               time.Time             `json:"created_at"`
+	UpdatedAt               time.Time             `json:"updated_at"`
 }
 
 func NewJob(params Job) (Job, error) {
@@ -162,11 +186,13 @@ func NewJob(params Job) (Job, error) {
 		TimeWindow:              params.TimeWindow,
 		Status:                  status,
 		AssignedDriverID:        strings.TrimSpace(params.AssignedDriverID),
+		AssignedDriverPhone:     strings.TrimSpace(params.AssignedDriverPhone),
 		AssignedVehicleID:       strings.TrimSpace(params.AssignedVehicleID),
 		CancellationReason:      strings.TrimSpace(params.CancellationReason),
 		AcknowledgedAt:          params.AcknowledgedAt,
 		Notes:                   append([]JobNote{}, params.Notes...),
 		PODAttachments:          append([]JobPODAttachment{}, params.PODAttachments...),
+		DriverStatusRequests:    append([]DriverStatusRequest{}, params.DriverStatusRequests...),
 		Timeline:                append([]JobTimelineEntry{}, params.Timeline...),
 		CreatedAt:               params.CreatedAt.UTC(),
 		UpdatedAt:               params.UpdatedAt.UTC(),
@@ -222,8 +248,9 @@ func (j Job) SetScheduling(priority JobPriority, timeWindow JobTimeWindow, now t
 	return updated, nil
 }
 
-func (j Job) Assign(driverID, vehicleID string, now time.Time, timelineID string) (Job, error) {
+func (j Job) Assign(driverID, driverPhone, vehicleID string, now time.Time, timelineID string) (Job, error) {
 	driverID = strings.TrimSpace(driverID)
+	driverPhone = strings.TrimSpace(driverPhone)
 	vehicleID = strings.TrimSpace(vehicleID)
 	if driverID == "" {
 		return Job{}, errors.New("driver id is required")
@@ -239,6 +266,11 @@ func (j Job) Assign(driverID, vehicleID string, now time.Time, timelineID string
 	previousDriver := updated.AssignedDriverID
 	previousVehicle := updated.AssignedVehicleID
 	updated.AssignedDriverID = driverID
+	if driverPhone != "" {
+		updated.AssignedDriverPhone = driverPhone
+	} else if previousDriver != driverID {
+		updated.AssignedDriverPhone = ""
+	}
 	updated.AssignedVehicleID = vehicleID
 	updated.Status = StatusAssigned
 	updated.UpdatedAt = now.UTC()
@@ -257,6 +289,7 @@ func (j Job) Assign(driverID, vehicleID string, now time.Time, timelineID string
 		OccurredAt: now.UTC(),
 		Metadata: map[string]string{
 			"driver_id":           driverID,
+			"driver_phone":        updated.AssignedDriverPhone,
 			"vehicle_id":          vehicleID,
 			"previous_driver_id":  previousDriver,
 			"previous_vehicle_id": previousVehicle,
@@ -339,7 +372,7 @@ func (j Job) UpdateStatus(status JobStatus, now time.Time, timelineID string) (J
 	updated.appendTimeline(JobTimelineEntry{
 		ID:         strings.TrimSpace(timelineID),
 		Type:       "job_status_updated",
-		Summary:    "Driver updated job status",
+		Summary:    "Job status updated",
 		OccurredAt: now.UTC(),
 		Metadata: map[string]string{
 			"from_status": string(previousStatus),
@@ -347,6 +380,154 @@ func (j Job) UpdateStatus(status JobStatus, now time.Time, timelineID string) (J
 		},
 	})
 	return updated, nil
+}
+
+func (j Job) ReportDriverStatusRequest(requestedStatus JobStatus, driverID, driverPhone, keyword, rawMessage, sourceMessageID, channel string, now time.Time, requestID, timelineID string) (Job, DriverStatusRequest, error) {
+	if strings.TrimSpace(driverID) == "" {
+		return Job{}, DriverStatusRequest{}, errors.New("driver id is required")
+	}
+	if strings.TrimSpace(keyword) == "" {
+		return Job{}, DriverStatusRequest{}, errors.New("driver keyword is required")
+	}
+	if strings.TrimSpace(channel) == "" {
+		return Job{}, DriverStatusRequest{}, errors.New("channel is required")
+	}
+	if strings.TrimSpace(requestID) == "" {
+		return Job{}, DriverStatusRequest{}, errors.New("driver status request id is required")
+	}
+	if j.Status == StatusCancelled || j.Status == StatusDelivered {
+		return Job{}, DriverStatusRequest{}, errors.New("driver status reports are not allowed for the current job status")
+	}
+	if j.AssignedDriverID == "" {
+		return Job{}, DriverStatusRequest{}, errors.New("job has no assigned driver")
+	}
+	if strings.TrimSpace(driverID) != strings.TrimSpace(j.AssignedDriverID) {
+		return Job{}, DriverStatusRequest{}, errors.New("driver status report must come from the assigned driver")
+	}
+	if strings.TrimSpace(j.AssignedDriverPhone) != "" && strings.TrimSpace(driverPhone) != "" && normalizeDispatchPhone(driverPhone) != normalizeDispatchPhone(j.AssignedDriverPhone) {
+		return Job{}, DriverStatusRequest{}, errors.New("driver status report must come from the assigned driver's stored phone number")
+	}
+	if !isDriverReportedStatus(requestedStatus) {
+		return Job{}, DriverStatusRequest{}, fmt.Errorf("unsupported driver reported status %q", requestedStatus)
+	}
+
+	expectedStatus, ok := nextDriverReportedStatus(j.Status)
+	if !ok {
+		return Job{}, DriverStatusRequest{}, errors.New("driver status reports are not allowed for the current job status")
+	}
+	if requestedStatus != expectedStatus {
+		return Job{}, DriverStatusRequest{}, fmt.Errorf("driver can only report next status %q", expectedStatus)
+	}
+
+	for _, existing := range j.DriverStatusRequests {
+		if existing.State != DriverStatusRequestPending {
+			continue
+		}
+		if strings.TrimSpace(sourceMessageID) != "" && strings.TrimSpace(existing.SourceMessageID) == strings.TrimSpace(sourceMessageID) {
+			return Job{}, DriverStatusRequest{}, errors.New("driver status report for this message has already been recorded")
+		}
+		if existing.RequestedStatus == requestedStatus {
+			return Job{}, DriverStatusRequest{}, errors.New("a pending driver status request already exists for this status")
+		}
+	}
+
+	requestedAt := now.UTC()
+	request := DriverStatusRequest{
+		ID:              strings.TrimSpace(requestID),
+		RequestedStatus: requestedStatus,
+		Keyword:         strings.TrimSpace(keyword),
+		Channel:         strings.TrimSpace(channel),
+		DriverID:        strings.TrimSpace(driverID),
+		DriverPhone:     strings.TrimSpace(driverPhone),
+		RawMessage:      strings.TrimSpace(rawMessage),
+		SourceMessageID: strings.TrimSpace(sourceMessageID),
+		State:           DriverStatusRequestPending,
+		RequestedAt:     requestedAt,
+	}
+
+	updated := j
+	updated.DriverStatusRequests = append(updated.DriverStatusRequests, request)
+	updated.UpdatedAt = requestedAt
+	updated.appendTimeline(JobTimelineEntry{
+		ID:         strings.TrimSpace(timelineID),
+		Type:       "driver_status_reported",
+		Summary:    fmt.Sprintf("Driver reported %s via %s", requestedStatus, strings.TrimSpace(channel)),
+		OccurredAt: requestedAt,
+		Metadata: map[string]string{
+			"request_id":        request.ID,
+			"requested_status":  string(request.RequestedStatus),
+			"driver_id":         request.DriverID,
+			"driver_phone":      request.DriverPhone,
+			"keyword":           request.Keyword,
+			"channel":           request.Channel,
+			"source_message_id": request.SourceMessageID,
+		},
+	})
+
+	return updated, request, nil
+}
+
+func (j Job) ConfirmDriverStatusRequest(requestID, confirmedBy string, now time.Time, confirmationTimelineID, statusTimelineID string) (Job, DriverStatusRequest, error) {
+	if strings.TrimSpace(requestID) == "" {
+		return Job{}, DriverStatusRequest{}, errors.New("driver status request id is required")
+	}
+
+	requestIndex := -1
+	for idx, request := range j.DriverStatusRequests {
+		if strings.TrimSpace(request.ID) == strings.TrimSpace(requestID) {
+			requestIndex = idx
+			break
+		}
+	}
+	if requestIndex == -1 {
+		return Job{}, DriverStatusRequest{}, errors.New("driver status request not found")
+	}
+	if j.DriverStatusRequests[requestIndex].State != DriverStatusRequestPending {
+		return Job{}, DriverStatusRequest{}, errors.New("driver status request is not pending")
+	}
+
+	request := j.DriverStatusRequests[requestIndex]
+	if !isTransitionAllowed(j.Status, request.RequestedStatus) {
+		return Job{}, DriverStatusRequest{}, fmt.Errorf("invalid status transition %q -> %q", j.Status, request.RequestedStatus)
+	}
+
+	confirmedAt := now.UTC()
+	updated := j
+	updated.DriverStatusRequests[requestIndex].State = DriverStatusRequestConfirmed
+	updated.DriverStatusRequests[requestIndex].ConfirmedBy = strings.TrimSpace(confirmedBy)
+	updated.DriverStatusRequests[requestIndex].ConfirmedAt = &confirmedAt
+	request = updated.DriverStatusRequests[requestIndex]
+
+	previousStatus := updated.Status
+	updated.Status = request.RequestedStatus
+	updated.UpdatedAt = confirmedAt
+	updated.appendTimeline(JobTimelineEntry{
+		ID:         strings.TrimSpace(confirmationTimelineID),
+		Type:       "driver_status_confirmed",
+		Summary:    "Dispatcher confirmed driver reported status",
+		OccurredAt: confirmedAt,
+		Metadata: map[string]string{
+			"request_id":       request.ID,
+			"requested_status": string(request.RequestedStatus),
+			"driver_id":        request.DriverID,
+			"confirmed_by":     strings.TrimSpace(confirmedBy),
+		},
+	})
+	updated.appendTimeline(JobTimelineEntry{
+		ID:         strings.TrimSpace(statusTimelineID),
+		Type:       "job_status_updated",
+		Summary:    "Job status updated",
+		OccurredAt: confirmedAt,
+		Metadata: map[string]string{
+			"from_status":  string(previousStatus),
+			"to_status":    string(request.RequestedStatus),
+			"request_id":   request.ID,
+			"source":       "driver_status_confirmation",
+			"confirmed_by": strings.TrimSpace(confirmedBy),
+		},
+	})
+
+	return updated, request, nil
 }
 
 func (j Job) AddPODAttachment(attachment JobPODAttachment, now time.Time, timelineID string) (Job, error) {
@@ -472,6 +653,15 @@ func isKnownStatus(status JobStatus) bool {
 	}
 }
 
+func isDriverReportedStatus(status JobStatus) bool {
+	switch status {
+	case StatusEnRoute, StatusArrived, StatusLoaded, StatusDelivered:
+		return true
+	default:
+		return false
+	}
+}
+
 func isTransitionAllowed(from, to JobStatus) bool {
 	if from == to {
 		return true
@@ -491,4 +681,27 @@ func isTransitionAllowed(from, to JobStatus) bool {
 	default:
 		return false
 	}
+}
+
+func nextDriverReportedStatus(current JobStatus) (JobStatus, bool) {
+	switch current {
+	case StatusAssigned:
+		return StatusEnRoute, true
+	case StatusEnRoute:
+		return StatusArrived, true
+	case StatusArrived:
+		return StatusLoaded, true
+	case StatusLoaded:
+		return StatusDelivered, true
+	default:
+		return "", false
+	}
+}
+
+func normalizeDispatchPhone(value string) string {
+	normalized := strings.TrimSpace(value)
+	normalized = strings.TrimPrefix(normalized, "whatsapp:")
+	replacer := strings.NewReplacer(" ", "", "-", "", "(", "", ")", "")
+	normalized = replacer.Replace(normalized)
+	return strings.TrimPrefix(normalized, "+")
 }

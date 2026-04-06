@@ -76,7 +76,7 @@ func (u *SendMessageUseCase) Execute(ctx context.Context, command SendMessageCom
 	if sendErr != nil {
 		message = message.MarkFailed(u.clock.Now())
 	} else {
-		message = message.MarkSent(status, u.clock.Now())
+		message = message.MarkSent(status, "", u.clock.Now())
 	}
 
 	if err := u.repository.Save(message); err != nil {

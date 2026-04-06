@@ -46,6 +46,16 @@ func (s *sequenceDispatchID) New() string {
 
 type fakeDriverInstructionNotifier struct{}
 
+type fakeJobInstructionSender struct {
+	payloads []application.DispatchJobInstructionPayload
+	err      error
+}
+
+func (f *fakeJobInstructionSender) SendJobInstruction(_ context.Context, payload application.DispatchJobInstructionPayload) error {
+	f.payloads = append(f.payloads, payload)
+	return f.err
+}
+
 func makeDispatchBearerToken(secret, tenantID, role string) string {
 	payload := fmt.Sprintf(`{"sub":"user-1","email":"ops@example.com","role":"%s","tenantId":"%s","exp":%d}`, role, tenantID, time.Now().Add(time.Hour).Unix())
 	encodedPayload := base64.RawURLEncoding.EncodeToString([]byte(payload))
@@ -62,7 +72,7 @@ func (f *fakeDriverInstructionNotifier) NotifyJobInstruction(
 	return nil
 }
 
-func buildDispatchTestHandler() *Handler {
+func buildDispatchTestHandlerWithSender() (*Handler, *fakeJobInstructionSender) {
 	clock := fixedDispatchClock{now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)}
 	ids := &sequenceDispatchID{}
 	repository := infrastructure.NewInMemoryJobRepository()
@@ -81,8 +91,15 @@ func buildDispatchTestHandler() *Handler {
 		"default",
 	)
 	routingUseCase := application.NewRoutingUseCase(repository, clock, "default")
+	sender := &fakeJobInstructionSender{}
+	sendJobInstructionUseCase := application.NewSendJobInstructionUseCase(repository, sender, clock, ids, "default")
 
-	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase, trackinggrpc.NewStubTrackingClient())
+	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase, sendJobInstructionUseCase, trackinggrpc.NewStubTrackingClient()), sender
+}
+
+func buildDispatchTestHandler() *Handler {
+	handler, _ := buildDispatchTestHandlerWithSender()
+	return handler
 }
 
 func dispatchRequest(
@@ -131,27 +148,27 @@ func dispatchRequestWithHeaders(
 }
 
 func TestHandler_UpdateStatusContract(t *testing.T) {
+	clock := fixedDispatchClock{now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)}
+	idGenerator := fixedDispatchID{id: "evt-1"}
+	repository := infrastructure.NewInMemoryJobRepository()
 	useCase := application.NewPublishJobStatusChangedUseCase(
 		&fakeJobStatusPublisher{},
-		fixedDispatchClock{now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)},
-		fixedDispatchID{id: "evt-1"},
+		clock,
+		idGenerator,
 		"default",
 	)
 	handler := NewHandler(
 		useCase,
 		application.NewJobLifecycleUseCase(
-			infrastructure.NewInMemoryJobRepository(),
+			repository,
 			useCase,
 			&fakeDriverInstructionNotifier{},
-			fixedDispatchClock{now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)},
-			fixedDispatchID{id: "evt-1"},
+			clock,
+			idGenerator,
 			"default",
 		),
-		application.NewRoutingUseCase(
-			infrastructure.NewInMemoryJobRepository(),
-			fixedDispatchClock{now: time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)},
-			"default",
-		),
+		application.NewRoutingUseCase(repository, clock, "default"),
+		application.NewSendJobInstructionUseCase(repository, &fakeJobInstructionSender{}, clock, idGenerator, "default"),
 		trackinggrpc.NewStubTrackingClient(),
 	)
 
@@ -252,6 +269,7 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 			"reference":"TM-2847",
 			"vehicleId":"vehicle-100",
 			"driverId":"driver-100",
+			"driverPhone":"+2348010000100",
 			"pickupLocation":"Apapa Port",
 			"deliveryLocation":"Lekki Free Zone",
 			"cargoDescription":"High-value electronics cargo",
@@ -285,6 +303,9 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 	if createdJob.AssignedDriverID != "driver-100" {
 		t.Fatalf("expected assigned driver driver-100, got %q", createdJob.AssignedDriverID)
 	}
+	if createdJob.AssignedDriverPhone != "+2348010000100" {
+		t.Fatalf("expected assigned driver phone to be stored, got %q", createdJob.AssignedDriverPhone)
+	}
 	if len(createdJob.Notes) != 1 || createdJob.Notes[0].Text != "Gate pass already approved" {
 		t.Fatalf("expected initial note to be stored, got %#v", createdJob.Notes)
 	}
@@ -296,7 +317,7 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 		mux,
 		http.MethodPost,
 		"/dispatch/jobs/"+jobID+"/assign",
-		`{"driver_id":"driver-101","vehicle_id":"vehicle-101","reason":"breakdown fallback"}`,
+		`{"driver_id":"driver-101","driver_phone":"+2348010000101","vehicle_id":"vehicle-101","reason":"breakdown fallback"}`,
 	)
 	if reassignRes.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, reassignRes.Code)
@@ -392,6 +413,384 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 	}
 	if len(timelinePayload.Data.Timeline) == 0 {
 		t.Fatalf("expected timeline entries to be present")
+	}
+}
+
+func TestHandler_SendWhatsAppInstructionContract(t *testing.T) {
+	handler, sender := buildDispatchTestHandlerWithSender()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"reference":"TM-2849",
+			"vehicleId":"vehicle-1",
+			"driverId":"driver-100",
+			"driverPhone":"+2348012345678",
+			"pickupLocation":"Oshodi Market",
+			"deliveryLocation":"Ikorodu",
+			"cargoDescription":"Food products",
+			"priority":"normal"
+		}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+
+	var createdJob domain.Job
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+
+	sendRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/send-whatsapp-instruction",
+		`{
+			"driverId":"driver-100",
+			"templateName":"job_assignment_v1",
+			"driverName":"Chukwuma Okafor"
+		}`,
+	)
+	if sendRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, sendRes.Code, sendRes.Body.String())
+	}
+
+	if len(sender.payloads) != 1 {
+		t.Fatalf("expected one send payload, got %d", len(sender.payloads))
+	}
+	if sender.payloads[0].JobReference != "TM-2849" {
+		t.Fatalf("expected reference TM-2849, got %q", sender.payloads[0].JobReference)
+	}
+	if sender.payloads[0].PickupLocation != "Oshodi Market" {
+		t.Fatalf("expected pickup location Oshodi Market, got %q", sender.payloads[0].PickupLocation)
+	}
+	if sender.payloads[0].DeliveryLocation != "Ikorodu" {
+		t.Fatalf("expected delivery location Ikorodu, got %q", sender.payloads[0].DeliveryLocation)
+	}
+	if sender.payloads[0].CargoDescription != "Food products" {
+		t.Fatalf("expected cargo description Food products, got %q", sender.payloads[0].CargoDescription)
+	}
+	if sender.payloads[0].Recipient != "+2348012345678" {
+		t.Fatalf("expected stored assigned driver phone to be used, got %q", sender.payloads[0].Recipient)
+	}
+
+	var payload struct {
+		Status  bool       `json:"status"`
+		Message string     `json:"message"`
+		Data    domain.Job `json:"data"`
+	}
+	if err := json.Unmarshal(sendRes.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode send response: %v", err)
+	}
+	if !payload.Status || payload.Message != "success" {
+		t.Fatalf("unexpected response envelope: %#v", payload)
+	}
+	found := false
+	for _, entry := range payload.Data.Timeline {
+		if entry.Type == "driver_instruction_sent" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected driver_instruction_sent timeline entry")
+	}
+}
+
+func TestHandler_SendJobInstructionRejectsMismatchedDriver(t *testing.T) {
+	handler, _ := buildDispatchTestHandlerWithSender()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"vehicleId":"vehicle-100",
+			"driverId":"driver-100",
+			"driverPhone":"+2348012345678",
+			"pickupLocation":"Oshodi Market",
+			"deliveryLocation":"Ikorodu",
+			"cargoDescription":"Food products",
+			"priority":"normal"
+		}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+
+	var createdJob domain.Job
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+
+	sendRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/send-whatsapp-instruction",
+		`{
+			"driverId":"driver-999",
+			"to":"+2348012345678",
+			"templateName":"job_assignment_v1",
+			"driverName":"Chukwuma Okafor"
+		}`,
+	)
+	if sendRes.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusConflict, sendRes.Code, sendRes.Body.String())
+	}
+}
+
+func TestHandler_SendJobInstructionRejectsJobPastAssigned(t *testing.T) {
+	handler, sender := buildDispatchTestHandlerWithSender()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"vehicleId":"vehicle-100",
+			"driverId":"driver-100",
+			"driverPhone":"+2348012345678",
+			"pickupLocation":"Oshodi Market",
+			"deliveryLocation":"Ikorodu",
+			"cargoDescription":"Food products",
+			"priority":"normal"
+		}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+
+	var createdJob domain.Job
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+
+	statusRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/status",
+		`{"status":"en-route"}`,
+	)
+	if statusRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, statusRes.Code, statusRes.Body.String())
+	}
+
+	sendRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/send-whatsapp-instruction",
+		`{
+			"driverId":"driver-100",
+			"to":"+2348012345678",
+			"templateName":"job_assignment_v1",
+			"driverName":"Chukwuma Okafor"
+		}`,
+	)
+	if sendRes.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusConflict, sendRes.Code, sendRes.Body.String())
+	}
+	if len(sender.payloads) != 0 {
+		t.Fatalf("expected no job instruction send after en-route, got %d payloads", len(sender.payloads))
+	}
+}
+
+func TestHandler_SendJobInstructionRejectsMismatchedStoredPhone(t *testing.T) {
+	handler, _ := buildDispatchTestHandlerWithSender()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"vehicleId":"vehicle-100",
+			"driverId":"driver-100",
+			"driverPhone":"+2348012345678",
+			"pickupLocation":"Oshodi Market",
+			"deliveryLocation":"Ikorodu",
+			"cargoDescription":"Food products",
+			"priority":"normal"
+		}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+
+	var createdJob domain.Job
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+
+	sendRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/send-whatsapp-instruction",
+		`{
+			"driverId":"driver-100",
+			"to":"+2348099999999",
+			"templateName":"job_assignment_v1",
+			"driverName":"Chukwuma Okafor"
+		}`,
+	)
+	if sendRes.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusConflict, sendRes.Code, sendRes.Body.String())
+	}
+}
+
+func TestHandler_DriverStatusRequestWorkflow(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"vehicleId":"vehicle-100",
+			"driverId":"driver-100",
+			"driverPhone":"+2348012345678",
+			"pickupLocation":"Oshodi Market",
+			"deliveryLocation":"Ikorodu",
+			"cargoDescription":"Food products",
+			"priority":"normal"
+		}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+
+	var createdJob domain.Job
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+
+	requestRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/driver-status-requests",
+		`{
+			"driver_id":"driver-100",
+			"driver_phone":"+2348012345678",
+			"keyword":"ENROUTE",
+			"raw_message":"ENROUTE",
+			"source_message_id":"wamid.inbound.1",
+			"channel":"whatsapp"
+		}`,
+	)
+	if requestRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, requestRes.Code, requestRes.Body.String())
+	}
+
+	var createPayload struct {
+		Status  bool   `json:"status"`
+		Message string `json:"message"`
+		Data    struct {
+			Job     domain.Job                 `json:"job"`
+			Request domain.DriverStatusRequest `json:"request"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(requestRes.Body.Bytes(), &createPayload); err != nil {
+		t.Fatalf("decode create request response: %v", err)
+	}
+	if createPayload.Data.Job.Status != domain.StatusAssigned {
+		t.Fatalf("expected job to remain assigned before confirmation, got %q", createPayload.Data.Job.Status)
+	}
+	if createPayload.Data.Request.RequestedStatus != domain.StatusEnRoute {
+		t.Fatalf("expected requested status en-route, got %q", createPayload.Data.Request.RequestedStatus)
+	}
+
+	confirmRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/driver-status-requests/"+createPayload.Data.Request.ID+"/confirm",
+		"",
+	)
+	if confirmRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, confirmRes.Code, confirmRes.Body.String())
+	}
+
+	var confirmPayload struct {
+		Status  bool   `json:"status"`
+		Message string `json:"message"`
+		Data    struct {
+			Job     domain.Job                 `json:"job"`
+			Request domain.DriverStatusRequest `json:"request"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(confirmRes.Body.Bytes(), &confirmPayload); err != nil {
+		t.Fatalf("decode confirm response: %v", err)
+	}
+	if confirmPayload.Data.Job.Status != domain.StatusEnRoute {
+		t.Fatalf("expected job status en-route after confirmation, got %q", confirmPayload.Data.Job.Status)
+	}
+	if confirmPayload.Data.Request.State != domain.DriverStatusRequestConfirmed {
+		t.Fatalf("expected confirmed request state, got %q", confirmPayload.Data.Request.State)
+	}
+}
+
+func TestHandler_UpdateJobStatusRequiresDispatcherRole(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"vehicleId":"vehicle-100",
+			"driverId":"driver-100",
+			"driverPhone":"+2348012345678",
+			"pickupLocation":"Oshodi Market",
+			"deliveryLocation":"Ikorodu",
+			"cargoDescription":"Food products",
+			"priority":"normal"
+		}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+
+	var createdJob domain.Job
+	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+
+	res := dispatchRequestWithHeaders(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/status",
+		`{"status":"en-route"}`,
+		map[string]string{
+			"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "default", "FINANCE_VIEWER"),
+		},
+	)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusForbidden, res.Code, res.Body.String())
 	}
 }
 

@@ -55,6 +55,14 @@ func dispatchOpenAPISpec() map[string]any {
 			"type": "string",
 		},
 	}
+	requestIDParameter := map[string]any{
+		"name":     "requestId",
+		"in":       "path",
+		"required": true,
+		"schema": map[string]any{
+			"type": "string",
+		},
+	}
 	return map[string]any{
 		"openapi": "3.0.3",
 		"info": map[string]any{
@@ -452,6 +460,128 @@ func dispatchOpenAPISpec() map[string]any {
 					},
 				},
 			},
+			"/dispatch/jobs/{jobId}/send-whatsapp-instruction": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Send WhatsApp job instruction to driver",
+					"description": "Allowed only while the job is in assigned status, and only for the driver currently assigned to the job.",
+					"operationId": "sendWhatsAppInstruction",
+					"parameters":  []any{jobIDParameter},
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{
+									"$ref": "#/components/schemas/SendJobInstructionRequest",
+								},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Driver instruction sent",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"$ref": "#/components/schemas/JobResponse",
+									},
+								},
+							},
+						},
+						"400": map[string]any{
+							"description": "Validation error",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/ErrorResponse"},
+								},
+							},
+						},
+						"404": map[string]any{
+							"description": "Job not found",
+						},
+						"502": map[string]any{
+							"description": "Notification delivery failed",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/ErrorResponse"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/dispatch/jobs/{jobId}/driver-status-requests": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Record a driver-reported status request",
+					"description": "Creates a pending driver status request from a recognized WhatsApp keyword reply. This does not update the job status until a dispatcher confirms it.",
+					"operationId": "createDriverStatusRequest",
+					"parameters":  []any{jobIDParameter},
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/CreateDriverStatusRequestRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"201": map[string]any{
+							"description": "Pending driver status request created",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/DriverStatusRequestActionResponse"},
+								},
+							},
+						},
+						"400": map[string]any{
+							"description": "Validation error",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/ErrorResponse"},
+								},
+							},
+						},
+						"404": map[string]any{"description": "Job not found"},
+						"409": map[string]any{
+							"description": "Status request conflicts with the current job state",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/ErrorResponse"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"/dispatch/jobs/{jobId}/driver-status-requests/{requestId}/confirm": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Confirm a driver-reported status request",
+					"description": "Dispatcher-capable roles confirm the pending request, and only then is the actual job status updated.",
+					"operationId": "confirmDriverStatusRequest",
+					"parameters":  []any{jobIDParameter, requestIDParameter},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Driver status request confirmed and job status updated",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/DriverStatusRequestActionResponse"},
+								},
+							},
+						},
+						"404": map[string]any{"description": "Job or driver status request not found"},
+						"409": map[string]any{
+							"description": "Confirmation conflicts with the current job state",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/ErrorResponse"},
+								},
+							},
+						},
+					},
+				},
+			},
 			"/dispatch/jobs/{jobId}/timeline": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"dispatch"},
@@ -566,6 +696,8 @@ func dispatchOpenAPISpec() map[string]any {
 						"vehicle_id":                map[string]any{"type": "string", "description": "Legacy alias for vehicleId."},
 						"driverId":                  map[string]any{"type": "string", "description": "Optional driver selected in the create-dispatch modal."},
 						"driver_id":                 map[string]any{"type": "string", "description": "Legacy alias for driverId."},
+						"driverPhone":               map[string]any{"type": "string", "description": "Optional WhatsApp phone for the selected driver. Persisted when the job is created already assigned."},
+						"driver_phone":              map[string]any{"type": "string", "description": "Legacy alias for driverPhone."},
 						"pickupLocation":            map[string]any{"type": "string"},
 						"pickupAddress":             map[string]any{"type": "string"},
 						"pickupLat":                 map[string]any{"type": "number"},
@@ -683,9 +815,11 @@ func dispatchOpenAPISpec() map[string]any {
 				"AssignJobRequest": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"driver_id":  map[string]any{"type": "string"},
-						"vehicle_id": map[string]any{"type": "string"},
-						"reason":     map[string]any{"type": "string"},
+						"driver_id":    map[string]any{"type": "string"},
+						"driver_phone": map[string]any{"type": "string", "description": "Persisted WhatsApp phone for the assigned driver."},
+						"driverPhone":  map[string]any{"type": "string", "description": "CamelCase alias for driver_phone."},
+						"vehicle_id":   map[string]any{"type": "string"},
+						"reason":       map[string]any{"type": "string"},
 					},
 					"required": []string{"driver_id", "vehicle_id"},
 				},
@@ -720,6 +854,66 @@ func dispatchOpenAPISpec() map[string]any {
 						"uploaded_by": map[string]any{"type": "string"},
 					},
 					"required": []string{"kind", "url"},
+				},
+				"SendJobInstructionHeaderMedia": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"type":     map[string]any{"type": "string", "enum": []string{"image", "video", "document"}},
+						"link":     map[string]any{"type": "string"},
+						"id":       map[string]any{"type": "string"},
+						"filename": map[string]any{"type": "string"},
+					},
+				},
+				"SendJobInstructionButtonParameter": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"index":   map[string]any{"type": "integer"},
+						"type":    map[string]any{"type": "string", "enum": []string{"quick_reply", "url", "copy_code"}},
+						"text":    map[string]any{"type": "string"},
+						"payload": map[string]any{"type": "string"},
+					},
+					"required": []string{"index"},
+				},
+				"SendJobInstructionRequest": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"driver_id":     map[string]any{"type": "string", "description": "Assigned driver id. Must match the job's assigned_driver_id."},
+						"driverId":      map[string]any{"type": "string", "description": "CamelCase alias for driver_id."},
+						"to":            map[string]any{"type": "string", "description": "Optional compatibility field. If provided, it must match the persisted assigned_driver_phone."},
+						"recipient":     map[string]any{"type": "string", "description": "Legacy alias for to."},
+						"template_name": map[string]any{"type": "string", "description": "Approved WhatsApp job_assignment template name."},
+						"templateName":  map[string]any{"type": "string", "description": "CamelCase alias for template_name."},
+						"language":      map[string]any{"type": "string", "description": "Optional template language override. Defaults to the template language."},
+						"driver_name":   map[string]any{"type": "string", "description": "Driver display name inserted into the template variable set."},
+						"driverName":    map[string]any{"type": "string", "description": "CamelCase alias for driver_name."},
+						"header_media":  map[string]any{"$ref": "#/components/schemas/SendJobInstructionHeaderMedia"},
+						"headerMedia":   map[string]any{"$ref": "#/components/schemas/SendJobInstructionHeaderMedia"},
+						"button_parameters": map[string]any{
+							"type":  "array",
+							"items": map[string]any{"$ref": "#/components/schemas/SendJobInstructionButtonParameter"},
+						},
+						"buttonParameters": map[string]any{
+							"type":  "array",
+							"items": map[string]any{"$ref": "#/components/schemas/SendJobInstructionButtonParameter"},
+						},
+					},
+					"required": []string{"driver_id", "template_name", "driver_name"},
+				},
+				"CreateDriverStatusRequestRequest": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"driver_id":         map[string]any{"type": "string", "description": "Driver reporting the status. Must match the job's assigned_driver_id."},
+						"driverId":          map[string]any{"type": "string", "description": "CamelCase alias for driver_id."},
+						"driver_phone":      map[string]any{"type": "string", "description": "Driver WhatsApp number for compatibility checks against the stored assigned_driver_phone."},
+						"driverPhone":       map[string]any{"type": "string", "description": "CamelCase alias for driver_phone."},
+						"keyword":           map[string]any{"type": "string", "description": "Recognized driver keyword. Supported values: ENROUTE, ARRIVED, LOADED, DELIVERED."},
+						"raw_message":       map[string]any{"type": "string"},
+						"rawMessage":        map[string]any{"type": "string", "description": "CamelCase alias for raw_message."},
+						"source_message_id": map[string]any{"type": "string", "description": "Inbound WhatsApp provider message id that triggered the request."},
+						"sourceMessageID":   map[string]any{"type": "string", "description": "CamelCase alias for source_message_id."},
+						"channel":           map[string]any{"type": "string", "description": "Origin channel. Defaults to whatsapp."},
+					},
+					"required": []string{"driver_id", "keyword"},
 				},
 				"AddJobNoteRequest": map[string]any{
 					"type": "object",
@@ -781,6 +975,23 @@ func dispatchOpenAPISpec() map[string]any {
 						"uploaded_at": map[string]any{"type": "string", "format": "date-time"},
 					},
 				},
+				"DriverStatusRequest": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":                map[string]any{"type": "string"},
+						"requested_status":  map[string]any{"type": "string", "enum": []string{"en-route", "arrived", "loaded", "delivered"}},
+						"keyword":           map[string]any{"type": "string"},
+						"channel":           map[string]any{"type": "string"},
+						"driver_id":         map[string]any{"type": "string"},
+						"driver_phone":      map[string]any{"type": "string"},
+						"raw_message":       map[string]any{"type": "string"},
+						"source_message_id": map[string]any{"type": "string"},
+						"state":             map[string]any{"type": "string", "enum": []string{"pending", "confirmed"}},
+						"requested_at":      map[string]any{"type": "string", "format": "date-time"},
+						"confirmed_at":      map[string]any{"type": "string", "format": "date-time"},
+						"confirmed_by":      map[string]any{"type": "string"},
+					},
+				},
 				"Job": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -800,6 +1011,7 @@ func dispatchOpenAPISpec() map[string]any {
 						"time_window":               map[string]any{"$ref": "#/components/schemas/JobTimeWindow"},
 						"status":                    map[string]any{"type": "string"},
 						"assigned_driver_id":        map[string]any{"type": "string"},
+						"assigned_driver_phone":     map[string]any{"type": "string"},
 						"assigned_vehicle_id":       map[string]any{"type": "string"},
 						"cancellation_reason":       map[string]any{"type": "string"},
 						"acknowledged_at":           map[string]any{"type": "string", "format": "date-time"},
@@ -816,6 +1028,10 @@ func dispatchOpenAPISpec() map[string]any {
 						"pod_attachments": map[string]any{
 							"type":  "array",
 							"items": map[string]any{"$ref": "#/components/schemas/JobPODAttachment"},
+						},
+						"driver_status_requests": map[string]any{
+							"type":  "array",
+							"items": map[string]any{"$ref": "#/components/schemas/DriverStatusRequest"},
 						},
 					},
 				},
@@ -854,6 +1070,21 @@ func dispatchOpenAPISpec() map[string]any {
 							"type":  "array",
 							"items": map[string]any{"$ref": "#/components/schemas/Job"},
 						},
+					},
+				},
+				"DriverStatusRequestActionPayload": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"job":     map[string]any{"$ref": "#/components/schemas/Job"},
+						"request": map[string]any{"$ref": "#/components/schemas/DriverStatusRequest"},
+					},
+				},
+				"DriverStatusRequestActionResponse": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"status":  map[string]any{"type": "boolean"},
+						"message": map[string]any{"type": "string"},
+						"data":    map[string]any{"$ref": "#/components/schemas/DriverStatusRequestActionPayload"},
 					},
 				},
 				"ErrorResponse": map[string]any{

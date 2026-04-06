@@ -44,7 +44,7 @@ func (u *RetryMessageUseCase) Execute(ctx context.Context, id string) (domain.Ou
 	if sendErr != nil {
 		message = message.MarkFailed(u.clock.Now())
 	} else {
-		message = message.MarkRetry(status, u.clock.Now())
+		message = message.MarkRetry(status, "", u.clock.Now())
 	}
 
 	if err := u.repository.Save(message); err != nil {

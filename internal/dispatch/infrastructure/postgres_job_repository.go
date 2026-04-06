@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS dispatch_jobs (
     cargo_type TEXT NOT NULL DEFAULT '',
     cargo_description TEXT NOT NULL DEFAULT '',
     assigned_driver_id TEXT NOT NULL DEFAULT '',
+    assigned_driver_phone TEXT NOT NULL DEFAULT '',
     assigned_vehicle_id TEXT NOT NULL DEFAULT '',
     deadline TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ NOT NULL,
@@ -59,6 +60,12 @@ func (r *PostgresJobRepository) EnsureSchema(ctx context.Context) error {
 	// so the dispatch service gains relational durability without changing its domain model.
 	if _, err := r.db.ExecContext(ctx, dispatchJobSchema); err != nil {
 		return fmt.Errorf("ensure dispatch job schema: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+ALTER TABLE dispatch_jobs
+    ADD COLUMN IF NOT EXISTS assigned_driver_phone TEXT NOT NULL DEFAULT ''
+`); err != nil {
+		return fmt.Errorf("ensure assigned driver phone column: %w", err)
 	}
 
 	// Canonicalize older persisted priority values so the database, API responses,
@@ -122,13 +129,14 @@ INSERT INTO dispatch_jobs (
     cargo_type,
     cargo_description,
     assigned_driver_id,
+    assigned_driver_phone,
     assigned_vehicle_id,
     deadline,
     created_at,
     updated_at,
     payload
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
 )
 ON CONFLICT (tenant_id, id) DO UPDATE SET
     reference = EXCLUDED.reference,
@@ -139,6 +147,7 @@ ON CONFLICT (tenant_id, id) DO UPDATE SET
     cargo_type = EXCLUDED.cargo_type,
     cargo_description = EXCLUDED.cargo_description,
     assigned_driver_id = EXCLUDED.assigned_driver_id,
+    assigned_driver_phone = EXCLUDED.assigned_driver_phone,
     assigned_vehicle_id = EXCLUDED.assigned_vehicle_id,
     deadline = EXCLUDED.deadline,
     updated_at = EXCLUDED.updated_at,
@@ -154,6 +163,7 @@ ON CONFLICT (tenant_id, id) DO UPDATE SET
 		strings.TrimSpace(job.CargoType),
 		strings.TrimSpace(job.CargoDescription),
 		strings.TrimSpace(job.AssignedDriverID),
+		strings.TrimSpace(job.AssignedDriverPhone),
 		strings.TrimSpace(job.AssignedVehicleID),
 		deadline,
 		job.CreatedAt.UTC(),
@@ -234,6 +244,9 @@ func decodeStoredJob(payload []byte) (domain.Job, error) {
 	}
 	if job.PODAttachments == nil {
 		job.PODAttachments = []domain.JobPODAttachment{}
+	}
+	if job.DriverStatusRequests == nil {
+		job.DriverStatusRequests = []domain.DriverStatusRequest{}
 	}
 	if job.Timeline == nil {
 		job.Timeline = []domain.JobTimelineEntry{}
