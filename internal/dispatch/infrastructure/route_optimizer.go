@@ -185,7 +185,7 @@ func buildRoutePlanFromSolution(
 	if valhallaClient == nil {
 		return application.RoutePlan{}, errors.New("valhalla client is not configured")
 	}
-	routeResp, err := valhallaClient.OptimizeRoute(ctx, orderedNodes)
+	routeResp, err := valhallaClient.GetTurnByTurnDirections(ctx, orderedNodes)
 	if err != nil {
 		return application.RoutePlan{}, err
 	}
@@ -222,6 +222,7 @@ func buildRoutePlanFromSolution(
 			ArrivalAt:              arrival,
 			DepartureAt:            arrival,
 			ETASeconds:             cumulativeSeconds,
+			Maneuvers:              mapValhallaManeuvers(leg.Maneuvers),
 		})
 	}
 
@@ -247,6 +248,34 @@ func buildRoutePlanFromSolution(
 		TotalDurationSeconds: totalDuration,
 		OrderedSteps:         steps,
 	}, nil
+}
+
+func mapValhallaManeuvers(maneuvers []ValhallaRouteManeuver) []application.RouteManeuver {
+	if len(maneuvers) == 0 {
+		return nil
+	}
+
+	result := make([]application.RouteManeuver, 0, len(maneuvers))
+	for _, maneuver := range maneuvers {
+		result = append(result, application.RouteManeuver{
+			Type:                             maneuver.Type,
+			Instruction:                      strings.TrimSpace(maneuver.Instruction),
+			VerbalTransitionAlertInstruction: strings.TrimSpace(maneuver.VerbalTransitionAlertInstruction),
+			VerbalPreTransitionInstruction:   strings.TrimSpace(maneuver.VerbalPreTransitionInstruction),
+			VerbalPostTransitionInstruction:  strings.TrimSpace(maneuver.VerbalPostTransitionInstruction),
+			StreetNames:                      maneuver.StreetNames,
+			Time:                             int64(math.Round(maneuver.Time)),
+			Length:                           roundDistance(maneuver.Length),
+			BeginShapeIndex:                  maneuver.BeginShapeIndex,
+			EndShapeIndex:                    maneuver.EndShapeIndex,
+			TravelMode:                       strings.TrimSpace(maneuver.TravelMode),
+			TravelType:                       strings.TrimSpace(maneuver.TravelType),
+			BearingBefore:                    maneuver.BearingBefore,
+			BearingAfter:                     maneuver.BearingAfter,
+		})
+	}
+
+	return result
 }
 
 func stopToLocation(label string, stop domain.JobStop) (application.RouteLocation, error) {

@@ -35,18 +35,36 @@ type DriverShift struct {
 }
 
 type RouteStep struct {
-	Sequence               int       `json:"sequence"`
-	JobID                  string    `json:"job_id"`
-	StopType               string    `json:"stop_type"`
-	Address                string    `json:"address"`
-	Label                  string    `json:"label,omitempty"`
-	Latitude               float64   `json:"latitude"`
-	Longitude              float64   `json:"longitude"`
-	DistanceFromPreviousKm float64   `json:"distance_from_previous_km"`
-	TravelSecondsFromPrev  int64     `json:"travel_seconds_from_prev"`
-	ArrivalAt              time.Time `json:"arrival_at"`
-	DepartureAt            time.Time `json:"departure_at"`
-	ETASeconds             int64     `json:"eta_seconds"`
+	Sequence               int             `json:"sequence"`
+	JobID                  string          `json:"job_id"`
+	StopType               string          `json:"stop_type"`
+	Address                string          `json:"address"`
+	Label                  string          `json:"label,omitempty"`
+	Latitude               float64         `json:"latitude"`
+	Longitude              float64         `json:"longitude"`
+	DistanceFromPreviousKm float64         `json:"distance_from_previous_km"`
+	TravelSecondsFromPrev  int64           `json:"travel_seconds_from_prev"`
+	ArrivalAt              time.Time       `json:"arrival_at"`
+	DepartureAt            time.Time       `json:"departure_at"`
+	ETASeconds             int64           `json:"eta_seconds"`
+	Maneuvers              []RouteManeuver `json:"maneuvers,omitempty"`
+}
+
+type RouteManeuver struct {
+	Type                             int      `json:"type"`
+	Instruction                      string   `json:"instruction,omitempty"`
+	VerbalTransitionAlertInstruction string   `json:"verbal_transition_alert_instruction,omitempty"`
+	VerbalPreTransitionInstruction   string   `json:"verbal_pre_transition_instruction,omitempty"`
+	VerbalPostTransitionInstruction  string   `json:"verbal_post_transition_instruction,omitempty"`
+	StreetNames                      []string `json:"street_names,omitempty"`
+	Time                             int64    `json:"time"`
+	Length                           float64  `json:"length"`
+	BeginShapeIndex                  int      `json:"begin_shape_index,omitempty"`
+	EndShapeIndex                    int      `json:"end_shape_index,omitempty"`
+	TravelMode                       string   `json:"travel_mode,omitempty"`
+	TravelType                       string   `json:"travel_type,omitempty"`
+	BearingBefore                    int      `json:"bearing_before,omitempty"`
+	BearingAfter                     int      `json:"bearing_after,omitempty"`
 }
 
 type RoutePlan struct {
