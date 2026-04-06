@@ -186,6 +186,15 @@ func TestBuildRoutePlanFromSolution_IncludesTurnByTurnManeuvers(t *testing.T) {
 	if got := plan.OrderedSteps[0].AlternateShapes[0]; got != "alt-shape-1" {
 		t.Fatalf("unexpected first alternate shape %q", got)
 	}
+	if got := len(plan.AlternateRoutes); got != 2 {
+		t.Fatalf("expected 2 alternate routes, got %d", got)
+	}
+	if got := plan.AlternateRoutes[0].OrderedSteps[0].Shape; got != "alt-shape-1" {
+		t.Fatalf("unexpected alternate route step shape %q", got)
+	}
+	if got := plan.AlternateRoutes[1].OrderedSteps[0].Shape; got != "alt-shape-2" {
+		t.Fatalf("unexpected second alternate route step shape %q", got)
+	}
 	if got := plan.OrderedSteps[0].Maneuvers[1].Instruction; got != "Turn right onto Ikeja Road." {
 		t.Fatalf("unexpected first step maneuver instruction %q", got)
 	}

@@ -70,11 +70,21 @@ type RouteManeuver struct {
 }
 
 type RoutePlan struct {
-	Feasible             bool        `json:"feasible"`
-	InfeasibilityReasons []string    `json:"infeasibility_reasons,omitempty"`
-	VehicleID            string      `json:"vehicle_id,omitempty"`
-	VehicleType          string      `json:"vehicle_type,omitempty"`
-	DepartureTime        time.Time   `json:"departure_time"`
+	Feasible             bool               `json:"feasible"`
+	InfeasibilityReasons []string           `json:"infeasibility_reasons,omitempty"`
+	VehicleID            string             `json:"vehicle_id,omitempty"`
+	VehicleType          string             `json:"vehicle_type,omitempty"`
+	DepartureTime        time.Time          `json:"departure_time"`
+	CompletionTime       time.Time          `json:"completion_time"`
+	ETASeconds           int64              `json:"eta_seconds"`
+	TotalDistanceKm      float64            `json:"total_distance_km"`
+	TotalDurationSeconds int64              `json:"total_duration_seconds"`
+	OrderedSteps         []RouteStep        `json:"ordered_steps"`
+	AlternateRoutes      []RouteAlternative `json:"alternate_routes,omitempty"`
+}
+
+type RouteAlternative struct {
+	RouteIndex           int         `json:"route_index"`
 	CompletionTime       time.Time   `json:"completion_time"`
 	ETASeconds           int64       `json:"eta_seconds"`
 	TotalDistanceKm      float64     `json:"total_distance_km"`

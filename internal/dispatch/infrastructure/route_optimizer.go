@@ -199,6 +199,7 @@ func buildRoutePlanFromSolution(
 	}
 
 	steps := make([]application.RouteStep, 0, len(resp.GetOrderedStops()))
+	legAlternates := make([][]ValhallaRouteLeg, 0, len(resp.GetOrderedStops()))
 	totalDistance := 0.0
 	var cumulativeSeconds int64
 	for i := range resp.GetOrderedStops() {
@@ -209,9 +210,14 @@ func buildRoutePlanFromSolution(
 		totalDistance += distance
 		cumulativeSeconds += travelSeconds
 		arrival := departure.Add(time.Duration(cumulativeSeconds) * time.Second)
-		alternateShapes, err := valhallaClient.GetLegAlternates(ctx, orderedNodes[i], node, defaultLegAlternates)
+		alternateLegs, err := valhallaClient.GetLegAlternates(ctx, orderedNodes[i], node, defaultLegAlternates)
 		if err != nil {
 			return application.RoutePlan{}, err
+		}
+		legAlternates = append(legAlternates, alternateLegs)
+		alternateShapes := make([]string, 0, len(alternateLegs))
+		for _, alternateLeg := range alternateLegs {
+			alternateShapes = append(alternateShapes, strings.TrimSpace(alternateLeg.Shape))
 		}
 
 		steps = append(steps, application.RouteStep{
@@ -243,6 +249,8 @@ func buildRoutePlanFromSolution(
 		reasons = append(reasons, "route exceeds driver shift end")
 	}
 
+	alternateRoutes := buildAlternateRoutes(departure, steps, legAlternates)
+
 	return application.RoutePlan{
 		Feasible:             feasible,
 		InfeasibilityReasons: uniqueStrings(reasons),
@@ -254,7 +262,72 @@ func buildRoutePlanFromSolution(
 		TotalDistanceKm:      roundDistance(totalDistance),
 		TotalDurationSeconds: totalDuration,
 		OrderedSteps:         steps,
+		AlternateRoutes:      alternateRoutes,
 	}, nil
+}
+
+func buildAlternateRoutes(
+	departure time.Time,
+	primarySteps []application.RouteStep,
+	legAlternates [][]ValhallaRouteLeg,
+) []application.RouteAlternative {
+	maxAlternates := 0
+	for _, alternates := range legAlternates {
+		if len(alternates) > maxAlternates {
+			maxAlternates = len(alternates)
+		}
+	}
+	if maxAlternates == 0 {
+		return nil
+	}
+
+	routes := make([]application.RouteAlternative, 0, maxAlternates)
+	for alternateIndex := 0; alternateIndex < maxAlternates; alternateIndex++ {
+		steps := make([]application.RouteStep, 0, len(primarySteps))
+		totalDistance := 0.0
+		var cumulativeSeconds int64
+
+		for i, primaryStep := range primarySteps {
+			leg := ValhallaRouteLeg{
+				Summary: ValhallaRouteSummary{
+					Length: primaryStep.DistanceFromPreviousKm,
+					Time:   float64(primaryStep.TravelSecondsFromPrev),
+				},
+				Shape:     primaryStep.Shape,
+				Maneuvers: makeValhallaManeuvers(primaryStep.Maneuvers),
+			}
+			if alternateIndex < len(legAlternates[i]) {
+				leg = legAlternates[i][alternateIndex]
+			}
+
+			travelSeconds := int64(math.Round(leg.Summary.Time))
+			distance := roundDistance(leg.Summary.Length)
+			totalDistance += distance
+			cumulativeSeconds += travelSeconds
+			arrival := departure.Add(time.Duration(cumulativeSeconds) * time.Second)
+
+			step := primaryStep
+			step.DistanceFromPreviousKm = distance
+			step.TravelSecondsFromPrev = travelSeconds
+			step.ArrivalAt = arrival
+			step.DepartureAt = arrival
+			step.ETASeconds = cumulativeSeconds
+			step.Shape = strings.TrimSpace(leg.Shape)
+			step.Maneuvers = mapValhallaManeuvers(leg.Maneuvers)
+			steps = append(steps, step)
+		}
+
+		routes = append(routes, application.RouteAlternative{
+			RouteIndex:           alternateIndex + 1,
+			CompletionTime:       departure.Add(time.Duration(cumulativeSeconds) * time.Second),
+			ETASeconds:           cumulativeSeconds,
+			TotalDistanceKm:      roundDistance(totalDistance),
+			TotalDurationSeconds: cumulativeSeconds,
+			OrderedSteps:         steps,
+		})
+	}
+
+	return routes
 }
 
 func mapValhallaManeuvers(maneuvers []ValhallaRouteManeuver) []application.RouteManeuver {
@@ -277,6 +350,34 @@ func mapValhallaManeuvers(maneuvers []ValhallaRouteManeuver) []application.Route
 			EndShapeIndex:                    maneuver.EndShapeIndex,
 			TravelMode:                       strings.TrimSpace(maneuver.TravelMode),
 			TravelType:                       strings.TrimSpace(maneuver.TravelType),
+			BearingBefore:                    maneuver.BearingBefore,
+			BearingAfter:                     maneuver.BearingAfter,
+		})
+	}
+
+	return result
+}
+
+func makeValhallaManeuvers(maneuvers []application.RouteManeuver) []ValhallaRouteManeuver {
+	if len(maneuvers) == 0 {
+		return nil
+	}
+
+	result := make([]ValhallaRouteManeuver, 0, len(maneuvers))
+	for _, maneuver := range maneuvers {
+		result = append(result, ValhallaRouteManeuver{
+			Type:                             maneuver.Type,
+			Instruction:                      maneuver.Instruction,
+			VerbalTransitionAlertInstruction: maneuver.VerbalTransitionAlertInstruction,
+			VerbalPreTransitionInstruction:   maneuver.VerbalPreTransitionInstruction,
+			VerbalPostTransitionInstruction:  maneuver.VerbalPostTransitionInstruction,
+			StreetNames:                      maneuver.StreetNames,
+			Time:                             float64(maneuver.Time),
+			Length:                           maneuver.Length,
+			BeginShapeIndex:                  maneuver.BeginShapeIndex,
+			EndShapeIndex:                    maneuver.EndShapeIndex,
+			TravelMode:                       maneuver.TravelMode,
+			TravelType:                       maneuver.TravelType,
 			BearingBefore:                    maneuver.BearingBefore,
 			BearingAfter:                     maneuver.BearingAfter,
 		})

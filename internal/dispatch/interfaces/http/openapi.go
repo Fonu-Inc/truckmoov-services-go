@@ -758,6 +758,18 @@ func dispatchOpenAPISpec() map[string]any {
 						"total_distance_km":      map[string]any{"type": "number"},
 						"total_duration_seconds": map[string]any{"type": "integer"},
 						"ordered_steps":          map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/RouteStep"}},
+						"alternate_routes":       map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/RouteAlternative"}},
+					},
+				},
+				"RouteAlternative": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"route_index":            map[string]any{"type": "integer"},
+						"completion_time":        map[string]any{"type": "string", "format": "date-time"},
+						"eta_seconds":            map[string]any{"type": "integer"},
+						"total_distance_km":      map[string]any{"type": "number"},
+						"total_duration_seconds": map[string]any{"type": "integer"},
+						"ordered_steps":          map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/RouteStep"}},
 					},
 				},
 				"UpdateJobSchedulingRequest": map[string]any{

@@ -277,7 +277,7 @@ func (v *ValhallaClient) GetTurnByTurnDirections(ctx context.Context, payload []
 	return &output, nil
 }
 
-func (v *ValhallaClient) GetLegAlternates(ctx context.Context, from, to SolverNodeRef, alternates int) ([]string, error) {
+func (v *ValhallaClient) GetLegAlternates(ctx context.Context, from, to SolverNodeRef, alternates int) ([]ValhallaRouteLeg, error) {
 	if alternates <= 0 {
 		return nil, nil
 	}
@@ -319,21 +319,21 @@ func (v *ValhallaClient) GetLegAlternates(ctx context.Context, from, to SolverNo
 		return nil, fmt.Errorf("valhalla alternate route error: %s", output.Error)
 	}
 
-	shapes := make([]string, 0, len(output.Alternates))
+	legs := make([]ValhallaRouteLeg, 0, len(output.Alternates))
 	for _, alternate := range output.Alternates {
 		trip := alternate.routeTrip()
 		if len(trip.Legs) == 0 {
 			continue
 		}
-		shape := strings.TrimSpace(trip.Legs[0].Shape)
-		if shape == "" {
+		leg := trip.Legs[0]
+		if strings.TrimSpace(leg.Shape) == "" {
 			continue
 		}
-		shapes = append(shapes, shape)
+		legs = append(legs, leg)
 	}
 
-	if len(shapes) == 0 {
+	if len(legs) == 0 {
 		return nil, nil
 	}
-	return shapes, nil
+	return legs, nil
 }
