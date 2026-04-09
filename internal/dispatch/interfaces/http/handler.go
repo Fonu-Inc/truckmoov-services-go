@@ -474,19 +474,6 @@ func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, jobID string) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
-	h.publishActivity(r, activitylog.PublishCommand{
-		TenantID:   tenantID,
-		Service:    "dispatch",
-		Action:     "job.whatsapp_instruction.sent",
-		EntityType: "job",
-		EntityID:   job.ID,
-		Summary:    "WhatsApp job instruction sent",
-		Metadata: map[string]any{
-			"driver_id":     firstNonEmptyDispatchValue(req.DriverID, req.DriverIDAlt),
-			"template_name": firstNonEmptyDispatchValue(req.TemplateName, req.TemplateNameAlt),
-			"status":        job.Status,
-		},
-	})
 }
 
 func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -889,6 +876,19 @@ func (h *Handler) sendWhatsAppInstruction(w http.ResponseWriter, r *http.Request
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.whatsapp_instruction.sent",
+		EntityType: "job",
+		EntityID:   job.ID,
+		Summary:    "WhatsApp job instruction sent",
+		Metadata: map[string]any{
+			"driver_id":     firstNonEmptyDispatchValue(req.DriverID, req.DriverIDAlt),
+			"template_name": firstNonEmptyDispatchValue(req.TemplateName, req.TemplateNameAlt),
+			"status":        job.Status,
+		},
+	})
 }
 
 func (h *Handler) addPODAttachment(w http.ResponseWriter, r *http.Request, jobID string) {
