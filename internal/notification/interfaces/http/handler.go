@@ -1,6 +1,7 @@
 package notificationhttp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,8 +11,13 @@ import (
 
 	"github.com/truckmoov/services-go/internal/notification/application"
 	"github.com/truckmoov/services-go/internal/notification/domain"
+	"github.com/truckmoov/services-go/pkg/activitylog"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
+
+type activityPublisher interface {
+	Publish(ctx context.Context, command activitylog.PublishCommand) error
+}
 
 type sendRequest struct {
 	TenantID  string `json:"tenant_id"`
@@ -146,6 +152,9 @@ type whatsAppConversationSendPayload struct {
 type Handler struct {
 	sendMessageUseCase                      *application.SendMessageUseCase
 	retryMessageUseCase                     *application.RetryMessageUseCase
+	createWhatsAppAccountUseCase            *application.ConnectWhatsAppAccountUseCase
+	getWhatsAppAccountUseCase               *application.GetWhatsAppAccountUseCase
+	disconnectWhatsAppAccountUseCase        *application.DisconnectWhatsAppAccountUseCase
 	createWhatsAppTemplateUseCase           *application.CreateWhatsAppTemplateUseCase
 	listWhatsAppTemplatesUseCase            *application.ListWhatsAppTemplatesUseCase
 	sendOtherTemplateUseCase                *application.SendOtherTemplateUseCase
@@ -156,6 +165,7 @@ type Handler struct {
 	getWhatsAppConversationUseCase          *application.GetWhatsAppConversationUseCase
 	listWhatsAppConversationMessagesUseCase *application.ListWhatsAppConversationMessagesUseCase
 	handleWhatsAppWebhookUseCase            *application.HandleWhatsAppWebhookUseCase
+	activityPublisher                       activityPublisher
 	clock                                   application.Clock
 	whatsAppWebhookVerifyToken              string
 }
@@ -163,6 +173,9 @@ type Handler struct {
 func NewHandler(
 	sendMessageUseCase *application.SendMessageUseCase,
 	retryMessageUseCase *application.RetryMessageUseCase,
+	connectWhatsAppAccountUseCase *application.ConnectWhatsAppAccountUseCase,
+	getWhatsAppAccountUseCase *application.GetWhatsAppAccountUseCase,
+	disconnectWhatsAppAccountUseCase *application.DisconnectWhatsAppAccountUseCase,
 	createWhatsAppTemplateUseCase *application.CreateWhatsAppTemplateUseCase,
 	listWhatsAppTemplatesUseCase *application.ListWhatsAppTemplatesUseCase,
 	sendOtherTemplateUseCase *application.SendOtherTemplateUseCase,
@@ -173,12 +186,16 @@ func NewHandler(
 	getWhatsAppConversationUseCase *application.GetWhatsAppConversationUseCase,
 	listWhatsAppConversationMessagesUseCase *application.ListWhatsAppConversationMessagesUseCase,
 	handleWhatsAppWebhookUseCase *application.HandleWhatsAppWebhookUseCase,
+	activityPublisher activityPublisher,
 	clock application.Clock,
 	whatsAppWebhookVerifyToken string,
 ) *Handler {
 	return &Handler{
 		sendMessageUseCase:                      sendMessageUseCase,
 		retryMessageUseCase:                     retryMessageUseCase,
+		createWhatsAppAccountUseCase:            connectWhatsAppAccountUseCase,
+		getWhatsAppAccountUseCase:               getWhatsAppAccountUseCase,
+		disconnectWhatsAppAccountUseCase:        disconnectWhatsAppAccountUseCase,
 		createWhatsAppTemplateUseCase:           createWhatsAppTemplateUseCase,
 		listWhatsAppTemplatesUseCase:            listWhatsAppTemplatesUseCase,
 		sendOtherTemplateUseCase:                sendOtherTemplateUseCase,
@@ -189,6 +206,7 @@ func NewHandler(
 		getWhatsAppConversationUseCase:          getWhatsAppConversationUseCase,
 		listWhatsAppConversationMessagesUseCase: listWhatsAppConversationMessagesUseCase,
 		handleWhatsAppWebhookUseCase:            handleWhatsAppWebhookUseCase,
+		activityPublisher:                       activityPublisher,
 		clock:                                   clock,
 		whatsAppWebhookVerifyToken:              strings.TrimSpace(whatsAppWebhookVerifyToken),
 	}
@@ -202,6 +220,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/docs/notification/openapi.json", h.docsOpenAPI)
 	mux.HandleFunc("/notify/messages/send", h.sendMessage)
 	mux.HandleFunc("/notify/messages/retry/", h.retryMessage)
+	mux.HandleFunc("/notify/whatsapp/settings", h.whatsAppSettings)
+	mux.HandleFunc("/notify/whatsapp/settings/", h.whatsAppSettingsByPath)
 	mux.HandleFunc("/notify/whatsapp/create-template", h.createWhatsAppTemplate)
 	mux.HandleFunc("/notify/whatsapp/get-all-templates", h.getAllWhatsAppTemplates)
 	mux.HandleFunc("/notify/whatsapp/send-other-template", h.sendOtherTemplate)
@@ -242,6 +262,21 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 		responseCode = http.StatusBadGateway
 	}
 	respondJSON(w, responseCode, message)
+	if err == nil {
+		h.publishActivity(r, activitylog.PublishCommand{
+			TenantID:   req.TenantID,
+			Service:    "notification",
+			Action:     "message.sent",
+			EntityType: "message",
+			EntityID:   message.ID,
+			Summary:    "Notification queued for delivery",
+			Metadata: map[string]any{
+				"channel":   req.Channel,
+				"recipient": req.Recipient,
+				"status":    message.Status,
+			},
+		})
+	}
 }
 
 func (h *Handler) retryMessage(w http.ResponseWriter, r *http.Request) {
@@ -267,6 +302,19 @@ func (h *Handler) retryMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, message)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   message.TenantID,
+		Service:    "notification",
+		Action:     "message.retried",
+		EntityType: "message",
+		EntityID:   message.ID,
+		Summary:    "Notification retry requested",
+		Metadata: map[string]any{
+			"channel":   message.Channel,
+			"recipient": message.Recipient,
+			"status":    message.Status,
+		},
+	})
 }
 
 func (h *Handler) createWhatsAppTemplate(w http.ResponseWriter, r *http.Request) {
@@ -307,6 +355,20 @@ func (h *Handler) createWhatsAppTemplate(w http.ResponseWriter, r *http.Request)
 	}
 
 	respondEnvelope(w, http.StatusOK, "success", template)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "notification",
+		Action:     "whatsapp.template.created",
+		EntityType: "whatsapp_template",
+		EntityID:   firstNonEmpty(template.ID, req.Name),
+		Summary:    "WhatsApp template submitted to Meta",
+		Metadata: map[string]any{
+			"name":          req.Name,
+			"template_type": firstNonEmpty(req.TemplateType, req.TemplateTypeAlt),
+			"status":        template.Status,
+			"category":      template.Category,
+		},
+	})
 }
 
 func (h *Handler) getAllWhatsAppTemplates(w http.ResponseWriter, r *http.Request) {
@@ -383,6 +445,19 @@ func (h *Handler) sendOtherTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondEnvelope(w, http.StatusOK, "success", message)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "notification",
+		Action:     "whatsapp.template.sent",
+		EntityType: "message",
+		EntityID:   message.ID,
+		Summary:    "WhatsApp template sent to driver",
+		Metadata: map[string]any{
+			"template_name": firstNonEmpty(req.TemplateName, req.TemplateNameAlt),
+			"recipient":     firstNonEmpty(req.To, req.Recipient),
+			"status":        message.Status,
+		},
+	})
 }
 
 func (h *Handler) sendJobInstruction(w http.ResponseWriter, r *http.Request) {
@@ -450,6 +525,21 @@ func (h *Handler) sendJobInstruction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondEnvelope(w, http.StatusOK, "success", message)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "notification",
+		Action:     "whatsapp.job_instruction.sent",
+		EntityType: "message",
+		EntityID:   message.ID,
+		Summary:    "WhatsApp job instruction sent to driver",
+		Metadata: map[string]any{
+			"job_id":        firstNonEmpty(req.JobID, req.JobIDAlt),
+			"driver_id":     firstNonEmpty(req.DriverID, req.DriverIDAlt),
+			"template_name": firstNonEmpty(req.TemplateName, req.TemplateNameAlt),
+			"recipient":     firstNonEmpty(req.To, req.Recipient),
+			"status":        message.Status,
+		},
+	})
 }
 
 func (h *Handler) listWhatsAppConversations(w http.ResponseWriter, r *http.Request) {
@@ -589,6 +679,19 @@ func (h *Handler) sendWhatsAppTextMessage(w http.ResponseWriter, r *http.Request
 		Conversation:  buildWhatsAppConversationResponse(conversation, h.clock.Now()),
 		Message:       message,
 	})
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "notification",
+		Action:     "whatsapp.message.sent",
+		EntityType: "message",
+		EntityID:   outboxMessage.ID,
+		Summary:    "WhatsApp text message sent to driver",
+		Metadata: map[string]any{
+			"conversation_id": conversation.ID,
+			"recipient":       firstNonEmpty(req.To, req.Recipient),
+			"status":          outboxMessage.Status,
+		},
+	})
 }
 
 func (h *Handler) sendWhatsAppMediaMessage(w http.ResponseWriter, r *http.Request) {
@@ -629,6 +732,20 @@ func (h *Handler) sendWhatsAppMediaMessage(w http.ResponseWriter, r *http.Reques
 		OutboxMessage: outboxMessage,
 		Conversation:  buildWhatsAppConversationResponse(conversation, h.clock.Now()),
 		Message:       message,
+	})
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "notification",
+		Action:     "whatsapp.media_message.sent",
+		EntityType: "message",
+		EntityID:   outboxMessage.ID,
+		Summary:    "WhatsApp media message sent to driver",
+		Metadata: map[string]any{
+			"conversation_id": conversation.ID,
+			"recipient":       firstNonEmpty(req.To, req.Recipient),
+			"media_type":      firstNonEmpty(req.MediaType, req.MediaTypeAlt),
+			"status":          outboxMessage.Status,
+		},
 	})
 }
 
@@ -684,6 +801,29 @@ func (h *Handler) handleWhatsAppWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 
 	respondEnvelope(w, http.StatusOK, "received", map[string]any{"processed": processed})
+}
+
+func (h *Handler) publishActivity(r *http.Request, command activitylog.PublishCommand) {
+	if h.activityPublisher == nil {
+		return
+	}
+
+	if claims, ok := httpx.ClaimsFromRequest(r); ok && claims != nil {
+		if command.ActorID == "" {
+			command.ActorID = firstNonEmpty(strings.TrimSpace(claims.Subject), strings.TrimSpace(claims.Email))
+		}
+		if command.ActorRole == "" {
+			command.ActorRole = strings.TrimSpace(claims.Role)
+		}
+	}
+
+	if command.OccurredAt.IsZero() {
+		command.OccurredAt = h.clock.Now()
+	}
+
+	if err := h.activityPublisher.Publish(r.Context(), command); err != nil {
+		// Activity logging is best-effort and should not fail the main request path.
+	}
 }
 
 func buildWhatsAppConversationResponse(conversation domain.WhatsAppConversation, now time.Time) whatsAppConversationResponse {

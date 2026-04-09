@@ -10,6 +10,7 @@ import (
 	"github.com/truckmoov/services-go/internal/tracking/application"
 	"github.com/truckmoov/services-go/internal/tracking/infrastructure"
 	trackinghttp "github.com/truckmoov/services-go/internal/tracking/interfaces/http"
+	"github.com/truckmoov/services-go/pkg/activitylog"
 	"github.com/truckmoov/services-go/pkg/config"
 	"github.com/truckmoov/services-go/pkg/eventbus"
 	httpx "github.com/truckmoov/services-go/pkg/http"
@@ -38,6 +39,7 @@ func main() {
 	defer func() {
 		_ = bus.Close()
 	}()
+	activityPublisher := activitylog.NewPublisher(bus)
 
 	redisClient := redisstore.NewStore(cfg.RedisAddr, cfg.RedisDB)
 	eventPublisher := infrastructure.NewEventPublisher(bus)
@@ -71,7 +73,7 @@ func main() {
 		cfg.DefaultTenant,
 	)
 
-	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, cfg.GPSAPIKey)
+	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, cfg.GPSAPIKey, activityPublisher)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	handlerWithCORS := httpx.WithCORS(mux, cfg.CORSOrigins)

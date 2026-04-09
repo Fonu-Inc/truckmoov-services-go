@@ -14,6 +14,7 @@ import (
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	"github.com/truckmoov/services-go/internal/dispatch/infrastructure"
 	dispatchhttp "github.com/truckmoov/services-go/internal/dispatch/interfaces/http"
+	"github.com/truckmoov/services-go/pkg/activitylog"
 	"github.com/truckmoov/services-go/pkg/config"
 	"github.com/truckmoov/services-go/pkg/eventbus"
 	httpx "github.com/truckmoov/services-go/pkg/http"
@@ -140,6 +141,7 @@ func main() {
 		jobLifecycleUseCase,
 		routingUseCase,
 		sendJobInstructionUseCase,
+		activitylog.NewPublisher(bus),
 	)
 
 	mux := http.NewServeMux()

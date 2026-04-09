@@ -14,7 +14,7 @@ type OutboxRepository interface {
 }
 
 type MessageProvider interface {
-	Send(ctx context.Context, channel, recipient, content string) (status string, err error)
+	Send(ctx context.Context, tenantID, channel, recipient, content string) (status string, err error)
 }
 
 type WhatsAppTemplateMessageProvider interface {
@@ -22,7 +22,7 @@ type WhatsAppTemplateMessageProvider interface {
 }
 
 type WhatsAppConversationMessageProvider interface {
-	SendText(ctx context.Context, recipient, content string) (domain.WhatsAppSendResult, error)
+	SendText(ctx context.Context, tenantID, recipient, content string) (domain.WhatsAppSendResult, error)
 	SendMedia(ctx context.Context, request domain.WhatsAppMediaMessageRequest) (domain.WhatsAppSendResult, error)
 }
 
@@ -31,11 +31,32 @@ type WhatsAppTemplateProvider interface {
 	ListTemplates(ctx context.Context, request domain.WhatsAppTemplateListRequest) (domain.WhatsAppTemplateListResponse, error)
 }
 
+type WhatsAppAccountRepository interface {
+	EnsureSchema(ctx context.Context) error
+	SaveAccount(ctx context.Context, account domain.WhatsAppAccount) (domain.WhatsAppAccount, error)
+	FindAccountByTenantID(ctx context.Context, tenantID string) (domain.WhatsAppAccount, bool, error)
+	FindAccountByPhoneNumberID(ctx context.Context, phoneNumberID string) (domain.WhatsAppAccount, bool, error)
+	DeleteAccountByTenantAndPhoneNumberID(ctx context.Context, tenantID, phoneNumberID string) error
+}
+
+type WhatsAppEmbeddedSignupProvider interface {
+	ExchangeCodeForLongLivedToken(ctx context.Context, code string) (string, error)
+	GetPhoneNumberProfile(ctx context.Context, accessToken, phoneNumberID string) (domain.WhatsAppAccount, error)
+	GetBusinessProfile(ctx context.Context, accessToken, businessAccountID string) (domain.WhatsAppAccount, error)
+	SubscribeBusinessApp(ctx context.Context, accessToken, businessAccountID string) error
+}
+
+type WhatsAppTokenCipher interface {
+	Encrypt(token string) (ciphertext string, iv string, err error)
+	Decrypt(ciphertext, iv string) (string, error)
+}
+
 type WhatsAppConversationRepository interface {
 	EnsureSchema(ctx context.Context) error
 	FindConversationByTenantAndID(ctx context.Context, tenantID, id string) (domain.WhatsAppConversation, bool, error)
 	FindConversationByTenantAndDriverPhone(ctx context.Context, tenantID, driverPhone string) (domain.WhatsAppConversation, bool, error)
 	FindMostRecentConversationByDriverPhone(ctx context.Context, driverPhone string) (domain.WhatsAppConversation, bool, error)
+	FindMostRecentConversationByTenantAndDriverPhone(ctx context.Context, tenantID, driverPhone string) (domain.WhatsAppConversation, bool, error)
 	ListConversationsByTenant(ctx context.Context, tenantID string) ([]domain.WhatsAppConversation, error)
 	SaveConversation(ctx context.Context, conversation domain.WhatsAppConversation) (domain.WhatsAppConversation, error)
 	SaveMessage(ctx context.Context, message domain.WhatsAppConversationMessage) (domain.WhatsAppConversationMessage, error)

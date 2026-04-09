@@ -1,6 +1,7 @@
 package domain
 
 type WhatsAppTemplateCreateRequest struct {
+	TenantID            string           `json:"-"`
 	Name                string           `json:"name"`
 	Language            string           `json:"language"`
 	Category            string           `json:"category"`
@@ -28,8 +29,9 @@ type WhatsAppTemplate struct {
 }
 
 type WhatsAppTemplateListRequest struct {
-	Limit int    `json:"limit,omitempty"`
-	After string `json:"after,omitempty"`
+	TenantID string `json:"-"`
+	Limit    int    `json:"limit,omitempty"`
+	After    string `json:"after,omitempty"`
 }
 
 type WhatsAppTemplatePaging struct {

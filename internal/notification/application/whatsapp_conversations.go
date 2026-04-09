@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/truckmoov/services-go/internal/notification/domain"
+	"github.com/truckmoov/services-go/pkg/activitylog"
 )
 
 const whatsAppConversationWindow = 24 * time.Hour
@@ -60,6 +61,10 @@ type HandleWhatsAppWebhookCommand struct {
 	Payload []byte
 }
 
+type ActivityPublisher interface {
+	Publish(ctx context.Context, command activitylog.PublishCommand) error
+}
+
 type SendWhatsAppTextMessageUseCase struct {
 	repository             OutboxRepository
 	conversationRepository WhatsAppConversationRepository
@@ -99,9 +104,11 @@ type ListWhatsAppConversationMessagesUseCase struct {
 type HandleWhatsAppWebhookUseCase struct {
 	repository                WhatsAppConversationRepository
 	outboxRepository          OutboxRepository
+	accountRepository         WhatsAppAccountRepository
 	messageProvider           MessageProvider
 	driverStatusRequestSender DriverStatusRequestSender
 	eventPublisher            DeliveryEventPublisher
+	activityPublisher         ActivityPublisher
 	clock                     Clock
 	idGenerator               IDGenerator
 }
@@ -126,13 +133,15 @@ func NewListWhatsAppConversationMessagesUseCase(repository WhatsAppConversationR
 	return &ListWhatsAppConversationMessagesUseCase{repository: repository, defaultTenant: defaultTenant}
 }
 
-func NewHandleWhatsAppWebhookUseCase(repository WhatsAppConversationRepository, outboxRepository OutboxRepository, messageProvider MessageProvider, driverStatusRequestSender DriverStatusRequestSender, eventPublisher DeliveryEventPublisher, clock Clock, idGenerator IDGenerator) *HandleWhatsAppWebhookUseCase {
+func NewHandleWhatsAppWebhookUseCase(repository WhatsAppConversationRepository, outboxRepository OutboxRepository, accountRepository WhatsAppAccountRepository, messageProvider MessageProvider, driverStatusRequestSender DriverStatusRequestSender, eventPublisher DeliveryEventPublisher, activityPublisher ActivityPublisher, clock Clock, idGenerator IDGenerator) *HandleWhatsAppWebhookUseCase {
 	return &HandleWhatsAppWebhookUseCase{
 		repository:                repository,
 		outboxRepository:          outboxRepository,
+		accountRepository:         accountRepository,
 		messageProvider:           messageProvider,
 		driverStatusRequestSender: driverStatusRequestSender,
 		eventPublisher:            eventPublisher,
+		activityPublisher:         activityPublisher,
 		clock:                     clock,
 		idGenerator:               idGenerator,
 	}
@@ -174,7 +183,7 @@ func (u *SendWhatsAppTextMessageUseCase) Execute(ctx context.Context, command Se
 		return domain.OutboxMessage{}, domain.WhatsAppConversation{}, domain.WhatsAppConversationMessage{}, fmt.Errorf("save queued outbox message: %w", err)
 	}
 
-	result, sendErr := u.provider.SendText(ctx, command.Recipient, command.Message)
+	result, sendErr := u.provider.SendText(ctx, tenantID, command.Recipient, command.Message)
 	if sendErr != nil {
 		outboxMessage = outboxMessage.MarkFailed(u.clock.Now())
 	} else {
@@ -255,6 +264,7 @@ func (u *SendWhatsAppMediaMessageUseCase) Execute(ctx context.Context, command S
 	}
 
 	result, sendErr := u.provider.SendMedia(ctx, domain.WhatsAppMediaMessageRequest{
+		TenantID:  tenantID,
 		Recipient: command.Recipient,
 		MediaType: mediaType,
 		MediaID:   strings.TrimSpace(command.MediaID),
@@ -384,7 +394,7 @@ func (u *HandleWhatsAppWebhookUseCase) Execute(ctx context.Context, command Hand
 				processed += handled
 			}
 			for _, message := range change.Value.Messages {
-				conversation, ok, err := resolveWebhookConversation(ctx, u.repository, message)
+				conversation, ok, err := resolveWebhookConversation(ctx, u.repository, u.accountRepository, strings.TrimSpace(change.Value.Metadata.PhoneNumberID), message)
 				if err != nil {
 					return processed, err
 				}
@@ -393,6 +403,7 @@ func (u *HandleWhatsAppWebhookUseCase) Execute(ctx context.Context, command Hand
 				}
 
 				receivedAt := parseWebhookTimestamp(message.Timestamp, u.clock.Now())
+				wasLocked := conversation.IsLocked(receivedAt)
 				preview, messageType, mediaType, mediaID, mediaLink, caption, payloadMap := extractWebhookMessageDetails(message)
 				fromPhone := normalizeConversationPhone(message.From)
 				if name := contactNames[fromPhone]; strings.TrimSpace(name) != "" && strings.TrimSpace(conversation.DriverName) == "" {
@@ -446,11 +457,62 @@ func (u *HandleWhatsAppWebhookUseCase) Execute(ctx context.Context, command Hand
 						messageRecord = updatedMessage
 					}
 				}
+				u.publishActivity(ctx, activitylog.PublishCommand{
+					TenantID:   savedConversation.TenantID,
+					Service:    "notification",
+					Action:     "whatsapp.message.received",
+					EntityType: "message",
+					EntityID:   messageRecord.ID,
+					Summary:    "Driver replied on WhatsApp",
+					ActorID:    firstNonEmpty(fromPhone, savedConversation.DriverPhone),
+					ActorRole:  "driver",
+					OccurredAt: receivedAt,
+					Metadata: map[string]any{
+						"conversation_id":     savedConversation.ID,
+						"provider_message_id": messageRecord.ProviderMessageID,
+						"from_phone":          fromPhone,
+						"message_type":        messageType,
+						"preview":             preview,
+					},
+				})
+				if wasLocked {
+					windowExpiresAt := ""
+					if savedConversation.WindowExpiresAt != nil {
+						windowExpiresAt = savedConversation.WindowExpiresAt.UTC().Format(time.RFC3339)
+					}
+					u.publishActivity(ctx, activitylog.PublishCommand{
+						TenantID:   savedConversation.TenantID,
+						Service:    "notification",
+						Action:     "whatsapp.conversation.window.opened",
+						EntityType: "conversation",
+						EntityID:   savedConversation.ID,
+						Summary:    "WhatsApp conversation opened by driver reply",
+						ActorID:    firstNonEmpty(fromPhone, savedConversation.DriverPhone),
+						ActorRole:  "driver",
+						OccurredAt: receivedAt,
+						Metadata: map[string]any{
+							"driver_phone":        savedConversation.DriverPhone,
+							"window_expires_at":   windowExpiresAt,
+							"source_message_id":   messageRecord.ID,
+							"provider_message_id": messageRecord.ProviderMessageID,
+						},
+					})
+				}
 				processed++
 			}
 		}
 	}
 	return processed, nil
+}
+
+func (u *HandleWhatsAppWebhookUseCase) publishActivity(ctx context.Context, command activitylog.PublishCommand) {
+	if u.activityPublisher == nil {
+		return
+	}
+	if command.OccurredAt.IsZero() {
+		command.OccurredAt = u.clock.Now()
+	}
+	_ = u.activityPublisher.Publish(ctx, command)
 }
 
 func (u *HandleWhatsAppWebhookUseCase) applyWebhookStatus(ctx context.Context, status whatsAppWebhookStatus) (int, error) {
@@ -547,7 +609,7 @@ func (u *HandleWhatsAppWebhookUseCase) trySMSFallbackForFailedJobInstruction(ctx
 		return err
 	}
 
-	sendStatus, sendErr := u.messageProvider.Send(ctx, "sms", outboxMessage.Recipient, smsBody)
+	sendStatus, sendErr := u.messageProvider.Send(ctx, outboxMessage.TenantID, "sms", outboxMessage.Recipient, smsBody)
 	if sendErr != nil {
 		smsOutbox = smsOutbox.MarkFailed(receivedAt)
 	} else {
@@ -1082,7 +1144,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func resolveWebhookConversation(ctx context.Context, repository WhatsAppConversationRepository, message whatsAppWebhookMessage) (domain.WhatsAppConversation, bool, error) {
+func resolveWebhookConversation(ctx context.Context, repository WhatsAppConversationRepository, accountRepository WhatsAppAccountRepository, phoneNumberID string, message whatsAppWebhookMessage) (domain.WhatsAppConversation, bool, error) {
 	if message.Context != nil && strings.TrimSpace(message.Context.ID) != "" {
 		originalMessage, ok, err := repository.FindMessageByProviderMessageID(ctx, strings.TrimSpace(message.Context.ID))
 		if err != nil {
@@ -1091,6 +1153,15 @@ func resolveWebhookConversation(ctx context.Context, repository WhatsAppConversa
 		if ok {
 			conversation, ok, err := repository.FindConversationByTenantAndID(ctx, originalMessage.TenantID, originalMessage.ConversationID)
 			return conversation, ok, err
+		}
+	}
+	if strings.TrimSpace(phoneNumberID) != "" && accountRepository != nil {
+		account, ok, err := accountRepository.FindAccountByPhoneNumberID(ctx, strings.TrimSpace(phoneNumberID))
+		if err != nil {
+			return domain.WhatsAppConversation{}, false, err
+		}
+		if ok {
+			return repository.FindMostRecentConversationByTenantAndDriverPhone(ctx, account.TenantID, normalizeConversationPhone(message.From))
 		}
 	}
 	return repository.FindMostRecentConversationByDriverPhone(ctx, normalizeConversationPhone(message.From))

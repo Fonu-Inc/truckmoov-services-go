@@ -16,6 +16,7 @@ import (
 	"github.com/truckmoov/services-go/internal/tracking/application"
 	"github.com/truckmoov/services-go/internal/tracking/domain"
 	"github.com/truckmoov/services-go/internal/tracking/infrastructure"
+	"github.com/truckmoov/services-go/pkg/activitylog"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
@@ -26,6 +27,15 @@ func (f *fakeTrackingPublisher) PublishLocationUpdate(_ context.Context, _ domai
 }
 
 func (f *fakeTrackingPublisher) PublishAlertTriggered(_ context.Context, _ domain.AlertTriggered) error {
+	return nil
+}
+
+type fakeTrackingActivityPublisher struct {
+	commands []activitylog.PublishCommand
+}
+
+func (f *fakeTrackingActivityPublisher) Publish(_ context.Context, command activitylog.PublishCommand) error {
+	f.commands = append(f.commands, command)
 	return nil
 }
 
@@ -46,10 +56,11 @@ func makeTrackingBearerToken(secret, tenantID, role string) string {
 	return encodedPayload + "." + signature
 }
 
-func buildTrackingTestHandler() *Handler {
+func buildTrackingTestHandler() (*Handler, *fakeTrackingActivityPublisher) {
 	clock := fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)}
 	ids := fixedTrackingID{value: "1"}
 	publisher := &fakeTrackingPublisher{}
+	activityPublisher := &fakeTrackingActivityPublisher{}
 
 	latestRepo := infrastructure.NewInMemoryLatestLocationRepository()
 	historyRepo := infrastructure.NewInMemoryLocationHistoryRepository()
@@ -74,11 +85,11 @@ func buildTrackingTestHandler() *Handler {
 		"default",
 	)
 
-	return NewHandler(ingestUseCase, alertUseCase, queryUseCase, "")
+	return NewHandler(ingestUseCase, alertUseCase, queryUseCase, "", activityPublisher), activityPublisher
 }
 
 func TestHandler_IngestContract(t *testing.T) {
-	handler := buildTrackingTestHandler()
+	handler, _ := buildTrackingTestHandler()
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -104,7 +115,7 @@ func TestHandler_IngestContract(t *testing.T) {
 }
 
 func TestHandler_WebsocketPlaceholderContract(t *testing.T) {
-	handler := buildTrackingTestHandler()
+	handler, _ := buildTrackingTestHandler()
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -120,7 +131,7 @@ func TestHandler_WebsocketPlaceholderContract(t *testing.T) {
 }
 
 func TestHandler_ListVehiclesContract(t *testing.T) {
-	handler := buildTrackingTestHandler()
+	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	server := httpx.WithAuthContext(mux, "replace-me")
@@ -156,7 +167,7 @@ func TestHandler_ListVehiclesContract(t *testing.T) {
 }
 
 func TestHandler_VehicleHistoryContract(t *testing.T) {
-	handler := buildTrackingTestHandler()
+	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	server := httpx.WithAuthContext(mux, "replace-me")
@@ -202,7 +213,7 @@ func TestHandler_VehicleHistoryContract(t *testing.T) {
 }
 
 func TestHandler_ListVehiclesRejectsTenantQuery(t *testing.T) {
-	handler := buildTrackingTestHandler()
+	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	server := httpx.WithAuthContext(mux, "replace-me")
@@ -222,5 +233,40 @@ func TestHandler_ListVehiclesRejectsTenantQuery(t *testing.T) {
 	server.ServeHTTP(listRes, listReq)
 	if listRes.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, listRes.Code, listRes.Body.String())
+	}
+}
+
+func TestHandler_AlertPublishesActivity(t *testing.T) {
+	handler, activityPublisher := buildTrackingTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	server := httpx.WithAuthContext(mux, "replace-me")
+
+	body := bytes.NewBufferString(`{"tenant_id":"tenant-7","alert_type":"geofence_breach","severity":"high","vehicle_id":"vehicle-7","job_id":"job-7"}`)
+	req := httptest.NewRequest(http.MethodPost, "/tracking/alerts", body)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+makeTrackingBearerToken("replace-me", "tenant-7", "DISPATCHER"))
+	res := httptest.NewRecorder()
+
+	server.ServeHTTP(res, req)
+
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusAccepted, res.Code, res.Body.String())
+	}
+	if len(activityPublisher.commands) != 1 {
+		t.Fatalf("expected one activity command, got %d", len(activityPublisher.commands))
+	}
+	command := activityPublisher.commands[0]
+	if command.TenantID != "tenant-7" {
+		t.Fatalf("expected tenant-7, got %q", command.TenantID)
+	}
+	if command.Action != "tracking.alert.published" {
+		t.Fatalf("expected tracking.alert.published, got %q", command.Action)
+	}
+	if command.EntityType != "alert" {
+		t.Fatalf("expected entity type alert, got %q", command.EntityType)
+	}
+	if command.ActorRole != "DISPATCHER" {
+		t.Fatalf("expected dispatcher actor role, got %q", command.ActorRole)
 	}
 }

@@ -48,7 +48,7 @@ type fakeMessageProvider struct {
 	err    error
 }
 
-func (p *fakeMessageProvider) Send(_ context.Context, _, _, _ string) (string, error) {
+func (p *fakeMessageProvider) Send(_ context.Context, _, _, _, _ string) (string, error) {
 	return p.status, p.err
 }
 

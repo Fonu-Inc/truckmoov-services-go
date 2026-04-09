@@ -1,12 +1,14 @@
 package trackinghttp
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/truckmoov/services-go/internal/tracking/application"
+	"github.com/truckmoov/services-go/pkg/activitylog"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
@@ -31,11 +33,16 @@ type alertRequest struct {
 	Details   any    `json:"details,omitempty"`
 }
 
+type activityPublisher interface {
+	Publish(ctx context.Context, command activitylog.PublishCommand) error
+}
+
 type Handler struct {
 	ingestLocationUseCase *application.IngestLocationUseCase
 	publishAlertUseCase   *application.PublishAlertUseCase
 	trackingQueryUseCase  *application.TrackingQueryUseCase
 	gpsAPIKey             string
+	activityPublisher     activityPublisher
 }
 
 func NewHandler(
@@ -43,12 +50,14 @@ func NewHandler(
 	publishAlertUseCase *application.PublishAlertUseCase,
 	trackingQueryUseCase *application.TrackingQueryUseCase,
 	gpsAPIKey string,
+	activityPublisher activityPublisher,
 ) *Handler {
 	return &Handler{
 		ingestLocationUseCase: ingestLocationUseCase,
 		publishAlertUseCase:   publishAlertUseCase,
 		trackingQueryUseCase:  trackingQueryUseCase,
 		gpsAPIKey:             gpsAPIKey,
+		activityPublisher:     activityPublisher,
 	}
 }
 
@@ -165,6 +174,22 @@ func (h *Handler) alert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusAccepted, result)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   req.TenantID,
+		Service:    "tracking",
+		Action:     "tracking.alert.published",
+		EntityType: "alert",
+		EntityID:   result.AlertID,
+		Summary:    "Tracking alert published",
+		Metadata: map[string]any{
+			"alert_type": req.AlertType,
+			"severity":   req.Severity,
+			"vehicle_id": req.VehicleID,
+			"job_id":     req.JobID,
+			"subject":    result.Subject,
+			"event_id":   result.EventID,
+		},
+	})
 }
 
 func (h *Handler) websocketPlaceholder(w http.ResponseWriter, _ *http.Request) {
@@ -286,4 +311,19 @@ func respondJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func (h *Handler) publishActivity(r *http.Request, command activitylog.PublishCommand) {
+	if h.activityPublisher == nil {
+		return
+	}
+	if claims, ok := httpx.ClaimsFromRequest(r); ok && claims != nil {
+		if command.ActorID == "" {
+			command.ActorID = strings.TrimSpace(claims.Subject)
+		}
+		if command.ActorRole == "" {
+			command.ActorRole = strings.TrimSpace(claims.Role)
+		}
+	}
+	_ = h.activityPublisher.Publish(r.Context(), command)
 }

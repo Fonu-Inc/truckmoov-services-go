@@ -40,7 +40,7 @@ func (u *RetryMessageUseCase) Execute(ctx context.Context, id string) (domain.Ou
 		return domain.OutboxMessage{}, ErrMessageNotFound
 	}
 
-	status, sendErr := u.provider.Send(ctx, message.Channel, message.Recipient, message.Content)
+	status, sendErr := u.provider.Send(ctx, message.TenantID, message.Channel, message.Recipient, message.Content)
 	if sendErr != nil {
 		message = message.MarkFailed(u.clock.Now())
 	} else {

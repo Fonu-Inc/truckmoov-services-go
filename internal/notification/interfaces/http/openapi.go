@@ -60,6 +60,12 @@ func notificationOpenAPISpec() map[string]any {
 		"required": true,
 		"schema":   map[string]any{"type": "string"},
 	}
+	phoneNumberIDParameter := map[string]any{
+		"name":     "phoneNumberId",
+		"in":       "path",
+		"required": true,
+		"schema":   map[string]any{"type": "string"},
+	}
 	return map[string]any{
 		"openapi": "3.0.3",
 		"info": map[string]any{
@@ -105,6 +111,47 @@ func notificationOpenAPISpec() map[string]any {
 						"200": openAPIJSONResponse("Retry succeeded", map[string]any{"$ref": "#/components/schemas/OutboxMessage"}),
 						"404": openAPIJSONResponse("Message not found", map[string]any{"$ref": "#/components/schemas/ErrorResponse"}),
 						"502": openAPIJSONResponse("Provider failure", map[string]any{"$ref": "#/components/schemas/OutboxMessage"}),
+					},
+				},
+			},
+			"/notify/whatsapp/settings": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"notification"},
+					"summary":     "Connect a WhatsApp account through embedded signup",
+					"operationId": "connectWhatsAppAccount",
+					"requestBody": openAPIRequestBody("#/components/schemas/ConnectWhatsAppSettingsRequest"),
+					"responses": map[string]any{
+						"200": openAPIJSONResponse("WhatsApp account connected", map[string]any{"$ref": "#/components/schemas/WhatsAppAccountEnvelope"}),
+						"400": openAPIJSONResponse("Invalid embedded signup payload", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"401": openAPIJSONResponse("Authentication required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"403": openAPIJSONResponse("Administrator role required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+					},
+				},
+				"get": map[string]any{
+					"tags":        []string{"notification"},
+					"summary":     "Get the connected WhatsApp account for the tenant",
+					"operationId": "getWhatsAppAccount",
+					"responses": map[string]any{
+						"200": openAPIJSONResponse("Connected WhatsApp account", map[string]any{"$ref": "#/components/schemas/WhatsAppAccountEnvelope"}),
+						"401": openAPIJSONResponse("Authentication required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"403": openAPIJSONResponse("Administrator role required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"404": openAPIJSONResponse("WhatsApp account not connected", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"502": openAPIJSONResponse("Failed to load WhatsApp account", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+					},
+				},
+			},
+			"/notify/whatsapp/settings/{phoneNumberId}": map[string]any{
+				"delete": map[string]any{
+					"tags":        []string{"notification"},
+					"summary":     "Disconnect a connected WhatsApp account",
+					"operationId": "disconnectWhatsAppAccount",
+					"parameters":  []any{phoneNumberIDParameter},
+					"responses": map[string]any{
+						"200": openAPIJSONResponse("WhatsApp account disconnected", map[string]any{"$ref": "#/components/schemas/WhatsAppDisconnectEnvelope"}),
+						"400": openAPIJSONResponse("Invalid request", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"401": openAPIJSONResponse("Authentication required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"403": openAPIJSONResponse("Administrator role required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"404": openAPIJSONResponse("WhatsApp account not connected", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
 					},
 				},
 			},
@@ -323,6 +370,57 @@ func notificationOpenAPISpec() map[string]any {
 						"status":  map[string]any{"type": "boolean"},
 						"message": map[string]any{"type": "string"},
 						"data":    map[string]any{"$ref": "#/components/schemas/OutboxMessage"},
+					},
+				},
+				"ConnectWhatsAppSettingsRequest": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"phone_number_id":     map[string]any{"type": "string"},
+						"phoneNumberId":       map[string]any{"type": "string"},
+						"business_id":         map[string]any{"type": "string"},
+						"businessId":          map[string]any{"type": "string"},
+						"business_account_id": map[string]any{"type": "string"},
+						"businessAccountId":   map[string]any{"type": "string"},
+						"code":                map[string]any{"type": "string"},
+					},
+					"required": []string{"phone_number_id", "business_account_id", "code"},
+				},
+				"WhatsAppAccount": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":                    map[string]any{"type": "string"},
+						"tenant_id":             map[string]any{"type": "string"},
+						"phone_number_id":       map[string]any{"type": "string"},
+						"business_account_id":   map[string]any{"type": "string"},
+						"display_phone_number":  map[string]any{"type": "string"},
+						"verified_name":         map[string]any{"type": "string"},
+						"business_name":         map[string]any{"type": "string"},
+						"webhook_subscribed_at": map[string]any{"type": "string", "format": "date-time", "nullable": true},
+						"connected_at":          map[string]any{"type": "string", "format": "date-time"},
+						"created_at":            map[string]any{"type": "string", "format": "date-time"},
+						"updated_at":            map[string]any{"type": "string", "format": "date-time"},
+					},
+				},
+				"WhatsAppAccountEnvelope": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"status":  map[string]any{"type": "boolean"},
+						"message": map[string]any{"type": "string"},
+						"data":    map[string]any{"$ref": "#/components/schemas/WhatsAppAccount"},
+					},
+				},
+				"WhatsAppDisconnectPayload": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"phone_number_id": map[string]any{"type": "string"},
+					},
+				},
+				"WhatsAppDisconnectEnvelope": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"status":  map[string]any{"type": "boolean"},
+						"message": map[string]any{"type": "string"},
+						"data":    map[string]any{"$ref": "#/components/schemas/WhatsAppDisconnectPayload"},
 					},
 				},
 				"MetaComponent": map[string]any{

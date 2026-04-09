@@ -93,7 +93,7 @@ func buildDispatchTestHandlerWithSender() (*Handler, *fakeJobInstructionSender) 
 	sender := &fakeJobInstructionSender{}
 	sendJobInstructionUseCase := application.NewSendJobInstructionUseCase(repository, sender, clock, ids, "default")
 
-	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase, sendJobInstructionUseCase), sender
+	return NewHandler(publishUseCase, lifecycleUseCase, routingUseCase, sendJobInstructionUseCase, nil), sender
 }
 
 func buildDispatchTestHandler() *Handler {
@@ -168,6 +168,7 @@ func TestHandler_UpdateStatusContract(t *testing.T) {
 		),
 		application.NewRoutingUseCase(repository, clock, "default"),
 		application.NewSendJobInstructionUseCase(repository, &fakeJobInstructionSender{}, clock, idGenerator, "default"),
+		nil,
 	)
 
 	mux := http.NewServeMux()

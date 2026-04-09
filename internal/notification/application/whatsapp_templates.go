@@ -96,6 +96,7 @@ func (u *CreateWhatsAppTemplateUseCase) Execute(ctx context.Context, command Cre
 	}
 
 	return u.provider.CreateTemplate(ctx, domain.WhatsAppTemplateCreateRequest{
+		TenantID:            strings.TrimSpace(command.TenantID),
 		Name:                strings.TrimSpace(command.Name),
 		Language:            language,
 		Category:            category,
@@ -121,7 +122,7 @@ func (u *ListWhatsAppTemplatesUseCase) Execute(ctx context.Context, query ListWh
 	if strings.TrimSpace(query.TenantID) == "" {
 		return domain.WhatsAppTemplateListResponse{}, ErrTenantIDRequired
 	}
-	return u.provider.ListTemplates(ctx, domain.WhatsAppTemplateListRequest{})
+	return u.provider.ListTemplates(ctx, domain.WhatsAppTemplateListRequest{TenantID: strings.TrimSpace(query.TenantID)})
 }
 
 func normalizeWhatsAppTemplateType(raw string) (string, error) {

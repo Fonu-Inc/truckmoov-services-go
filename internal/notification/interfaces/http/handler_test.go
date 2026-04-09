@@ -17,6 +17,7 @@ import (
 	"github.com/truckmoov/services-go/internal/notification/application"
 	"github.com/truckmoov/services-go/internal/notification/domain"
 	"github.com/truckmoov/services-go/internal/notification/infrastructure"
+	"github.com/truckmoov/services-go/pkg/activitylog"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
@@ -25,11 +26,14 @@ type fakeNotificationProvider struct {
 	err                  error
 	counter              int
 	genericSendCount     int
+	lastGenericTenantID  string
 	lastGenericChannel   string
 	lastGenericRecipient string
 	lastGenericContent   string
+	lastTemplateTenantID string
 	lastTemplateRequest  domain.WhatsAppTemplateMessageRequest
 	lastTemplateResult   domain.WhatsAppSendResult
+	lastTextTenantID     string
 	lastTextRecipient    string
 	lastTextContent      string
 	lastTextResult       domain.WhatsAppSendResult
@@ -37,12 +41,13 @@ type fakeNotificationProvider struct {
 	lastMediaResult      domain.WhatsAppSendResult
 }
 
-func (f *fakeNotificationProvider) Send(_ context.Context, channel, recipient, content string) (string, error) {
-	return f.send(channel, recipient, content)
+func (f *fakeNotificationProvider) Send(_ context.Context, tenantID, channel, recipient, content string) (string, error) {
+	return f.send(tenantID, channel, recipient, content)
 }
 
-func (f *fakeNotificationProvider) send(channel, recipient, content string) (string, error) {
+func (f *fakeNotificationProvider) send(tenantID, channel, recipient, content string) (string, error) {
 	f.genericSendCount++
+	f.lastGenericTenantID = tenantID
 	f.lastGenericChannel = channel
 	f.lastGenericRecipient = recipient
 	f.lastGenericContent = content
@@ -55,6 +60,7 @@ func (f *fakeNotificationProvider) send(channel, recipient, content string) (str
 
 func (f *fakeNotificationProvider) SendTemplate(_ context.Context, request domain.WhatsAppTemplateMessageRequest) (domain.WhatsAppSendResult, error) {
 	f.counter++
+	f.lastTemplateTenantID = request.TenantID
 	f.lastTemplateRequest = request
 	result := domain.WhatsAppSendResult{Status: domain.StatusSent, MessageID: fmt.Sprintf("wamid.template.%d", f.counter)}
 	if strings.TrimSpace(f.status) != "" {
@@ -67,8 +73,9 @@ func (f *fakeNotificationProvider) SendTemplate(_ context.Context, request domai
 	return result, f.err
 }
 
-func (f *fakeNotificationProvider) SendText(_ context.Context, recipient, content string) (domain.WhatsAppSendResult, error) {
+func (f *fakeNotificationProvider) SendText(_ context.Context, tenantID, recipient, content string) (domain.WhatsAppSendResult, error) {
 	f.counter++
+	f.lastTextTenantID = tenantID
 	f.lastTextRecipient = recipient
 	f.lastTextContent = content
 	result := domain.WhatsAppSendResult{Status: domain.StatusSent, MessageID: fmt.Sprintf("wamid.text.%d", f.counter)}
@@ -141,6 +148,50 @@ type fakeDriverStatusRequestSender struct {
 	err      error
 }
 
+type fakeActivityPublisher struct {
+	commands []activitylog.PublishCommand
+}
+
+func (f *fakeActivityPublisher) Publish(_ context.Context, command activitylog.PublishCommand) error {
+	f.commands = append(f.commands, command)
+	return nil
+}
+
+type fakeWhatsAppEmbeddedSignupProvider struct{}
+
+func (f *fakeWhatsAppEmbeddedSignupProvider) ExchangeCodeForLongLivedToken(_ context.Context, code string) (string, error) {
+	return "token-for-" + strings.TrimSpace(code), nil
+}
+
+func (f *fakeWhatsAppEmbeddedSignupProvider) GetPhoneNumberProfile(_ context.Context, _ string, phoneNumberID string) (domain.WhatsAppAccount, error) {
+	return domain.WhatsAppAccount{
+		PhoneNumberID:      strings.TrimSpace(phoneNumberID),
+		DisplayPhoneNumber: "+2348012345678",
+		VerifiedName:       "Truckmoov Support",
+	}, nil
+}
+
+func (f *fakeWhatsAppEmbeddedSignupProvider) GetBusinessProfile(_ context.Context, _ string, businessAccountID string) (domain.WhatsAppAccount, error) {
+	return domain.WhatsAppAccount{
+		BusinessAccountID: strings.TrimSpace(businessAccountID),
+		BusinessName:      "Truckmoov",
+	}, nil
+}
+
+func (f *fakeWhatsAppEmbeddedSignupProvider) SubscribeBusinessApp(_ context.Context, _, _ string) error {
+	return nil
+}
+
+type fakeWhatsAppTokenCipher struct{}
+
+func (f *fakeWhatsAppTokenCipher) Encrypt(token string) (string, string, error) {
+	return "enc:" + token, "iv", nil
+}
+
+func (f *fakeWhatsAppTokenCipher) Decrypt(ciphertext, _ string) (string, error) {
+	return strings.TrimPrefix(ciphertext, "enc:"), nil
+}
+
 func (f *fakeDriverStatusRequestSender) CreateDriverStatusRequest(_ context.Context, command application.CreateDriverStatusRequestFromWhatsAppCommand) (application.DriverStatusRequestReceipt, error) {
 	f.commands = append(f.commands, command)
 	if f.err != nil {
@@ -161,12 +212,15 @@ type notificationEnvelope struct {
 	Data    json.RawMessage `json:"data"`
 }
 
-func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvider, *fakeNotificationProvider, *mutableNotificationClock, *infrastructure.InMemoryOutboxRepository, *fakeDriverStatusRequestSender) {
+func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvider, *fakeNotificationProvider, *mutableNotificationClock, *infrastructure.InMemoryOutboxRepository, *fakeDriverStatusRequestSender, *fakeActivityPublisher) {
 	t.Helper()
 
 	outboxRepository := infrastructure.NewInMemoryOutboxRepository()
 	conversationRepository := infrastructure.NewInMemoryWhatsAppConversationRepository()
+	whatsAppAccountRepository := infrastructure.NewInMemoryWhatsAppAccountRepository()
 	provider := &fakeNotificationProvider{status: domain.StatusSent}
+	signupProvider := &fakeWhatsAppEmbeddedSignupProvider{}
+	tokenCipher := &fakeWhatsAppTokenCipher{}
 	templateProvider := &fakeTemplateProvider{
 		createResponse: domain.WhatsAppTemplateCreateResponse{ID: "tpl-1", Status: "PENDING", Category: "UTILITY"},
 		listResponse: domain.WhatsAppTemplateListResponse{Data: []domain.WhatsAppTemplate{
@@ -194,11 +248,15 @@ func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvi
 	}
 	publisher := &fakeNotificationPublisher{}
 	driverStatusRequestSender := &fakeDriverStatusRequestSender{}
+	activityPublisher := &fakeActivityPublisher{}
 	clock := &mutableNotificationClock{now: time.Date(2026, 4, 4, 12, 0, 0, 0, time.UTC)}
 	ids := &sequentialNotificationID{}
 
 	sendUseCase := application.NewSendMessageUseCase(outboxRepository, provider, publisher, clock, ids, "default")
 	retryUseCase := application.NewRetryMessageUseCase(outboxRepository, provider, publisher, clock, ids)
+	connectWhatsAppAccountUseCase := application.NewConnectWhatsAppAccountUseCase(whatsAppAccountRepository, signupProvider, tokenCipher, clock, ids, "default")
+	getWhatsAppAccountUseCase := application.NewGetWhatsAppAccountUseCase(whatsAppAccountRepository, "default")
+	disconnectWhatsAppAccountUseCase := application.NewDisconnectWhatsAppAccountUseCase(whatsAppAccountRepository, "default")
 	createTemplateUseCase := application.NewCreateWhatsAppTemplateUseCase(templateProvider)
 	listTemplatesUseCase := application.NewListWhatsAppTemplatesUseCase(templateProvider)
 	sendOtherTemplateUseCase := application.NewSendOtherTemplateUseCase(outboxRepository, conversationRepository, templateProvider, provider, publisher, clock, ids, "default")
@@ -208,11 +266,14 @@ func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvi
 	listConversationsUseCase := application.NewListWhatsAppConversationsUseCase(conversationRepository, clock, "default")
 	getConversationUseCase := application.NewGetWhatsAppConversationUseCase(conversationRepository, "default")
 	listConversationMessagesUseCase := application.NewListWhatsAppConversationMessagesUseCase(conversationRepository, "default")
-	handleWebhookUseCase := application.NewHandleWhatsAppWebhookUseCase(conversationRepository, outboxRepository, provider, driverStatusRequestSender, publisher, clock, ids)
+	handleWebhookUseCase := application.NewHandleWhatsAppWebhookUseCase(conversationRepository, outboxRepository, whatsAppAccountRepository, provider, driverStatusRequestSender, publisher, activityPublisher, clock, ids)
 
 	handler := NewHandler(
 		sendUseCase,
 		retryUseCase,
+		connectWhatsAppAccountUseCase,
+		getWhatsAppAccountUseCase,
+		disconnectWhatsAppAccountUseCase,
 		createTemplateUseCase,
 		listTemplatesUseCase,
 		sendOtherTemplateUseCase,
@@ -223,12 +284,13 @@ func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvi
 		getConversationUseCase,
 		listConversationMessagesUseCase,
 		handleWebhookUseCase,
+		activityPublisher,
 		clock,
 		"verify-token",
 	)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	return httpx.WithAuthContext(mux, "replace-me"), templateProvider, provider, clock, outboxRepository, driverStatusRequestSender
+	return httpx.WithAuthContext(mux, "replace-me"), templateProvider, provider, clock, outboxRepository, driverStatusRequestSender, activityPublisher
 }
 
 func makeNotificationAuthRequest(method, path string, body []byte, tenantID string) *http.Request {
@@ -305,7 +367,7 @@ func sendJobInstructionForTests(t *testing.T, handler http.Handler, tenantID str
 }
 
 func TestWhatsAppTemplateEndpointsRequireAuthentication(t *testing.T) {
-	handler, _, _, _, _, _ := notificationHandlerForTests(t)
+	handler, _, _, _, _, _, _ := notificationHandlerForTests(t)
 	req := makeNotificationAuthRequest(http.MethodPost, "/notify/whatsapp/get-all-templates", nil, "")
 	res := httptest.NewRecorder()
 
@@ -323,8 +385,92 @@ func TestWhatsAppTemplateEndpointsRequireAuthentication(t *testing.T) {
 	}
 }
 
+func TestWhatsAppSettingsConnectGetAndDisconnect(t *testing.T) {
+	handler, _, _, _, _, _, activityPublisher := notificationHandlerForTests(t)
+
+	connectReq := makeNotificationAuthRequestWithRole(http.MethodPost, "/notify/whatsapp/settings", []byte(`{
+		"phoneNumberId":"pnid-123",
+		"businessAccountId":"waba-123",
+		"code":"embedded-signup-code"
+	}`), "tenant-a", "PLATFORM_ADMIN")
+	connectRes := httptest.NewRecorder()
+	handler.ServeHTTP(connectRes, connectReq)
+	if connectRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, connectRes.Code, connectRes.Body.String())
+	}
+	connectEnvelope := decodeNotificationEnvelope(t, connectRes)
+	var account domain.WhatsAppAccount
+	if err := json.Unmarshal(connectEnvelope.Data, &account); err != nil {
+		t.Fatalf("decode whatsapp account: %v", err)
+	}
+	if account.PhoneNumberID != "pnid-123" {
+		t.Fatalf("expected phone number id pnid-123, got %q", account.PhoneNumberID)
+	}
+	if account.BusinessAccountID != "waba-123" {
+		t.Fatalf("expected business account id waba-123, got %q", account.BusinessAccountID)
+	}
+	if account.EncryptedAccessToken != "" || account.AccessTokenIV != "" {
+		t.Fatal("expected sensitive token fields to be omitted from response")
+	}
+
+	getReq := makeNotificationAuthRequestWithRole(http.MethodGet, "/notify/whatsapp/settings", nil, "tenant-a", "OPERATIONS_MANAGER")
+	getRes := httptest.NewRecorder()
+	handler.ServeHTTP(getRes, getReq)
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, getRes.Code, getRes.Body.String())
+	}
+	getEnvelope := decodeNotificationEnvelope(t, getRes)
+	if err := json.Unmarshal(getEnvelope.Data, &account); err != nil {
+		t.Fatalf("decode whatsapp account from get: %v", err)
+	}
+	if account.DisplayPhoneNumber != "+2348012345678" {
+		t.Fatalf("expected populated display phone number, got %q", account.DisplayPhoneNumber)
+	}
+
+	deleteReq := makeNotificationAuthRequestWithRole(http.MethodDelete, "/notify/whatsapp/settings/pnid-123", nil, "tenant-a", "PLATFORM_ADMIN")
+	deleteRes := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRes, deleteReq)
+	if deleteRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, deleteRes.Code, deleteRes.Body.String())
+	}
+
+	getRes = httptest.NewRecorder()
+	handler.ServeHTTP(getRes, getReq)
+	if getRes.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d after disconnect, got %d: %s", http.StatusNotFound, getRes.Code, getRes.Body.String())
+	}
+
+	var connectedLogged bool
+	var disconnectedLogged bool
+	for _, command := range activityPublisher.commands {
+		switch command.Action {
+		case "whatsapp.account.connected":
+			connectedLogged = true
+		case "whatsapp.account.disconnected":
+			disconnectedLogged = true
+		}
+	}
+	if !connectedLogged || !disconnectedLogged {
+		t.Fatalf("expected connect and disconnect activity logs, got %#v", activityPublisher.commands)
+	}
+}
+
+func TestWhatsAppSettingsRequireAdministratorRole(t *testing.T) {
+	handler, _, _, _, _, _, _ := notificationHandlerForTests(t)
+	req := makeNotificationAuthRequestWithRole(http.MethodGet, "/notify/whatsapp/settings", nil, "tenant-a", "DISPATCHER")
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusForbidden, res.Code, res.Body.String())
+	}
+	envelope := decodeNotificationEnvelope(t, res)
+	if envelope.Message != "administrator role required" {
+		t.Fatalf("expected administrator role required message, got %q", envelope.Message)
+	}
+}
+
 func TestSendJobInstructionCreatesLockedConversation(t *testing.T) {
-	handler, _, provider, _, _, _ := notificationHandlerForTests(t)
+	handler, _, provider, _, _, _, _ := notificationHandlerForTests(t)
 	sendJobInstructionForTests(t, handler, "tenant-a")
 
 	conversations := listNotificationConversations(t, handler, "tenant-a")
@@ -346,7 +492,7 @@ func TestSendJobInstructionCreatesLockedConversation(t *testing.T) {
 }
 
 func TestSendWhatsAppTextMessageRequiresOpenConversation(t *testing.T) {
-	handler, _, _, _, _, _ := notificationHandlerForTests(t)
+	handler, _, _, _, _, _, _ := notificationHandlerForTests(t)
 	sendJobInstructionForTests(t, handler, "tenant-a")
 
 	payload := []byte(`{"to":"+2348012345678","message":"Please confirm receipt"}`)
@@ -364,7 +510,7 @@ func TestSendWhatsAppTextMessageRequiresOpenConversation(t *testing.T) {
 }
 
 func TestWhatsAppWebhookReplyOpensConversationAndAllowsTextAndMediaSend(t *testing.T) {
-	handler, _, provider, clock, _, _ := notificationHandlerForTests(t)
+	handler, _, provider, clock, _, _, activityPublisher := notificationHandlerForTests(t)
 	sendJobInstructionForTests(t, handler, "tenant-a")
 	conversations := listNotificationConversations(t, handler, "tenant-a")
 	conversationID := conversations[0].ID
@@ -413,6 +559,26 @@ func TestWhatsAppWebhookReplyOpensConversationAndAllowsTextAndMediaSend(t *testi
 	}
 	if conversation.WindowRemainingSeconds <= 0 {
 		t.Fatalf("expected positive open window after reply, got %d", conversation.WindowRemainingSeconds)
+	}
+	var receivedLogged bool
+	var openedLogged bool
+	for _, command := range activityPublisher.commands {
+		switch command.Action {
+		case "whatsapp.message.received":
+			if command.EntityType == "message" && command.ActorRole == "driver" {
+				receivedLogged = true
+			}
+		case "whatsapp.conversation.window.opened":
+			if command.EntityType == "conversation" && command.EntityID == conversationID {
+				openedLogged = true
+			}
+		}
+	}
+	if !receivedLogged {
+		t.Fatal("expected inbound whatsapp message activity to be published")
+	}
+	if !openedLogged {
+		t.Fatal("expected conversation window opened activity to be published")
 	}
 
 	messagesReq := makeNotificationAuthRequest(http.MethodGet, "/notify/whatsapp/conversations/"+conversationID+"/messages", nil, "tenant-a")
@@ -465,7 +631,7 @@ func TestWhatsAppWebhookReplyOpensConversationAndAllowsTextAndMediaSend(t *testi
 }
 
 func TestWhatsAppWebhookKeywordReplyCreatesDriverStatusRequest(t *testing.T) {
-	handler, _, provider, clock, _, driverStatusSender := notificationHandlerForTests(t)
+	handler, _, provider, clock, _, driverStatusSender, _ := notificationHandlerForTests(t)
 	sendJobInstructionForTests(t, handler, "tenant-a")
 	conversations := listNotificationConversations(t, handler, "tenant-a")
 	conversationID := conversations[0].ID
@@ -547,7 +713,7 @@ func TestWhatsAppWebhookKeywordReplyCreatesDriverStatusRequest(t *testing.T) {
 }
 
 func TestWhatsAppWebhookDeliveredStatusUpdatesOutboxAndConversationMessage(t *testing.T) {
-	handler, _, provider, clock, outboxRepository, _ := notificationHandlerForTests(t)
+	handler, _, provider, clock, outboxRepository, _, _ := notificationHandlerForTests(t)
 	sendJobInstructionForTests(t, handler, "tenant-a")
 
 	conversations := listNotificationConversations(t, handler, "tenant-a")
@@ -608,7 +774,7 @@ func TestWhatsAppWebhookDeliveredStatusUpdatesOutboxAndConversationMessage(t *te
 }
 
 func TestWhatsAppWebhookFailedStatusUpdatesOutboxAndConversationMessage(t *testing.T) {
-	handler, _, provider, clock, outboxRepository, _ := notificationHandlerForTests(t)
+	handler, _, provider, clock, outboxRepository, _, _ := notificationHandlerForTests(t)
 	sendJobInstructionForTests(t, handler, "tenant-a")
 
 	conversations := listNotificationConversations(t, handler, "tenant-a")
@@ -691,7 +857,7 @@ func TestWhatsAppWebhookFailedStatusUpdatesOutboxAndConversationMessage(t *testi
 }
 
 func TestWhatsAppWebhookFailedStatusDoesNotDuplicateSMSFallback(t *testing.T) {
-	handler, _, provider, clock, _, _ := notificationHandlerForTests(t)
+	handler, _, provider, clock, _, _, _ := notificationHandlerForTests(t)
 	sendJobInstructionForTests(t, handler, "tenant-a")
 
 	webhookPayload := fmt.Sprintf(`{
@@ -729,7 +895,7 @@ func TestWhatsAppWebhookFailedStatusDoesNotDuplicateSMSFallback(t *testing.T) {
 }
 
 func TestConversationEndpointsRequireDispatcherRole(t *testing.T) {
-	handler, _, _, _, _, _ := notificationHandlerForTests(t)
+	handler, _, _, _, _, _, _ := notificationHandlerForTests(t)
 	req := makeNotificationAuthRequestWithRole(http.MethodGet, "/notify/whatsapp/conversations", nil, "tenant-a", "FINANCE_VIEWER")
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
@@ -743,7 +909,7 @@ func TestConversationEndpointsRequireDispatcherRole(t *testing.T) {
 }
 
 func TestVerifyWhatsAppWebhook(t *testing.T) {
-	handler, _, _, _, _, _ := notificationHandlerForTests(t)
+	handler, _, _, _, _, _, _ := notificationHandlerForTests(t)
 	req := httptest.NewRequest(http.MethodGet, "/notify/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=verify-token&hub.challenge=12345", nil)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
@@ -756,7 +922,7 @@ func TestVerifyWhatsAppWebhook(t *testing.T) {
 }
 
 func TestNotificationDocsOpenAPIIncludesConversationEndpoints(t *testing.T) {
-	handler, _, _, _, _, _ := notificationHandlerForTests(t)
+	handler, _, _, _, _, _, _ := notificationHandlerForTests(t)
 	req := httptest.NewRequest(http.MethodGet, "/docs/notification/openapi.json", nil)
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, req)
@@ -764,7 +930,7 @@ func TestNotificationDocsOpenAPIIncludesConversationEndpoints(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, res.Code, res.Body.String())
 	}
 	body := res.Body.String()
-	for _, fragment := range []string{"/notify/whatsapp/conversations", "/notify/whatsapp/send-message", "/notify/whatsapp/webhook"} {
+	for _, fragment := range []string{"/notify/whatsapp/settings", "/notify/whatsapp/conversations", "/notify/whatsapp/send-message", "/notify/whatsapp/webhook", "WhatsAppAccountEnvelope"} {
 		if !strings.Contains(body, fragment) {
 			t.Fatalf("expected openapi to contain %s", fragment)
 		}

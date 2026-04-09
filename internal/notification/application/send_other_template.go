@@ -57,7 +57,7 @@ func (u *SendOtherTemplateUseCase) Execute(ctx context.Context, command SendOthe
 		return domain.OutboxMessage{}, ErrOtherTemplateTemplateNameRequired
 	}
 
-	template, err := findWhatsAppTemplateByName(ctx, u.templateProvider, strings.TrimSpace(command.TemplateName))
+	template, err := findWhatsAppTemplateByName(ctx, u.templateProvider, tenantID, strings.TrimSpace(command.TemplateName))
 	if err != nil {
 		if errors.Is(err, ErrJobInstructionTemplateNotFound) {
 			return domain.OutboxMessage{}, ErrOtherTemplateTemplateNotFound
@@ -106,6 +106,7 @@ func (u *SendOtherTemplateUseCase) Execute(ctx context.Context, command SendOthe
 	}
 
 	result, sendErr := u.messageProvider.SendTemplate(ctx, domain.WhatsAppTemplateMessageRequest{
+		TenantID:   tenantID,
 		Recipient:  strings.TrimSpace(command.Recipient),
 		Name:       template.Name,
 		Language:   language,

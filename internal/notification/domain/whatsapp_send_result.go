@@ -6,6 +6,7 @@ type WhatsAppSendResult struct {
 }
 
 type WhatsAppMediaMessageRequest struct {
+	TenantID  string `json:"-"`
 	Recipient string `json:"recipient"`
 	MediaType string `json:"media_type"`
 	MediaID   string `json:"media_id,omitempty"`

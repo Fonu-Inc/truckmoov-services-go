@@ -195,6 +195,23 @@ LIMIT 1
 	return conversation, true, nil
 }
 
+func (r *PostgresWhatsAppConversationRepository) FindMostRecentConversationByTenantAndDriverPhone(ctx context.Context, tenantID, driverPhone string) (domain.WhatsAppConversation, bool, error) {
+	row := r.db.QueryRowContext(ctx, `
+SELECT id, tenant_id, driver_phone, driver_name, last_inbound_message_at, last_outbound_message_at, last_template_sent_at, window_expires_at, last_message_at, last_message_preview, last_message_direction, last_message_type, created_at, updated_at
+FROM whatsapp_conversations
+WHERE tenant_id = $1 AND driver_phone = $2
+ORDER BY updated_at DESC
+LIMIT 1
+`, strings.TrimSpace(tenantID), strings.TrimSpace(driverPhone))
+	conversation, err := scanConversation(row)
+	if err == sql.ErrNoRows {
+		return domain.WhatsAppConversation{}, false, nil
+	}
+	if err != nil {
+		return domain.WhatsAppConversation{}, false, err
+	}
+	return conversation, true, nil
+}
 func (r *PostgresWhatsAppConversationRepository) ListConversationsByTenant(ctx context.Context, tenantID string) ([]domain.WhatsAppConversation, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, tenant_id, driver_phone, driver_name, last_inbound_message_at, last_outbound_message_at, last_template_sent_at, window_expires_at, last_message_at, last_message_preview, last_message_direction, last_message_type, created_at, updated_at
@@ -538,6 +555,26 @@ func (r *InMemoryWhatsAppConversationRepository) FindMostRecentConversationByDri
 	found := false
 	for _, conversation := range r.conversations {
 		if conversation.DriverPhone != strings.TrimSpace(driverPhone) {
+			continue
+		}
+		if !found || conversation.UpdatedAt.After(latest.UpdatedAt) {
+			latest = conversation
+			found = true
+		}
+	}
+	if !found {
+		return domain.WhatsAppConversation{}, false, nil
+	}
+	return cloneConversation(latest), true, nil
+}
+
+func (r *InMemoryWhatsAppConversationRepository) FindMostRecentConversationByTenantAndDriverPhone(_ context.Context, tenantID, driverPhone string) (domain.WhatsAppConversation, bool, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var latest domain.WhatsAppConversation
+	found := false
+	for _, conversation := range r.conversations {
+		if conversation.TenantID != strings.TrimSpace(tenantID) || conversation.DriverPhone != strings.TrimSpace(driverPhone) {
 			continue
 		}
 		if !found || conversation.UpdatedAt.After(latest.UpdatedAt) {

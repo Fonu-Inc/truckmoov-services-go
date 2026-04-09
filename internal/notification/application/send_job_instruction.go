@@ -89,7 +89,7 @@ func (u *SendJobInstructionUseCase) Execute(ctx context.Context, command SendJob
 		return domain.OutboxMessage{}, ErrJobInstructionTemplateNameRequired
 	}
 
-	template, err := u.findTemplateByName(ctx, strings.TrimSpace(command.TemplateName))
+	template, err := u.findTemplateByName(ctx, tenantID, strings.TrimSpace(command.TemplateName))
 	if err != nil {
 		return domain.OutboxMessage{}, err
 	}
@@ -135,6 +135,7 @@ func (u *SendJobInstructionUseCase) Execute(ctx context.Context, command SendJob
 	}
 
 	result, sendErr := u.messageProvider.SendTemplate(ctx, domain.WhatsAppTemplateMessageRequest{
+		TenantID:   tenantID,
 		Recipient:  strings.TrimSpace(command.Recipient),
 		Name:       template.Name,
 		Language:   language,
@@ -189,14 +190,14 @@ func (u *SendJobInstructionUseCase) Execute(ctx context.Context, command SendJob
 	return message, nil
 }
 
-func (u *SendJobInstructionUseCase) findTemplateByName(ctx context.Context, templateName string) (domain.WhatsAppTemplate, error) {
-	return findWhatsAppTemplateByName(ctx, u.templateProvider, templateName)
+func (u *SendJobInstructionUseCase) findTemplateByName(ctx context.Context, tenantID, templateName string) (domain.WhatsAppTemplate, error) {
+	return findWhatsAppTemplateByName(ctx, u.templateProvider, tenantID, templateName)
 }
 
-func findWhatsAppTemplateByName(ctx context.Context, templateProvider WhatsAppTemplateProvider, templateName string) (domain.WhatsAppTemplate, error) {
+func findWhatsAppTemplateByName(ctx context.Context, templateProvider WhatsAppTemplateProvider, tenantID, templateName string) (domain.WhatsAppTemplate, error) {
 	after := ""
 	for page := 0; page < 20; page++ {
-		response, err := templateProvider.ListTemplates(ctx, domain.WhatsAppTemplateListRequest{Limit: 100, After: after})
+		response, err := templateProvider.ListTemplates(ctx, domain.WhatsAppTemplateListRequest{TenantID: strings.TrimSpace(tenantID), Limit: 100, After: after})
 		if err != nil {
 			return domain.WhatsAppTemplate{}, err
 		}

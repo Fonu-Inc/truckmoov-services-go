@@ -42,10 +42,13 @@ Notification service auth vars:
 
 Notification WhatsApp vars (Meta Cloud API transport):
 - `WHATSAPP_API_BASE_URL`: defaults to `https://graph.facebook.com/v18.0`
-- `WHATSAPP_PHONE_NUMBER_ID`: Meta WhatsApp phone number ID used for outbound messages
-- `WHATSAPP_BUSINESS_ACCOUNT_ID`: Meta WhatsApp Business Account ID used to create and list templates against the Business Manager `message_templates` edge
-- `WHATSAPP_ACCESS_TOKEN`: permanent/system-user access token for the WhatsApp Cloud API
-- `WHATSAPP_WEBHOOK_VERIFY_TOKEN`: reserved for the inbound webhook verification flow
+- `WHATSAPP_APP_ID`: Meta app id used for embedded signup token exchange
+- `WHATSAPP_APP_SECRET`: Meta app secret used for embedded signup token exchange
+- `WHATSAPP_ACCOUNT_ENCRYPTION_KEY`: 32-byte AES key encoded as 64 hex characters; used to encrypt tenant-specific long-lived WhatsApp access tokens at rest
+- `WHATSAPP_PHONE_NUMBER_ID`: legacy fallback phone number id when no tenant WhatsApp account has been connected yet
+- `WHATSAPP_BUSINESS_ACCOUNT_ID`: legacy fallback Business Account id when no tenant WhatsApp account has been connected yet
+- `WHATSAPP_ACCESS_TOKEN`: legacy fallback permanent/system-user access token when no tenant WhatsApp account has been connected yet
+- `WHATSAPP_WEBHOOK_VERIFY_TOKEN`: used for inbound webhook verification
 
 Notification SMS fallback vars (Dotgo, mirrored from `fonu-api` v2):
 - `SMS_SERVICE_URL`
@@ -99,6 +102,10 @@ Dispatch job state is now backed by Postgres instead of per-process memory, whil
 - `GET http://localhost:3005/dispatch/health`
 
 ## Notification template endpoints
+- `POST /notify/whatsapp/settings` connects a tenant WhatsApp account via Meta embedded signup. The request supplies the embedded-signup `code`, `phoneNumberId`, and `businessAccountId`. The service exchanges the code for a long-lived token, encrypts that token at rest, stores the tenant WhatsApp account in Postgres, and best-effort subscribes the app to the Business Account webhook.
+- `GET /notify/whatsapp/settings` returns the currently connected tenant WhatsApp account.
+- `DELETE /notify/whatsapp/settings/{phoneNumberId}` disconnects the currently connected tenant WhatsApp account.
+- Once a tenant WhatsApp account has been connected, template creation/listing and WhatsApp message sends resolve phone number id, business account id, and access token dynamically from the stored tenant account instead of the legacy env fallback.
 - `POST /notify/whatsapp/create-template` mirrors the Fonu v2 route shape but now accepts either the shorthand `{ "name", "header", "body" }` payload or a richer Meta-compatible payload with `templateType`, `language`, `category`, `allowCategoryChange`, `parameterFormat`, and full `components` for header media, body examples, and button definitions.
 - Supported `templateType` values are `job_assignment` and `other`. `job_assignment` templates must contain placeholders `{{1}}` to `{{6}}` across their components so the minimum driver job instruction data can be populated at send time.
 - `POST /notify/whatsapp/get-all-templates` mirrors the Fonu v2 route shape and returns the current template list from the configured Meta WhatsApp Business Account, including approval status such as `PENDING`, `APPROVED`, or `REJECTED`.

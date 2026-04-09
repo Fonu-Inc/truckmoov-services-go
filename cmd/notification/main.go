@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/truckmoov/services-go/internal/notification/application"
 	"github.com/truckmoov/services-go/internal/notification/infrastructure"
 	notificationhttp "github.com/truckmoov/services-go/internal/notification/interfaces/http"
+	"github.com/truckmoov/services-go/pkg/activitylog"
 	"github.com/truckmoov/services-go/pkg/config"
 	"github.com/truckmoov/services-go/pkg/eventbus"
 	httpx "github.com/truckmoov/services-go/pkg/http"
@@ -53,6 +55,7 @@ func main() {
 	defer func() {
 		_ = bus.Close()
 	}()
+	activityPublisher := activitylog.NewPublisher(bus)
 
 	redisClient := redisstore.NewStore(cfg.RedisAddr, cfg.RedisDB)
 	outboxRepository := infrastructure.NewRedisOutboxRepository(redisClient)
@@ -61,9 +64,36 @@ func main() {
 		log.Error("conversation_schema_failed", "error", err.Error())
 		os.Exit(1)
 	}
+	whatsAppAccountRepository := infrastructure.NewPostgresWhatsAppAccountRepository(postgresDB)
+	if err := whatsAppAccountRepository.EnsureSchema(ctx); err != nil {
+		log.Error("whatsapp_account_schema_failed", "error", err.Error())
+		os.Exit(1)
+	}
+
+	var tokenCipher *infrastructure.AESTokenCipher
+	if strings.TrimSpace(cfg.WhatsAppAccountEncryptionKey) != "" {
+		tokenCipher, err = infrastructure.NewAESTokenCipher(cfg.WhatsAppAccountEncryptionKey)
+		if err != nil {
+			log.Error("whatsapp_account_cipher_invalid", "error", err.Error())
+			os.Exit(1)
+		}
+	} else {
+		log.Warn("whatsapp_account_cipher_unconfigured", "message", "set WHATSAPP_ACCOUNT_ENCRYPTION_KEY to enable connected WhatsApp accounts")
+	}
+
+	embeddedSignupProvider := infrastructure.NewMetaWhatsAppEmbeddedSignupProvider(
+		cfg.WhatsAppAPIBaseURL,
+		cfg.WhatsAppAppID,
+		cfg.WhatsAppAppSecret,
+	)
+	if strings.TrimSpace(cfg.WhatsAppAppID) == "" || strings.TrimSpace(cfg.WhatsAppAppSecret) == "" {
+		log.Warn("whatsapp_embedded_signup_unconfigured", "message", "set WHATSAPP_APP_ID and WHATSAPP_APP_SECRET to enable embedded signup")
+	}
 
 	whatsAppMessageProvider := infrastructure.NewMetaWhatsAppMessageProvider(
 		cfg.WhatsAppAPIBaseURL,
+		whatsAppAccountRepository,
+		tokenCipher,
 		cfg.WhatsAppPhoneNumberID,
 		cfg.WhatsAppAccessToken,
 	)
@@ -76,15 +106,11 @@ func main() {
 	messageProvider := infrastructure.NewMultiChannelMessageProvider(whatsAppMessageProvider, smsMessageProvider)
 	templateProvider := infrastructure.NewMetaWhatsAppTemplateProvider(
 		cfg.WhatsAppAPIBaseURL,
+		whatsAppAccountRepository,
+		tokenCipher,
 		cfg.WhatsAppBusinessAccountID,
 		cfg.WhatsAppAccessToken,
 	)
-	if cfg.WhatsAppAccessToken == "" || cfg.WhatsAppPhoneNumberID == "" {
-		log.Warn("whatsapp_provider_unconfigured", "message", "set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID before sending live WhatsApp notifications")
-	}
-	if cfg.WhatsAppAccessToken == "" || cfg.WhatsAppBusinessAccountID == "" {
-		log.Warn("whatsapp_template_provider_unconfigured", "message", "set WHATSAPP_ACCESS_TOKEN and WHATSAPP_BUSINESS_ACCOUNT_ID before managing live WhatsApp templates")
-	}
 	if cfg.SMSServiceURL == "" || cfg.SMSServiceUsername == "" || cfg.SMSServicePassword == "" || cfg.SMSServiceSenderID == "" {
 		log.Warn("sms_provider_unconfigured", "message", "set SMS_SERVICE_URL, SMS_SERVICE_USER_NAME, SMS_SERVICE_PASSWORD, and SMS_SERVICE_SENDER_ID before enabling SMS fallback delivery")
 	}
@@ -107,6 +133,16 @@ func main() {
 		clock,
 		idGenerator,
 	)
+	connectWhatsAppAccountUseCase := application.NewConnectWhatsAppAccountUseCase(
+		whatsAppAccountRepository,
+		embeddedSignupProvider,
+		tokenCipher,
+		clock,
+		idGenerator,
+		cfg.DefaultTenant,
+	)
+	getWhatsAppAccountUseCase := application.NewGetWhatsAppAccountUseCase(whatsAppAccountRepository, cfg.DefaultTenant)
+	disconnectWhatsAppAccountUseCase := application.NewDisconnectWhatsAppAccountUseCase(whatsAppAccountRepository, cfg.DefaultTenant)
 	createWhatsAppTemplateUseCase := application.NewCreateWhatsAppTemplateUseCase(templateProvider)
 	listWhatsAppTemplatesUseCase := application.NewListWhatsAppTemplatesUseCase(templateProvider)
 	sendOtherTemplateUseCase := application.NewSendOtherTemplateUseCase(
@@ -151,7 +187,17 @@ func main() {
 	getWhatsAppConversationUseCase := application.NewGetWhatsAppConversationUseCase(conversationRepository, cfg.DefaultTenant)
 	listWhatsAppConversationMessagesUseCase := application.NewListWhatsAppConversationMessagesUseCase(conversationRepository, cfg.DefaultTenant)
 	driverStatusRequestSender := infrastructure.NewDispatchDriverStatusRequestSender(cfg.DispatchServiceURL, cfg.JWTSecret, nil)
-	handleWhatsAppWebhookUseCase := application.NewHandleWhatsAppWebhookUseCase(conversationRepository, outboxRepository, messageProvider, driverStatusRequestSender, deliveryPublisher, clock, idGenerator)
+	handleWhatsAppWebhookUseCase := application.NewHandleWhatsAppWebhookUseCase(
+		conversationRepository,
+		outboxRepository,
+		whatsAppAccountRepository,
+		messageProvider,
+		driverStatusRequestSender,
+		deliveryPublisher,
+		activityPublisher,
+		clock,
+		idGenerator,
+	)
 
 	consumeNotificationUseCase := application.NewConsumeNotificationUseCase(sendMessageUseCase, log)
 	if _, subErr := bus.Subscribe(ctx, "tm.*.notification.send", "notification-send", consumeNotificationUseCase.Handle); subErr != nil {
@@ -161,6 +207,9 @@ func main() {
 	handler := notificationhttp.NewHandler(
 		sendMessageUseCase,
 		retryMessageUseCase,
+		connectWhatsAppAccountUseCase,
+		getWhatsAppAccountUseCase,
+		disconnectWhatsAppAccountUseCase,
 		createWhatsAppTemplateUseCase,
 		listWhatsAppTemplatesUseCase,
 		sendOtherTemplateUseCase,
@@ -171,6 +220,7 @@ func main() {
 		getWhatsAppConversationUseCase,
 		listWhatsAppConversationMessagesUseCase,
 		handleWhatsAppWebhookUseCase,
+		activityPublisher,
 		clock,
 		cfg.WhatsAppWebhookVerifyToken,
 	)

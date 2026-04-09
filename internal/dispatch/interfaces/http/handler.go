@@ -9,6 +9,7 @@ import (
 
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
+	"github.com/truckmoov/services-go/pkg/activitylog"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
@@ -183,6 +184,7 @@ type Handler struct {
 	jobLifecycleUseCase       *application.JobLifecycleUseCase
 	routingUseCase            *application.RoutingUseCase
 	sendJobInstructionUseCase *application.SendJobInstructionUseCase
+	activityPublisher         *activitylog.Publisher
 }
 
 func NewHandler(
@@ -190,12 +192,14 @@ func NewHandler(
 	jobLifecycleUseCase *application.JobLifecycleUseCase,
 	routingUseCase *application.RoutingUseCase,
 	sendJobInstructionUseCase *application.SendJobInstructionUseCase,
+	activityPublisher *activitylog.Publisher,
 ) *Handler {
 	return &Handler{
 		publishJobStatusUseCase:   publishJobStatusUseCase,
 		jobLifecycleUseCase:       jobLifecycleUseCase,
 		routingUseCase:            routingUseCase,
 		sendJobInstructionUseCase: sendJobInstructionUseCase,
+		activityPublisher:         activityPublisher,
 	}
 }
 
@@ -305,6 +309,20 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusCreated, job)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.created",
+		EntityType: "job",
+		EntityID:   job.ID,
+		Summary:    "Dispatch job created",
+		Metadata: map[string]any{
+			"reference":           job.Reference,
+			"assigned_driver_id":  job.AssignedDriverID,
+			"assigned_vehicle_id": job.AssignedVehicleID,
+			"status":              job.Status,
+		},
+	})
 }
 
 func (h *Handler) resolveTenantID(r *http.Request) (string, error) {
@@ -456,6 +474,19 @@ func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, jobID string) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.whatsapp_instruction.sent",
+		EntityType: "job",
+		EntityID:   job.ID,
+		Summary:    "WhatsApp job instruction sent",
+		Metadata: map[string]any{
+			"driver_id":     firstNonEmptyDispatchValue(req.DriverID, req.DriverIDAlt),
+			"template_name": firstNonEmptyDispatchValue(req.TemplateName, req.TemplateNameAlt),
+			"status":        job.Status,
+		},
+	})
 }
 
 func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -492,6 +523,18 @@ func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jo
 		return
 	}
 	respondJSON(w, http.StatusOK, job)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.scheduling.updated",
+		EntityType: "job",
+		EntityID:   job.ID,
+		Summary:    "Dispatch job scheduling updated",
+		Metadata: map[string]any{
+			"priority":    job.Priority,
+			"time_window": job.TimeWindow,
+		},
+	})
 }
 
 func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -524,6 +567,20 @@ func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string
 		return
 	}
 	respondJSON(w, http.StatusOK, job)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.assigned",
+		EntityType: "job",
+		EntityID:   job.ID,
+		Summary:    "Dispatch job assigned",
+		Metadata: map[string]any{
+			"driver_id":  req.DriverID,
+			"vehicle_id": req.VehicleID,
+			"reason":     req.Reason,
+			"status":     job.Status,
+		},
+	})
 }
 
 func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -553,6 +610,18 @@ func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request, jobID string
 		return
 	}
 	respondJSON(w, http.StatusOK, job)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.cancelled",
+		EntityType: "job",
+		EntityID:   job.ID,
+		Summary:    "Dispatch job cancelled",
+		Metadata: map[string]any{
+			"reason": req.Reason,
+			"status": job.Status,
+		},
+	})
 }
 
 func (h *Handler) acknowledgeJob(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -582,6 +651,18 @@ func (h *Handler) acknowledgeJob(w http.ResponseWriter, r *http.Request, jobID s
 		return
 	}
 	respondJSON(w, http.StatusOK, job)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.acknowledged",
+		EntityType: "job",
+		EntityID:   job.ID,
+		Summary:    "Dispatch job acknowledged",
+		Metadata: map[string]any{
+			"driver_id": req.DriverID,
+			"status":    job.Status,
+		},
+	})
 }
 
 func (h *Handler) updateJobLifecycleStatus(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -655,6 +736,21 @@ func (h *Handler) createDriverStatusRequest(w http.ResponseWriter, r *http.Reque
 			"request": request,
 		},
 	})
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.driver_status_request.created",
+		EntityType: "job",
+		EntityID:   job.ID,
+		Summary:    "Driver status update request captured",
+		Metadata: map[string]any{
+			"request_id":    request.ID,
+			"requested_for": request.RequestedStatus,
+			"driver_id":     request.DriverID,
+			"driver_phone":  request.DriverPhone,
+			"channel":       request.Channel,
+		},
+	})
 }
 
 func (h *Handler) confirmDriverStatusRequest(w http.ResponseWriter, r *http.Request, jobID, requestID string) {
@@ -696,6 +792,20 @@ func (h *Handler) confirmDriverStatusRequest(w http.ResponseWriter, r *http.Requ
 		"data": map[string]any{
 			"job":     job,
 			"request": request,
+		},
+	})
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.driver_status_request.confirmed",
+		EntityType: "job",
+		EntityID:   job.ID,
+		Summary:    "Driver status update request confirmed",
+		Metadata: map[string]any{
+			"request_id":    request.ID,
+			"confirmed_by":  confirmedBy,
+			"requested_for": request.RequestedStatus,
+			"status":        job.Status,
 		},
 	})
 }
@@ -810,6 +920,19 @@ func (h *Handler) addPODAttachment(w http.ResponseWriter, r *http.Request, jobID
 		return
 	}
 	respondJSON(w, http.StatusOK, job)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.pod_attachment.added",
+		EntityType: "job",
+		EntityID:   job.ID,
+		Summary:    "Job POD attachment added",
+		Metadata: map[string]any{
+			"kind":        req.Kind,
+			"url":         req.URL,
+			"uploaded_by": req.UploadedBy,
+		},
+	})
 }
 
 func (h *Handler) addJobNote(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -840,6 +963,17 @@ func (h *Handler) addJobNote(w http.ResponseWriter, r *http.Request, jobID strin
 		return
 	}
 	respondJSON(w, http.StatusOK, job)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.note.added",
+		EntityType: "job",
+		EntityID:   job.ID,
+		Summary:    "Dispatch job note added",
+		Metadata: map[string]any{
+			"author_id": req.AuthorID,
+		},
+	})
 }
 
 func (h *Handler) updateStatus(w http.ResponseWriter, r *http.Request) {
@@ -918,6 +1052,29 @@ func (h *Handler) optimizeRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, plan)
+}
+
+func (h *Handler) publishActivity(r *http.Request, command activitylog.PublishCommand) {
+	if h.activityPublisher == nil {
+		return
+	}
+
+	if claims, ok := httpx.ClaimsFromRequest(r); ok && claims != nil {
+		if command.ActorID == "" {
+			command.ActorID = firstNonEmptyDispatchValue(strings.TrimSpace(claims.Subject), strings.TrimSpace(claims.Email))
+		}
+		if command.ActorRole == "" {
+			command.ActorRole = strings.TrimSpace(claims.Role)
+		}
+	}
+
+	if command.OccurredAt.IsZero() {
+		command.OccurredAt = time.Now().UTC()
+	}
+
+	if err := h.activityPublisher.Publish(r.Context(), command); err != nil {
+		// Activity logging is best-effort and should not fail the primary request path.
+	}
 }
 
 func parseJobResourcePath(path string) (jobID, action string, ok bool) {

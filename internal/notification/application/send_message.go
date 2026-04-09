@@ -72,7 +72,7 @@ func (u *SendMessageUseCase) Execute(ctx context.Context, command SendMessageCom
 		return domain.OutboxMessage{}, fmt.Errorf("save queued outbox message: %w", err)
 	}
 
-	status, sendErr := u.provider.Send(ctx, message.Channel, message.Recipient, message.Content)
+	status, sendErr := u.provider.Send(ctx, message.TenantID, message.Channel, message.Recipient, message.Content)
 	if sendErr != nil {
 		message = message.MarkFailed(u.clock.Now())
 	} else {

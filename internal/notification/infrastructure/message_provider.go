@@ -36,11 +36,21 @@ var dotgoSMSStatusMessages = map[int]string{
 	52: "SYSTEM ERROR",
 }
 
+type whatsAppAccountRepository interface {
+	FindAccountByTenantID(ctx context.Context, tenantID string) (domain.WhatsAppAccount, bool, error)
+}
+
+type whatsAppTokenCipher interface {
+	Decrypt(ciphertext, iv string) (string, error)
+}
+
 type MetaWhatsAppMessageProvider struct {
-	baseURL       string
-	phoneNumberID string
-	accessToken   string
-	client        *http.Client
+	baseURL             string
+	accountRepository   whatsAppAccountRepository
+	tokenCipher         whatsAppTokenCipher
+	legacyPhoneNumberID string
+	legacyAccessToken   string
+	client              *http.Client
 }
 
 type DotgoSMSMessageProvider struct {
@@ -56,11 +66,11 @@ type MultiChannelMessageProvider struct {
 	sms      *DotgoSMSMessageProvider
 }
 
-func NewMetaWhatsAppMessageProvider(baseURL, phoneNumberID, accessToken string) *MetaWhatsAppMessageProvider {
-	return NewMetaWhatsAppMessageProviderWithClient(baseURL, phoneNumberID, accessToken, nil)
+func NewMetaWhatsAppMessageProvider(baseURL string, accountRepository whatsAppAccountRepository, tokenCipher whatsAppTokenCipher, legacyPhoneNumberID, legacyAccessToken string) *MetaWhatsAppMessageProvider {
+	return NewMetaWhatsAppMessageProviderWithClient(baseURL, accountRepository, tokenCipher, legacyPhoneNumberID, legacyAccessToken, nil)
 }
 
-func NewMetaWhatsAppMessageProviderWithClient(baseURL, phoneNumberID, accessToken string, client *http.Client) *MetaWhatsAppMessageProvider {
+func NewMetaWhatsAppMessageProviderWithClient(baseURL string, accountRepository whatsAppAccountRepository, tokenCipher whatsAppTokenCipher, legacyPhoneNumberID, legacyAccessToken string, client *http.Client) *MetaWhatsAppMessageProvider {
 	trimmedBaseURL := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if trimmedBaseURL == "" {
 		trimmedBaseURL = defaultWhatsAppAPIBaseURL
@@ -70,10 +80,12 @@ func NewMetaWhatsAppMessageProviderWithClient(baseURL, phoneNumberID, accessToke
 	}
 
 	return &MetaWhatsAppMessageProvider{
-		baseURL:       trimmedBaseURL,
-		phoneNumberID: strings.TrimSpace(phoneNumberID),
-		accessToken:   strings.TrimSpace(accessToken),
-		client:        client,
+		baseURL:             trimmedBaseURL,
+		accountRepository:   accountRepository,
+		tokenCipher:         tokenCipher,
+		legacyPhoneNumberID: strings.TrimSpace(legacyPhoneNumberID),
+		legacyAccessToken:   strings.TrimSpace(legacyAccessToken),
+		client:              client,
 	}
 }
 
@@ -99,15 +111,15 @@ func NewMultiChannelMessageProvider(whatsApp *MetaWhatsAppMessageProvider, sms *
 	return &MultiChannelMessageProvider{whatsApp: whatsApp, sms: sms}
 }
 
-func (p *MetaWhatsAppMessageProvider) Send(ctx context.Context, channel, recipient, content string) (string, error) {
+func (p *MetaWhatsAppMessageProvider) Send(ctx context.Context, tenantID, channel, recipient, content string) (string, error) {
 	if strings.EqualFold(strings.TrimSpace(channel), "whatsapp") == false && strings.TrimSpace(channel) != "" {
-		return "failed", fmt.Errorf("unsupported notification channel: %s", channel)
+		return domain.StatusFailed, fmt.Errorf("unsupported notification channel: %s", channel)
 	}
-	result, err := p.SendText(ctx, recipient, content)
+	result, err := p.SendText(ctx, tenantID, recipient, content)
 	return result.Status, err
 }
 
-func (p *DotgoSMSMessageProvider) Send(ctx context.Context, channel, recipient, content string) (string, error) {
+func (p *DotgoSMSMessageProvider) Send(ctx context.Context, _ string, channel, recipient, content string) (string, error) {
 	if strings.EqualFold(strings.TrimSpace(channel), "sms") == false && strings.TrimSpace(channel) != "" {
 		return domain.StatusFailed, fmt.Errorf("unsupported notification channel: %s", channel)
 	}
@@ -156,28 +168,29 @@ func (p *DotgoSMSMessageProvider) Send(ctx context.Context, channel, recipient, 
 	return domain.StatusSent, nil
 }
 
-func (p *MultiChannelMessageProvider) Send(ctx context.Context, channel, recipient, content string) (string, error) {
+func (p *MultiChannelMessageProvider) Send(ctx context.Context, tenantID, channel, recipient, content string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(channel)) {
 	case "", "whatsapp":
 		if p.whatsApp == nil {
 			return domain.StatusFailed, errors.New("whatsapp provider is not configured")
 		}
-		return p.whatsApp.Send(ctx, "whatsapp", recipient, content)
+		return p.whatsApp.Send(ctx, tenantID, "whatsapp", recipient, content)
 	case "sms":
 		if p.sms == nil {
 			return domain.StatusFailed, errors.New("sms provider is not configured")
 		}
-		return p.sms.Send(ctx, "sms", recipient, content)
+		return p.sms.Send(ctx, tenantID, "sms", recipient, content)
 	default:
 		return domain.StatusFailed, fmt.Errorf("unsupported notification channel: %s", channel)
 	}
 }
 
-func (p *MetaWhatsAppMessageProvider) SendText(ctx context.Context, recipient, content string) (domain.WhatsAppSendResult, error) {
+func (p *MetaWhatsAppMessageProvider) SendText(ctx context.Context, tenantID, recipient, content string) (domain.WhatsAppSendResult, error) {
 	if strings.TrimSpace(recipient) == "" || strings.TrimSpace(content) == "" {
 		return domain.WhatsAppSendResult{Status: domain.StatusFailed}, errors.New("recipient and content are required")
 	}
-	if err := p.validateConfiguration(); err != nil {
+	phoneNumberID, accessToken, err := p.resolveCredentials(ctx, tenantID)
+	if err != nil {
 		return domain.WhatsAppSendResult{Status: domain.StatusFailed}, err
 	}
 
@@ -190,14 +203,15 @@ func (p *MetaWhatsAppMessageProvider) SendText(ctx context.Context, recipient, c
 		},
 	}
 
-	return p.send(ctx, payload)
+	return p.send(ctx, phoneNumberID, accessToken, payload)
 }
 
 func (p *MetaWhatsAppMessageProvider) SendTemplate(ctx context.Context, request domain.WhatsAppTemplateMessageRequest) (domain.WhatsAppSendResult, error) {
 	if strings.TrimSpace(request.Recipient) == "" || strings.TrimSpace(request.Name) == "" {
 		return domain.WhatsAppSendResult{Status: domain.StatusFailed}, errors.New("recipient and template name are required")
 	}
-	if err := p.validateConfiguration(); err != nil {
+	phoneNumberID, accessToken, err := p.resolveCredentials(ctx, request.TenantID)
+	if err != nil {
 		return domain.WhatsAppSendResult{Status: domain.StatusFailed}, err
 	}
 
@@ -223,14 +237,15 @@ func (p *MetaWhatsAppMessageProvider) SendTemplate(ctx context.Context, request 
 		"template":          template,
 	}
 
-	return p.send(ctx, payload)
+	return p.send(ctx, phoneNumberID, accessToken, payload)
 }
 
 func (p *MetaWhatsAppMessageProvider) SendMedia(ctx context.Context, request domain.WhatsAppMediaMessageRequest) (domain.WhatsAppSendResult, error) {
 	if strings.TrimSpace(request.Recipient) == "" {
 		return domain.WhatsAppSendResult{Status: domain.StatusFailed}, errors.New("recipient is required")
 	}
-	if err := p.validateConfiguration(); err != nil {
+	phoneNumberID, accessToken, err := p.resolveCredentials(ctx, request.TenantID)
+	if err != nil {
 		return domain.WhatsAppSendResult{Status: domain.StatusFailed}, err
 	}
 
@@ -265,10 +280,37 @@ func (p *MetaWhatsAppMessageProvider) SendMedia(ctx context.Context, request dom
 		mediaType:           mediaPayload,
 	}
 
-	return p.send(ctx, payload)
+	return p.send(ctx, phoneNumberID, accessToken, payload)
 }
 
-func (p *MetaWhatsAppMessageProvider) send(ctx context.Context, payload map[string]any) (domain.WhatsAppSendResult, error) {
+func (p *MetaWhatsAppMessageProvider) resolveCredentials(ctx context.Context, tenantID string) (string, string, error) {
+	trimmedTenantID := strings.TrimSpace(tenantID)
+	if trimmedTenantID != "" && p.accountRepository != nil {
+		account, ok, err := p.accountRepository.FindAccountByTenantID(ctx, trimmedTenantID)
+		if err != nil {
+			return "", "", fmt.Errorf("load whatsapp account: %w", err)
+		}
+		if ok {
+			if p.tokenCipher == nil {
+				return "", "", errors.New("whatsapp account cipher is not configured")
+			}
+			accessToken, err := p.tokenCipher.Decrypt(account.EncryptedAccessToken, account.AccessTokenIV)
+			if err != nil {
+				return "", "", fmt.Errorf("decrypt whatsapp access token: %w", err)
+			}
+			if strings.TrimSpace(account.PhoneNumberID) == "" || strings.TrimSpace(accessToken) == "" {
+				return "", "", errors.New("whatsapp account is incomplete for this tenant")
+			}
+			return strings.TrimSpace(account.PhoneNumberID), strings.TrimSpace(accessToken), nil
+		}
+	}
+	if p.legacyAccessToken != "" && p.legacyPhoneNumberID != "" {
+		return p.legacyPhoneNumberID, p.legacyAccessToken, nil
+	}
+	return "", "", errors.New("whatsapp account is not connected for this tenant")
+}
+
+func (p *MetaWhatsAppMessageProvider) send(ctx context.Context, phoneNumberID, accessToken string, payload map[string]any) (domain.WhatsAppSendResult, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return domain.WhatsAppSendResult{Status: domain.StatusFailed}, fmt.Errorf("marshal whatsapp payload: %w", err)
@@ -277,13 +319,13 @@ func (p *MetaWhatsAppMessageProvider) send(ctx context.Context, payload map[stri
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		fmt.Sprintf("%s/%s/messages", p.baseURL, p.phoneNumberID),
+		fmt.Sprintf("%s/%s/messages", p.baseURL, strings.TrimSpace(phoneNumberID)),
 		bytes.NewReader(body),
 	)
 	if err != nil {
 		return domain.WhatsAppSendResult{Status: domain.StatusFailed}, fmt.Errorf("build whatsapp request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+p.accessToken)
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(accessToken))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(req)
@@ -314,13 +356,6 @@ func (p *MetaWhatsAppMessageProvider) send(ctx context.Context, payload map[stri
 		result.MessageID = strings.TrimSpace(response.Messages[0].ID)
 	}
 	return result, nil
-}
-
-func (p *MetaWhatsAppMessageProvider) validateConfiguration() error {
-	if p.accessToken == "" || p.phoneNumberID == "" {
-		return errors.New("whatsapp provider is not configured; set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID")
-	}
-	return nil
 }
 
 func (p *DotgoSMSMessageProvider) validateConfiguration() error {
