@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Route Preview</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <style>
+      :root {
+        --bg: #f6f0e4;
+        --panel: rgba(255, 252, 247, 0.97);
+        --ink: #1f2937;
+        --muted: #6b7280;
+        --border: rgba(31, 41, 55, 0.12);
+        --primary: #0f766e;
+        --secondary: #1d4ed8;
+        --accent: #dc2626;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(29, 78, 216, 0.12), transparent 28rem),
+          linear-gradient(180deg, #f8f3ea 0%, #efe6d7 100%);
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 420px 1fr;
+        min-height: 100vh;
+      }
+      .sidebar {
+        padding: 20px;
+        overflow: auto;
+        border-right: 1px solid var(--border);
+        background: var(--panel);
+        backdrop-filter: blur(10px);
+      }
+      .content { padding: 18px; }
+      #map {
+        height: calc(100vh - 36px);
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 16px 60px rgba(15, 23, 42, 0.12);
+      }
+      h1, h2 { margin: 0 0 12px; }
+      p {
+        margin: 0 0 14px;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+      textarea {
+        width: 100%;
+        min-height: 220px;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        padding: 12px;
+        resize: vertical;
+        font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: white;
+        color: var(--ink);
+      }
+      .toolbar {
+        display: flex;
+        gap: 10px;
+        margin: 12px 0 18px;
+        flex-wrap: wrap;
+      }
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 10px 14px;
+        background: var(--primary);
+        color: white;
+        cursor: pointer;
+        font-weight: 600;
+      }
+      button.secondary {
+        background: #475569;
+      }
+      .hint, .error {
+        font-size: 0.92rem;
+        margin-bottom: 10px;
+      }
+      .error { color: #b91c1c; }
+      .stats, .route-options, .step-list, .maneuver-list {
+        display: grid;
+        gap: 10px;
+      }
+      .stats {
+        grid-template-columns: repeat(2, 1fr);
+        margin: 16px 0 20px;
+      }
+      .card, .route-option, .step, .maneuver {
+        background: white;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 12px;
+      }
+      .card strong { display: block; font-size: 1.15rem; }
+      .route-option, .step, .maneuver {
+        cursor: pointer;
+        transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+        color: var(--ink);
+        text-align: left;
+      }
+      .route-option:hover, .step:hover, .maneuver:hover { transform: translateY(-1px); }
+      .route-option.active, .step.active {
+        border-color: var(--primary);
+        box-shadow: 0 10px 26px rgba(15, 118, 110, 0.12);
+      }
+      .label-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 0.78rem;
+        background: rgba(15, 118, 110, 0.14);
+        color: #115e59;
+      }
+      .legend {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        margin-bottom: 12px;
+      }
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.92rem;
+        color: var(--muted);
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        display: inline-block;
+      }
+      small {
+        display: block;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .hidden { display: none; }
+      @media (max-width: 960px) {
+        .layout { grid-template-columns: 1fr; }
+        .sidebar {
+          border-right: 0;
+          border-bottom: 1px solid var(--border);
+        }
+        #map { height: 60vh; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <h1>Route Preview</h1>
+        <p>
+          Paste the exact JSON response from your backend. This avoids fake sample geometry and
+          lets you verify the real primary route and real `alternate_routes`.
+        </p>
+
+        <label for="jsonInput"><strong>Route JSON</strong></label>
+        <textarea id="jsonInput" spellcheck="false" placeholder='Paste JSON here...'></textarea>
+        <div class="toolbar">
+          <button id="renderBtn">Render Route</button>
+          <button id="clearBtn" class="secondary">Clear</button>
+        </div>
+        <div class="hint">Required: `ordered_steps[].shape`. Optional: `alternate_routes`.</div>
+        <div id="error" class="error hidden"></div>
+
+        <div id="results" class="hidden">
+          <div class="stats" id="stats"></div>
+
+          <h2>Route Options</h2>
+          <div class="route-options" id="routeOptions"></div>
+
+          <h2 style="margin-top: 18px">Stops</h2>
+          <div class="step-list" id="stepList"></div>
+
+          <h2 style="margin-top: 18px">Maneuvers</h2>
+          <div class="maneuver-list" id="maneuverList"></div>
+        </div>
+      </aside>
+
+      <main class="content">
+        <div class="legend">
+          <span><i class="dot" style="background:#0f766e"></i> active route</span>
+          <span><i class="dot" style="background:#1d4ed8"></i> stop marker</span>
+          <span><i class="dot" style="background:#dc2626"></i> selected maneuver</span>
+        </div>
+        <div id="map"></div>
+      </main>
+    </div>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script>
+      function decodePolyline(encoded, precision = 6) {
+        const coordinates = [];
+        let index = 0;
+        let lat = 0;
+        let lng = 0;
+        const factor = Math.pow(10, precision);
+        while (index < encoded.length) {
+          let result = 0;
+          let shift = 0;
+          let byte;
+          do {
+            byte = encoded.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+          } while (byte >= 0x20);
+          lat += result & 1 ? ~(result >> 1) : result >> 1;
+          result = 0;
+          shift = 0;
+          do {
+            byte = encoded.charCodeAt(index++) - 63;
+            result |= (byte & 0x1f) << shift;
+            shift += 5;
+          } while (byte >= 0x20);
+          lng += result & 1 ? ~(result >> 1) : result >> 1;
+          coordinates.push([lat / factor, lng / factor]);
+        }
+        return coordinates;
+      }
+
+      function formatDuration(seconds) {
+        const minutes = Math.round((seconds || 0) / 60);
+        if (minutes < 60) return `${minutes} min`;
+        const hours = Math.floor(minutes / 60);
+        const rem = minutes % 60;
+        return rem ? `${hours}h ${rem}m` : `${hours}h`;
+      }
+
+      function hydrateRoute(route, label) {
+        return {
+          ...route,
+          label,
+          decodedSteps: (route.ordered_steps || []).map((step) => ({
+            ...step,
+            decodedShape: step.shape ? decodePolyline(step.shape, 6) : []
+          }))
+        };
+      }
+
+      const map = L.map("map");
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap contributors"
+      }).addTo(map);
+      map.setView([6.5244, 3.3792], 11);
+
+      let routeOptions = [];
+      let activeRouteIndex = 0;
+      let activeStepIndex = 0;
+      let routeLayers = [];
+      let markerLayers = [];
+      let maneuverLayer = null;
+
+      function showError(message) {
+        const error = document.getElementById("error");
+        error.textContent = message;
+        error.classList.remove("hidden");
+      }
+
+      function clearError() {
+        const error = document.getElementById("error");
+        error.textContent = "";
+        error.classList.add("hidden");
+      }
+
+      function clearMapLayers() {
+        routeLayers.forEach((layer) => map.removeLayer(layer));
+        markerLayers.forEach((layer) => map.removeLayer(layer));
+        routeLayers = [];
+        markerLayers = [];
+        if (maneuverLayer) {
+          map.removeLayer(maneuverLayer);
+          maneuverLayer = null;
+        }
+      }
+
+      function currentRoute() {
+        return routeOptions[activeRouteIndex];
+      }
+
+      function renderStats() {
+        const stats = document.getElementById("stats");
+        const route = currentRoute();
+        stats.innerHTML = `
+          <div class="card"><strong>${route.total_distance_km ?? "-" } km</strong><small>Route distance</small></div>
+          <div class="card"><strong>${formatDuration(route.total_duration_seconds)}</strong><small>Route duration</small></div>
+          <div class="card"><strong>${routeOptions.length}</strong><small>Route options</small></div>
+          <div class="card"><strong>${route.decodedSteps.length}</strong><small>Stops shown</small></div>
+        `;
+      }
+
+      function renderRouteOptions() {
+        const el = document.getElementById("routeOptions");
+        el.innerHTML = "";
+        routeOptions.forEach((route, index) => {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "route-option" + (index === activeRouteIndex ? " active" : "");
+          item.innerHTML = `
+            <div class="label-row">
+              <strong>${route.label}</strong>
+              <span class="badge">${formatDuration(route.total_duration_seconds)}</span>
+            </div>
+            <small>${route.total_distance_km ?? "-"} km • ${route.completion_time || "no completion time"}</small>
+          `;
+          item.addEventListener("click", () => {
+            activeRouteIndex = index;
+            activeStepIndex = 0;
+            renderAll();
+          });
+          el.appendChild(item);
+        });
+      }
+
+      function renderSteps() {
+        const route = currentRoute();
+        const el = document.getElementById("stepList");
+        el.innerHTML = "";
+        route.decodedSteps.forEach((step, index) => {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "step" + (index === activeStepIndex ? " active" : "");
+          item.innerHTML = `
+            <div class="label-row">
+              <strong>${step.sequence}. ${step.address || step.label || "Stop"}</strong>
+              <span class="badge">${step.stop_type || "stop"}</span>
+            </div>
+            <small>${step.distance_from_previous_km ?? "-"} km • ETA ${formatDuration(step.eta_seconds)}</small>
+          `;
+          item.addEventListener("click", () => {
+            activeStepIndex = index;
+            renderSteps();
+            renderManeuvers();
+            renderMap();
+          });
+          el.appendChild(item);
+        });
+      }
+
+      function renderManeuvers() {
+        const route = currentRoute();
+        const step = route.decodedSteps[activeStepIndex];
+        const el = document.getElementById("maneuverList");
+        el.innerHTML = "";
+        (step?.maneuvers || []).forEach((maneuver, index) => {
+          const item = document.createElement("button");
+          item.type = "button";
+          item.className = "maneuver";
+          item.innerHTML = `
+            <strong>${index + 1}. ${maneuver.instruction || "Continue"}</strong>
+            <small>type ${maneuver.type ?? "-"}</small>
+          `;
+          item.addEventListener("click", () => highlightManeuver(maneuver));
+          el.appendChild(item);
+        });
+      }
+
+      function renderMap() {
+        clearMapLayers();
+        const route = currentRoute();
+        route.decodedSteps.forEach((step, index) => {
+          if (step.decodedShape.length > 1) {
+            const line = L.polyline(step.decodedShape, {
+              color: index === activeStepIndex ? "#0f766e" : "#1d4ed8",
+              weight: index === activeStepIndex ? 6 : 4,
+              opacity: index === activeStepIndex ? 0.95 : 0.72
+            }).addTo(map);
+            routeLayers.push(line);
+          }
+          if (typeof step.latitude === "number" && typeof step.longitude === "number") {
+            const marker = L.circleMarker([step.latitude, step.longitude], {
+              radius: 7,
+              color: "#111827",
+              fillColor: "#1d4ed8",
+              fillOpacity: 1,
+              weight: 2
+            }).addTo(map);
+            marker.bindPopup(`${step.sequence}. ${step.stop_type || "stop"}<br>${step.address || ""}`);
+            markerLayers.push(marker);
+          }
+        });
+
+        const allPoints = route.decodedSteps.flatMap((step) => step.decodedShape);
+        if (allPoints.length) {
+          map.fitBounds(allPoints, { padding: [30, 30] });
+        }
+      }
+
+      function highlightManeuver(maneuver) {
+        const step = currentRoute().decodedSteps[activeStepIndex];
+        if (maneuverLayer) {
+          map.removeLayer(maneuverLayer);
+          maneuverLayer = null;
+        }
+        if (
+          !step ||
+          typeof maneuver.begin_shape_index !== "number" ||
+          typeof maneuver.end_shape_index !== "number"
+        ) {
+          return;
+        }
+        const segment = step.decodedShape.slice(
+          maneuver.begin_shape_index,
+          maneuver.end_shape_index + 1
+        );
+        if (segment.length < 2) return;
+        maneuverLayer = L.polyline(segment, {
+          color: "#dc2626",
+          weight: 7,
+          opacity: 0.95
+        }).addTo(map);
+      }
+
+      function renderAll() {
+        renderStats();
+        renderRouteOptions();
+        renderSteps();
+        renderManeuvers();
+        renderMap();
+        document.getElementById("results").classList.remove("hidden");
+      }
+
+      function loadRouteFromTextarea() {
+        clearError();
+        const raw = document.getElementById("jsonInput").value.trim();
+        if (!raw) {
+          showError("Paste a route JSON payload first.");
+          return;
+        }
+
+        let parsed;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (error) {
+          showError("Invalid JSON: " + error.message);
+          return;
+        }
+
+        if (!Array.isArray(parsed.ordered_steps) || parsed.ordered_steps.length === 0) {
+          showError("The payload must contain a non-empty ordered_steps array.");
+          return;
+        }
+
+        const primaryRoute = hydrateRoute(
+          {
+            completion_time: parsed.completion_time,
+            eta_seconds: parsed.eta_seconds,
+            total_distance_km: parsed.total_distance_km,
+            total_duration_seconds: parsed.total_duration_seconds,
+            ordered_steps: parsed.ordered_steps
+          },
+          "Primary"
+        );
+
+        routeOptions = [
+          primaryRoute,
+          ...((parsed.alternate_routes || []).map((route) =>
+            hydrateRoute(route, `Alternate ${route.route_index || routeOptions.length + 1}`)
+          ))
+        ];
+
+        activeRouteIndex = 0;
+        activeStepIndex = 0;
+        renderAll();
+      }
+
+      document.getElementById("renderBtn").addEventListener("click", loadRouteFromTextarea);
+      document.getElementById("clearBtn").addEventListener("click", () => {
+        document.getElementById("jsonInput").value = "";
+        clearError();
+        clearMapLayers();
+        document.getElementById("results").classList.add("hidden");
+        routeOptions = [];
+        activeRouteIndex = 0;
+        activeStepIndex = 0;
+        map.setView([6.5244, 3.3792], 11);
+      });
+    </script>
+  </body>
+</html>
