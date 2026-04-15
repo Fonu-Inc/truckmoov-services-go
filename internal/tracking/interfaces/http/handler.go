@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/truckmoov/services-go/internal/tracking/application"
+	trackingws "github.com/truckmoov/services-go/internal/tracking/interfaces/ws"
 	"github.com/truckmoov/services-go/pkg/activitylog"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
@@ -43,6 +44,7 @@ type Handler struct {
 	trackingQueryUseCase  *application.TrackingQueryUseCase
 	gpsAPIKey             string
 	activityPublisher     activityPublisher
+	wsBridge              *trackingws.Bridge
 }
 
 func NewHandler(
@@ -50,14 +52,16 @@ func NewHandler(
 	publishAlertUseCase *application.PublishAlertUseCase,
 	trackingQueryUseCase *application.TrackingQueryUseCase,
 	gpsAPIKey string,
-	activityPublisher activityPublisher,
+	jwtSecret string,
+	ap activityPublisher,
 ) *Handler {
 	return &Handler{
 		ingestLocationUseCase: ingestLocationUseCase,
 		publishAlertUseCase:   publishAlertUseCase,
 		trackingQueryUseCase:  trackingQueryUseCase,
 		gpsAPIKey:             gpsAPIKey,
-		activityPublisher:     activityPublisher,
+		activityPublisher:     ap,
+		wsBridge:              trackingws.NewBridge(ingestLocationUseCase, publishAlertUseCase, jwtSecret),
 	}
 }
 
@@ -69,7 +73,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/tracking/alerts", h.alert)
 	mux.HandleFunc("/tracking/vehicles", h.listVehicles)
 	mux.HandleFunc("/tracking/vehicles/", h.vehiclesResource)
-	mux.HandleFunc("/tracking/ws", h.websocketPlaceholder)
+	mux.HandleFunc("/tracking/ws", h.wsBridge.ServeHTTP)
 	mux.HandleFunc("/health", h.health)
 }
 
@@ -189,13 +193,6 @@ func (h *Handler) alert(w http.ResponseWriter, r *http.Request) {
 			"subject":    result.Subject,
 			"event_id":   result.EventID,
 		},
-	})
-}
-
-func (h *Handler) websocketPlaceholder(w http.ResponseWriter, _ *http.Request) {
-	respondJSON(w, http.StatusNotImplemented, map[string]any{
-		"status":  "placeholder",
-		"message": "WebSocket live feed endpoint will be implemented in feature phase.",
 	})
 }
 

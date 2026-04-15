@@ -64,6 +64,10 @@ func TenantIDFromRequest(r *http.Request) string {
 	return claims.TenantID
 }
 
+func ParseToken(token, secret string) (*AuthClaims, bool) {
+	return resolveAuthClaims("Bearer "+token, secret)
+}
+
 func resolveAuthClaims(authorizationHeader, secret string) (*AuthClaims, bool) {
 	fields := strings.Fields(strings.TrimSpace(authorizationHeader))
 	if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {

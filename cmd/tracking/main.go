@@ -73,7 +73,7 @@ func main() {
 		cfg.DefaultTenant,
 	)
 
-	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, cfg.GPSAPIKey, activityPublisher)
+	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, cfg.GPSAPIKey, cfg.JWTSecret, activityPublisher)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	handlerWithCORS := httpx.WithCORS(mux, cfg.CORSOrigins)
