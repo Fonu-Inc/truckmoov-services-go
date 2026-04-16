@@ -28,17 +28,17 @@ type TelemetryPayload struct {
 	FuelLevel      float64 `json:"fuel_level"`
 	BatteryVoltage float64 `json:"battery_voltage"`
 	EngineStatus   string  `json:"engine_status"`
-	SignalStrength  float64 `json:"signal_strength"`
+	SignalStrength float64 `json:"signal_strength"`
 	Satellites     int     `json:"satellites"`
 }
 
 type AlertPayload struct {
-	Type          string  `json:"type"`
-	Severity      string  `json:"severity"`
-	Latitude      float64 `json:"latitude"`
-	Longitude     float64 `json:"longitude"`
-	GeofenceID    string  `json:"geofence_id"`
-	GeofenceName  string  `json:"geofence_name"`
+	Type         string  `json:"type"`
+	Severity     string  `json:"severity"`
+	Latitude     float64 `json:"latitude"`
+	Longitude    float64 `json:"longitude"`
+	GeofenceID   string  `json:"geofence_id"`
+	GeofenceName string  `json:"geofence_name"`
 }
 
 type OutboundMessage struct {
