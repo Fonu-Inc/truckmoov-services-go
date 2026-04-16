@@ -85,7 +85,7 @@ func buildTrackingTestHandler() (*Handler, *fakeTrackingActivityPublisher) {
 		"default",
 	)
 
-	return NewHandler(ingestUseCase, alertUseCase, queryUseCase, "", activityPublisher), activityPublisher
+	return NewHandler(ingestUseCase, alertUseCase, queryUseCase, "", "", activityPublisher), activityPublisher
 }
 
 func TestHandler_IngestContract(t *testing.T) {
