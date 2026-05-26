@@ -125,8 +125,8 @@ func TestHandler_WebsocketPlaceholderContract(t *testing.T) {
 
 	mux.ServeHTTP(res, req)
 
-	if res.Code != http.StatusNotImplemented {
-		t.Fatalf("expected status %d, got %d", http.StatusNotImplemented, res.Code)
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("expected status %d, got %d", http.StatusForbidden, res.Code)
 	}
 }
 
