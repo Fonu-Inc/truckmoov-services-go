@@ -64,6 +64,14 @@ func (s *Store) Get(key string) ([]byte, bool, error) {
 	return []byte(value), true, nil
 }
 
+func (s *Store) Del(keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	_, err := s.do("DEL", keys...)
+	return err
+}
+
 func (s *Store) SAdd(key string, members ...string) error {
 	args := make([]string, 0, len(members)+1)
 	args = append(args, key)

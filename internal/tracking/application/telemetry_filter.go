@@ -15,12 +15,14 @@ type filterResult struct {
 	reason string
 }
 
-func applyTelemetryFilter(cfg TelemetryConfig, prev *LatestLocation, cmd IngestLocationCommand, fixTime time.Time) filterResult {
+func applyTelemetryFilter(cfg TelemetryConfig, prev *LatestLocation, cmd IngestLocationCommand, fixTime time.Time, fixOK bool) filterResult {
+	// Accuracy is time-independent, so it must run even when fix_time is unparseable.
 	if cfg.MaxAccuracyM > 0 && cmd.AccuracyM != nil && *cmd.AccuracyM > cfg.MaxAccuracyM {
 		return filterResult{skip: true, reason: "accuracy_exceeded"}
 	}
 
-	if prev == nil {
+	// The remaining checks compare against the previous fix and need a valid timestamp.
+	if prev == nil || !fixOK {
 		return filterResult{}
 	}
 

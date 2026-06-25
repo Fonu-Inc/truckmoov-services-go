@@ -72,6 +72,7 @@ func buildTrackingTestHandler() (*Handler, *fakeTrackingActivityPublisher) {
 		"default",
 		historyRepo,
 		application.TelemetryConfig{},
+		infrastructure.NewInMemoryIMEIResolver(),
 	)
 	alertUseCase := application.NewPublishAlertUseCase(
 		publisher,

@@ -51,6 +51,13 @@ func main() {
 	idGenerator := infrastructure.TimeIDGenerator{}
 	latestLocationStore := infrastructure.NewRedisLatestLocationRepository(redisClient, cfg.LatestTTLSeconds)
 	historyStore := infrastructure.NewRedisLocationHistoryRepository(redisClient, cfg.HistoryTTLSeconds)
+	imeiResolver := infrastructure.NewRedisIMEIResolver(redisClient, cfg.IMEIIdentityTTLSeconds)
+
+	// Keep the IMEI→{tenant,vehicle,device} cache fresh from fleet's identity events.
+	consumeDeviceIdentity := application.NewConsumeDeviceIdentityUseCase(imeiResolver, log)
+	if _, subErr := bus.Subscribe(ctx, "tm.*.device.identity.changed", "tracking-device-identity", consumeDeviceIdentity.Handle); subErr != nil {
+		log.Warn("device_identity_subscribe_failed", "error", subErr.Error())
+	}
 
 	ingestLocationUseCase := application.NewIngestLocationUseCase(
 		eventPublisher,
@@ -63,6 +70,7 @@ func main() {
 			MaxAccuracyM: cfg.MaxAccuracyM,
 			MaxSpeedKPH:  cfg.MaxSpeedKPH,
 		},
+		imeiResolver,
 	)
 	publishAlertUseCase := application.NewPublishAlertUseCase(
 		eventPublisher,

@@ -12,6 +12,9 @@ type IngestLocationCommand struct {
 	TenantID  string
 	VehicleID string
 	DeviceID  string
+	// IMEI, when set by a hardware adapter (Teltonika/Traccar), is resolved to the
+	// canonical tenant/vehicle/device via the IMEI resolver before persistence.
+	IMEI      string
 	Latitude  float64
 	Longitude float64
 	SpeedKPH  *float64
@@ -36,6 +39,7 @@ type IngestLocationUseCase struct {
 	defaultTenant string
 	historyStore  LocationHistoryRepository
 	telemetry     TelemetryConfig
+	resolver      IMEIResolver
 }
 
 func NewIngestLocationUseCase(
@@ -46,6 +50,7 @@ func NewIngestLocationUseCase(
 	defaultTenant string,
 	historyStore LocationHistoryRepository,
 	telemetry TelemetryConfig,
+	resolver IMEIResolver,
 ) *IngestLocationUseCase {
 	return &IngestLocationUseCase{
 		publisher:     publisher,
@@ -55,36 +60,66 @@ func NewIngestLocationUseCase(
 		defaultTenant: defaultTenant,
 		historyStore:  historyStore,
 		telemetry:     telemetry,
+		resolver:      resolver,
 	}
+}
+
+// resolveIdentity rekeys an IMEI-bearing command onto the canonical fleet
+// tenant/vehicle/device. When the IMEI is unknown (resolver miss or cache cold)
+// it falls back to IMEI keying so telemetry still flows — fixing the prior bug
+// where the IMEI was stuffed into both vehicle_id and device_id unconditionally.
+func (u *IngestLocationUseCase) resolveIdentity(command IngestLocationCommand) (tenantID, vehicleID, deviceID string) {
+	tenantID = command.TenantID
+	vehicleID = command.VehicleID
+	deviceID = command.DeviceID
+
+	if command.IMEI != "" {
+		deviceID = command.IMEI
+		vehicleID = command.IMEI
+		if u.resolver != nil {
+			if identity, err := u.resolver.Resolve(command.IMEI); err == nil && identity != nil {
+				if identity.TenantID != "" {
+					tenantID = identity.TenantID
+				}
+				if identity.DeviceID != "" {
+					deviceID = identity.DeviceID
+				}
+				if identity.VehicleUUID != "" {
+					vehicleID = identity.VehicleUUID
+				}
+			}
+		}
+	}
+
+	if tenantID == "" {
+		tenantID = u.defaultTenant
+	}
+	return tenantID, vehicleID, deviceID
 }
 
 func (u *IngestLocationUseCase) Execute(
 	ctx context.Context,
 	command IngestLocationCommand,
 ) (IngestLocationResult, error) {
-	tenantID := command.TenantID
-	if tenantID == "" {
-		tenantID = u.defaultTenant
-	}
+	tenantID, vehicleID, deviceID := u.resolveIdentity(command)
 
 	fixTime := command.FixTime
 	if fixTime == "" {
 		fixTime = u.clock.Now().UTC().Format(time.RFC3339)
 	}
 
-	if parsedFix, err := time.Parse(time.RFC3339, fixTime); err == nil {
-		prev, _ := u.locationStore.Get(tenantID, command.VehicleID)
-		if r := applyTelemetryFilter(u.telemetry, prev, command, parsedFix); r.skip {
-			return IngestLocationResult{Skipped: true, SkipReason: r.reason}, nil
-		}
+	parsedFix, fixErr := time.Parse(time.RFC3339, fixTime)
+	prev, _ := u.locationStore.Get(tenantID, vehicleID)
+	if r := applyTelemetryFilter(u.telemetry, prev, command, parsedFix, fixErr == nil); r.skip {
+		return IngestLocationResult{Skipped: true, SkipReason: r.reason}, nil
 	}
 
 	locationUpdate, err := domain.NewLocationUpdate(domain.LocationUpdate{
 		EventID:    u.idGenerator.New("evt"),
 		OccurredAt: u.clock.Now(),
 		TenantID:   tenantID,
-		VehicleID:  command.VehicleID,
-		DeviceID:   command.DeviceID,
+		VehicleID:  vehicleID,
+		DeviceID:   deviceID,
 		Latitude:   command.Latitude,
 		Longitude:  command.Longitude,
 		SpeedKPH:   command.SpeedKPH,

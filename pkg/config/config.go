@@ -28,6 +28,7 @@ type Config struct {
 	MaxSpeedKPH                  float64
 	HistoryTTLSeconds            int
 	LatestTTLSeconds             int
+	IMEIIdentityTTLSeconds       int
 	GPSAPIKey                    string
 	RateLimitRPS                 int
 	RateLimitBurst               int
@@ -69,6 +70,7 @@ func Load(serviceName, defaultPort string) Config {
 		MaxSpeedKPH:                  getEnvFloat("TELEMETRY_MAX_SPEED_KPH", 250.0),
 		HistoryTTLSeconds:            getEnvInt("TRACKING_HISTORY_TTL_SECONDS", 7*24*3600),
 		LatestTTLSeconds:             getEnvInt("TRACKING_LATEST_TTL_SECONDS", 30*24*3600),
+		IMEIIdentityTTLSeconds:       getEnvInt("TRACKING_IMEI_IDENTITY_TTL_SECONDS", 90*24*3600),
 		GPSAPIKey:                    getEnv("GPS_API_KEY", ""),
 		RateLimitRPS:                 getEnvInt("RATE_LIMIT_RPS", 100),
 		RateLimitBurst:               getEnvInt("RATE_LIMIT_BURST", 200),

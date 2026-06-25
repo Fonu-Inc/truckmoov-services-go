@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/truckmoov/services-go/internal/tracking/application"
 )
@@ -57,13 +58,12 @@ func (teltonikaAdapter) decode(r *http.Request) (application.IngestLocationComma
 	heading := p.Angle
 	var fixTime string
 	if p.Timestamp > 0 {
-		// Format as RFC3339 for the use case
-		fixTime = fmt.Sprintf("%d", p.Timestamp)
+		// Teltonika sends Unix seconds; the ingest pipeline requires RFC3339.
+		fixTime = time.Unix(p.Timestamp, 0).UTC().Format(time.RFC3339)
 	}
 	return application.IngestLocationCommand{
 		TenantID:  p.TenantID,
-		VehicleID: p.IMEI,
-		DeviceID:  p.IMEI,
+		IMEI:      p.IMEI,
 		Latitude:  p.Lat,
 		Longitude: p.Lng,
 		SpeedKPH:  &speed,
@@ -96,8 +96,7 @@ func (queclinkAdapter) decode(r *http.Request) (application.IngestLocationComman
 	accuracy := p.Accuracy
 	return application.IngestLocationCommand{
 		TenantID:  p.TenantID,
-		VehicleID: p.UniqueID,
-		DeviceID:  p.UniqueID,
+		IMEI:      p.UniqueID,
 		Latitude:  p.Lat,
 		Longitude: p.Lng,
 		SpeedKPH:  &speed,
@@ -107,12 +106,55 @@ func (queclinkAdapter) decode(r *http.Request) (application.IngestLocationComman
 	}, nil
 }
 
+// traccarPayload — Traccar position-forwarding JSON (forward.json=true). The
+// device.uniqueId is the IMEI; speed arrives in knots.
+type traccarPayload struct {
+	Position struct {
+		Latitude   float64 `json:"latitude"`
+		Longitude  float64 `json:"longitude"`
+		Speed      float64 `json:"speed"` // knots
+		Course     float64 `json:"course"`
+		DeviceTime string  `json:"deviceTime"`
+		FixTime    string  `json:"fixTime"`
+	} `json:"position"`
+	Device struct {
+		UniqueID string `json:"uniqueId"`
+	} `json:"device"`
+}
+
+type traccarAdapter struct{}
+
+func (traccarAdapter) decode(r *http.Request) (application.IngestLocationCommand, error) {
+	var p traccarPayload
+	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+		return application.IngestLocationCommand{}, fmt.Errorf("invalid traccar payload: %w", err)
+	}
+	speed := p.Position.Speed * 1.852 // knots → km/h
+	heading := p.Position.Course
+	fixTime := p.Position.FixTime
+	if fixTime == "" {
+		fixTime = p.Position.DeviceTime
+	}
+	// Tenant is intentionally empty: it is resolved from the IMEI identity cache,
+	// since Traccar's forward payload carries no tenant.
+	return application.IngestLocationCommand{
+		IMEI:      p.Device.UniqueID,
+		Latitude:  p.Position.Latitude,
+		Longitude: p.Position.Longitude,
+		SpeedKPH:  &speed,
+		Heading:   &heading,
+		FixTime:   fixTime,
+	}, nil
+}
+
 func resolveAdapter(vendor string) (vendorAdapter, bool) {
 	switch vendor {
 	case "generic", "":
 		return genericAdapter{}, true
 	case "teltonika":
 		return teltonikaAdapter{}, true
+	case "traccar":
+		return traccarAdapter{}, true
 	case "queclink":
 		return queclinkAdapter{}, true
 	default:
