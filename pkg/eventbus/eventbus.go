@@ -41,10 +41,6 @@ type natsEventBus struct {
 	streamName string
 }
 
-type noOpEventBus struct {
-	log *slog.Logger
-}
-
 var invalidJetStreamNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 var repeatedUnderscores = regexp.MustCompile(`_+`)
 var leadingOrTrailingUnderscores = regexp.MustCompile(`^_+|_+$`)
@@ -59,7 +55,11 @@ func sanitizeJetStreamName(streamName string) string {
 	return normalized
 }
 
-func New(ctx context.Context, natsURL, streamName string, log *slog.Logger) EventBus {
+// New connects to NATS JetStream and ensures the event stream exists with
+// bounded retention. It fails loudly (returns an error) rather than silently
+// dropping events through a no-op bus — callers should treat a nil error as a
+// hard requirement and exit on failure.
+func New(ctx context.Context, natsURL, streamName string, log *slog.Logger) (EventBus, error) {
 	effectiveStreamName := sanitizeJetStreamName(streamName)
 	if effectiveStreamName != streamName {
 		log.Warn("nats_stream_name_sanitized", "configured_stream", streamName, "effective_stream", effectiveStreamName)
@@ -67,33 +67,40 @@ func New(ctx context.Context, natsURL, streamName string, log *slog.Logger) Even
 
 	nc, err := nats.Connect(natsURL, nats.Name("truckmoov-eventbus"))
 	if err != nil {
-		log.Warn("nats_connect_failed_using_noop", "error", err.Error())
-		return &noOpEventBus{log: log}
+		return nil, fmt.Errorf("connect nats %q: %w", natsURL, err)
 	}
 
 	js, err := nc.JetStream()
 	if err != nil {
-		log.Warn("nats_jetstream_failed_using_noop", "error", err.Error())
 		_ = nc.Drain()
-		return &noOpEventBus{log: log}
+		return nil, fmt.Errorf("init jetstream: %w", err)
 	}
 
-	if _, err = js.StreamInfo(effectiveStreamName); err != nil {
-		_, err = js.AddStream(&nats.StreamConfig{
-			Name:     effectiveStreamName,
-			Subjects: []string{"tm.*.>"},
-			Storage:  nats.FileStorage,
-		})
-		if err != nil {
-			log.Warn("nats_stream_setup_failed_using_noop", "error", err.Error())
+	// Bounded retention so a high-rate stream can never fill the data PVC and
+	// stall JetStream. Discard oldest once limits are hit.
+	streamCfg := &nats.StreamConfig{
+		Name:              effectiveStreamName,
+		Subjects:          []string{"tm.*.>"},
+		Storage:           nats.FileStorage,
+		Retention:         nats.LimitsPolicy,
+		Discard:           nats.DiscardOld,
+		MaxAge:            7 * 24 * time.Hour,
+		MaxBytes:          1 << 30, // 1 GiB
+		MaxMsgsPerSubject: 100_000,
+	}
+	if _, infoErr := js.StreamInfo(effectiveStreamName); infoErr != nil {
+		if _, err = js.AddStream(streamCfg); err != nil {
 			_ = nc.Drain()
-			return &noOpEventBus{log: log}
+			return nil, fmt.Errorf("add stream %q: %w", effectiveStreamName, err)
 		}
+	} else if _, err = js.UpdateStream(streamCfg); err != nil {
+		_ = nc.Drain()
+		return nil, fmt.Errorf("update stream %q: %w", effectiveStreamName, err)
 	}
 
 	_ = ctx
 	log.Info("nats_eventbus_ready", "url", natsURL, "stream", effectiveStreamName)
-	return &natsEventBus{log: log, nc: nc, js: js, streamName: effectiveStreamName}
+	return &natsEventBus{log: log, nc: nc, js: js, streamName: effectiveStreamName}, nil
 }
 
 func (b *natsEventBus) Publish(_ context.Context, subject string, envelope EventEnvelope) error {
@@ -150,22 +157,3 @@ func (b *natsEventBus) Close() error {
 	return b.nc.Drain()
 }
 
-func (b *noOpEventBus) Publish(_ context.Context, subject string, envelope EventEnvelope) error {
-	b.log.Info("noop_publish", "subject", subject, "type", envelope.Type)
-	return nil
-}
-
-func (b *noOpEventBus) Subscribe(_ context.Context, subject, durable string, _ Handler) (Subscription, error) {
-	b.log.Info("noop_subscribe", "subject", subject, "durable", durable)
-	return &noopSubscription{}, nil
-}
-
-func (b *noOpEventBus) Close() error {
-	return nil
-}
-
-type noopSubscription struct{}
-
-func (n *noopSubscription) Unsubscribe() error {
-	return nil
-}

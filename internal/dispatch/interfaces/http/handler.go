@@ -308,7 +308,7 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusCreated, job)
+	respondJSON(w, http.StatusCreated, map[string]any{"status": true, "message": "success", "data": job})
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -509,7 +509,7 @@ func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jo
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, job)
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -553,7 +553,7 @@ func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, job)
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -596,7 +596,7 @@ func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request, jobID string
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, job)
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -637,7 +637,7 @@ func (h *Handler) acknowledgeJob(w http.ResponseWriter, r *http.Request, jobID s
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, job)
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -679,7 +679,7 @@ func (h *Handler) updateJobLifecycleStatus(w http.ResponseWriter, r *http.Reques
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, job)
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
 }
 
 func (h *Handler) createDriverStatusRequest(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -919,7 +919,7 @@ func (h *Handler) addPODAttachment(w http.ResponseWriter, r *http.Request, jobID
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, job)
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -962,7 +962,7 @@ func (h *Handler) addJobNote(w http.ResponseWriter, r *http.Request, jobID strin
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, job)
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",

@@ -207,7 +207,7 @@ func dispatchOpenAPISpec() map[string]any {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"$ref": "#/components/schemas/Job",
+										"$ref": "#/components/schemas/JobResponse",
 									},
 								},
 							},
@@ -270,7 +270,7 @@ func dispatchOpenAPISpec() map[string]any {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"$ref": "#/components/schemas/Job",
+										"$ref": "#/components/schemas/JobResponse",
 									},
 								},
 							},
@@ -306,7 +306,7 @@ func dispatchOpenAPISpec() map[string]any {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"$ref": "#/components/schemas/Job",
+										"$ref": "#/components/schemas/JobResponse",
 									},
 								},
 							},
@@ -336,7 +336,7 @@ func dispatchOpenAPISpec() map[string]any {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"$ref": "#/components/schemas/Job",
+										"$ref": "#/components/schemas/JobResponse",
 									},
 								},
 							},
@@ -366,7 +366,7 @@ func dispatchOpenAPISpec() map[string]any {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"$ref": "#/components/schemas/Job",
+										"$ref": "#/components/schemas/JobResponse",
 									},
 								},
 							},
@@ -396,7 +396,7 @@ func dispatchOpenAPISpec() map[string]any {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"$ref": "#/components/schemas/Job",
+										"$ref": "#/components/schemas/JobResponse",
 									},
 								},
 							},
@@ -568,7 +568,7 @@ func dispatchOpenAPISpec() map[string]any {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"$ref": "#/components/schemas/Job",
+										"$ref": "#/components/schemas/JobResponse",
 									},
 								},
 							},
@@ -598,7 +598,7 @@ func dispatchOpenAPISpec() map[string]any {
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
-										"$ref": "#/components/schemas/Job",
+										"$ref": "#/components/schemas/JobResponse",
 									},
 								},
 							},

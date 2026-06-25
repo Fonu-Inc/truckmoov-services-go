@@ -20,6 +20,17 @@ import (
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
+func decodeJobBody(t *testing.T, body []byte) domain.Job {
+	t.Helper()
+	var env struct {
+		Data domain.Job `json:"data"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		t.Fatalf("decode job envelope: %v", err)
+	}
+	return env.Data
+}
+
 type fakeJobStatusPublisher struct{}
 
 func (f *fakeJobStatusPublisher) PublishJobStatusChanged(_ context.Context, _ domain.JobStatusChanged) error {
@@ -267,10 +278,7 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusCreated, createRes.Code)
 	}
 
-	var createdJob domain.Job
-	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
-		t.Fatalf("decode created job: %v", err)
-	}
+	createdJob := decodeJobBody(t, createRes.Body.Bytes())
 	if createdJob.Reference != "TM-2847" {
 		t.Fatalf("expected reference TM-2847, got %q", createdJob.Reference)
 	}
@@ -427,10 +435,7 @@ func TestHandler_SendWhatsAppInstructionContract(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
 	}
 
-	var createdJob domain.Job
-	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
-		t.Fatalf("decode created job: %v", err)
-	}
+	createdJob := decodeJobBody(t, createRes.Body.Bytes())
 
 	sendRes := dispatchRequest(
 		t,
@@ -513,10 +518,7 @@ func TestHandler_SendJobInstructionRejectsMismatchedDriver(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
 	}
 
-	var createdJob domain.Job
-	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
-		t.Fatalf("decode created job: %v", err)
-	}
+	createdJob := decodeJobBody(t, createRes.Body.Bytes())
 
 	sendRes := dispatchRequest(
 		t,
@@ -559,10 +561,7 @@ func TestHandler_SendJobInstructionRejectsJobPastAssigned(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
 	}
 
-	var createdJob domain.Job
-	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
-		t.Fatalf("decode created job: %v", err)
-	}
+	createdJob := decodeJobBody(t, createRes.Body.Bytes())
 
 	statusRes := dispatchRequest(
 		t,
@@ -619,10 +618,7 @@ func TestHandler_SendJobInstructionRejectsMismatchedStoredPhone(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
 	}
 
-	var createdJob domain.Job
-	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
-		t.Fatalf("decode created job: %v", err)
-	}
+	createdJob := decodeJobBody(t, createRes.Body.Bytes())
 
 	sendRes := dispatchRequest(
 		t,
@@ -665,10 +661,7 @@ func TestHandler_DriverStatusRequestWorkflow(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
 	}
 
-	var createdJob domain.Job
-	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
-		t.Fatalf("decode created job: %v", err)
-	}
+	createdJob := decodeJobBody(t, createRes.Body.Bytes())
 
 	requestRes := dispatchRequest(
 		t,
@@ -760,10 +753,7 @@ func TestHandler_UpdateJobStatusRequiresDispatcherRole(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
 	}
 
-	var createdJob domain.Job
-	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
-		t.Fatalf("decode created job: %v", err)
-	}
+	createdJob := decodeJobBody(t, createRes.Body.Bytes())
 
 	res := dispatchRequestWithHeaders(
 		t,
@@ -801,10 +791,7 @@ func TestHandler_CreateJobOriginalModalVehicleOnlyStillPersistsSelection(t *test
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
 	}
 
-	var createdJob domain.Job
-	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
-		t.Fatalf("decode created job: %v", err)
-	}
+	createdJob := decodeJobBody(t, createRes.Body.Bytes())
 	if createdJob.Status != domain.StatusCreated {
 		t.Fatalf("expected vehicle-only create to remain created, got %q", createdJob.Status)
 	}
@@ -872,10 +859,7 @@ func TestHandler_CreateJobAlternateFlatPayloadStillAccepted(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusCreated, createRes.Code)
 	}
 
-	var createdJob domain.Job
-	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
-		t.Fatalf("decode created job: %v", err)
-	}
+	createdJob := decodeJobBody(t, createRes.Body.Bytes())
 	if createdJob.Reference != "JOB-100" {
 		t.Fatalf("expected reference JOB-100, got %q", createdJob.Reference)
 	}
@@ -911,10 +895,7 @@ func TestHandler_CreateJobLegacyPayloadStillAccepted(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
 	}
 
-	var createdJob domain.Job
-	if err := json.Unmarshal(createRes.Body.Bytes(), &createdJob); err != nil {
-		t.Fatalf("decode created job: %v", err)
-	}
+	createdJob := decodeJobBody(t, createRes.Body.Bytes())
 	if createdJob.Reference != "job-legacy-1" {
 		t.Fatalf("expected legacy payload to default reference to job id, got %q", createdJob.Reference)
 	}
@@ -1181,10 +1162,7 @@ func TestHandler_CreateAndListJobsUseTokenTenant(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
 	}
 
-	var created domain.Job
-	if err := json.Unmarshal(createRes.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode created job: %v", err)
-	}
+	created := decodeJobBody(t, createRes.Body.Bytes())
 	if created.TenantID != "tenant-from-token" {
 		t.Fatalf("expected token tenant, got %q", created.TenantID)
 	}

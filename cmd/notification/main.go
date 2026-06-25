@@ -51,7 +51,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	bus := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, log)
+	bus, err := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, log)
+	if err != nil {
+		log.Error("eventbus_init_failed", "error", err.Error())
+		os.Exit(1)
+	}
 	defer func() {
 		_ = bus.Close()
 	}()

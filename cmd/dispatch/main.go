@@ -40,7 +40,11 @@ func main() {
 		_ = shutdownTelemetry(context.Background())
 	}()
 
-	bus := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, log)
+	bus, err := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, log)
+	if err != nil {
+		log.Error("eventbus_init_failed", "error", err.Error())
+		os.Exit(1)
+	}
 	defer func() {
 		_ = bus.Close()
 	}()
@@ -99,6 +103,9 @@ func main() {
 			solverv1.NewRouteSolverClient(conn),
 			infrastructure.NewValhallaClient(cfg.ValhallaURL),
 		)
+		log.Info("route_solver_enabled", "address", cfg.RouteSolverAddr, "valhalla_url", cfg.ValhallaURL)
+	} else {
+		log.Warn("route_solver_disabled", "detail", "ROUTE_SOLVER_ADDR is empty; route optimization falls back to a straight-line planner with no turn-by-turn geometry or alternate routes")
 	}
 
 	routingUseCase := application.NewRoutingUseCase(
