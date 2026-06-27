@@ -64,6 +64,7 @@ func buildTrackingTestHandler() (*Handler, *fakeTrackingActivityPublisher) {
 
 	latestRepo := infrastructure.NewInMemoryLatestLocationRepository()
 	historyRepo := infrastructure.NewInMemoryLocationHistoryRepository()
+	telemetryRepo := infrastructure.NewInMemoryTelemetryRepository()
 	ingestUseCase := application.NewIngestLocationUseCase(
 		publisher,
 		latestRepo,
@@ -73,6 +74,7 @@ func buildTrackingTestHandler() (*Handler, *fakeTrackingActivityPublisher) {
 		historyRepo,
 		application.TelemetryConfig{},
 		infrastructure.NewInMemoryIMEIResolver(),
+		telemetryRepo,
 	)
 	alertUseCase := application.NewPublishAlertUseCase(
 		publisher,
@@ -85,8 +87,9 @@ func buildTrackingTestHandler() (*Handler, *fakeTrackingActivityPublisher) {
 		historyRepo,
 		"default",
 	)
+	deviceQueryUseCase := application.NewDeviceTelemetryQueryUseCase(telemetryRepo, clock, 600)
 
-	return NewHandler(ingestUseCase, alertUseCase, queryUseCase, "", "", activityPublisher), activityPublisher
+	return NewHandler(ingestUseCase, alertUseCase, queryUseCase, deviceQueryUseCase, "", "", activityPublisher), activityPublisher
 }
 
 func TestHandler_IngestContract(t *testing.T) {

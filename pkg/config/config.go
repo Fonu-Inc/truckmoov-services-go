@@ -21,6 +21,12 @@ type Config struct {
 	PostgresPassword             string
 	PostgresDB                   string
 	PostgresSSLMode              string
+	TimescaleHost                string
+	TimescalePort                string
+	TimescaleUser                string
+	TimescalePassword            string
+	TimescaleDB                  string
+	TimescaleSSLMode             string
 	RedisAddr                    string
 	RedisDB                      string
 	CORSOrigins                  []string
@@ -29,6 +35,7 @@ type Config struct {
 	HistoryTTLSeconds            int
 	LatestTTLSeconds             int
 	IMEIIdentityTTLSeconds       int
+	StatusTimeoutSeconds         int
 	GPSAPIKey                    string
 	RateLimitRPS                 int
 	RateLimitBurst               int
@@ -64,6 +71,12 @@ func Load(serviceName, defaultPort string) Config {
 		PostgresPassword:             getEnv("POSTGRES_PASSWORD", "truckmoov"),
 		PostgresDB:                   getEnv("POSTGRES_DB", "truckmoov"),
 		PostgresSSLMode:              getEnv("POSTGRES_SSLMODE", "disable"),
+		TimescaleHost:                getEnv("TIMESCALE_HOST", "localhost"),
+		TimescalePort:                getEnv("TIMESCALE_PORT", "5433"),
+		TimescaleUser:                getEnv("TIMESCALE_USER", "truckmoov"),
+		TimescalePassword:            getEnv("TIMESCALE_PASSWORD", "truckmoov"),
+		TimescaleDB:                  getEnv("TIMESCALE_DB", "telemetry"),
+		TimescaleSSLMode:             getEnv("TIMESCALE_SSLMODE", "disable"),
 		RedisAddr:                    getEnv("REDIS_ADDR", "localhost:6380"),
 		RedisDB:                      getEnv("REDIS_DB", "0"),
 		MaxAccuracyM:                 getEnvFloat("TELEMETRY_MAX_ACCURACY_M", 500.0),
@@ -71,6 +84,7 @@ func Load(serviceName, defaultPort string) Config {
 		HistoryTTLSeconds:            getEnvInt("TRACKING_HISTORY_TTL_SECONDS", 7*24*3600),
 		LatestTTLSeconds:             getEnvInt("TRACKING_LATEST_TTL_SECONDS", 30*24*3600),
 		IMEIIdentityTTLSeconds:       getEnvInt("TRACKING_IMEI_IDENTITY_TTL_SECONDS", 90*24*3600),
+		StatusTimeoutSeconds:         getEnvInt("TRACKING_STATUS_TIMEOUT_SECONDS", 600),
 		GPSAPIKey:                    getEnv("GPS_API_KEY", ""),
 		RateLimitRPS:                 getEnvInt("RATE_LIMIT_RPS", 100),
 		RateLimitBurst:               getEnvInt("RATE_LIMIT_BURST", 200),
@@ -139,20 +153,30 @@ func getFirstEnv(keys []string, fallback string) string {
 }
 
 func (c Config) PostgresDSN() string {
+	return buildPostgresDSN(c.PostgresHost, c.PostgresPort, c.PostgresUser, c.PostgresPassword, c.PostgresDB, c.PostgresSSLMode)
+}
+
+// TimescaleDSN points at the dedicated TimescaleDB instance (db "telemetry")
+// that backs the tracking time-series, kept separate from the primary Postgres.
+func (c Config) TimescaleDSN() string {
+	return buildPostgresDSN(c.TimescaleHost, c.TimescalePort, c.TimescaleUser, c.TimescalePassword, c.TimescaleDB, c.TimescaleSSLMode)
+}
+
+func buildPostgresDSN(host, port, user, password, dbName, sslMode string) string {
 	query := url.Values{}
-	query.Set("sslmode", strings.TrimSpace(c.PostgresSSLMode))
+	query.Set("sslmode", strings.TrimSpace(sslMode))
 
 	dsn := url.URL{
 		Scheme:   "postgres",
-		Host:     net.JoinHostPort(strings.TrimSpace(c.PostgresHost), strings.TrimSpace(c.PostgresPort)),
-		Path:     "/" + strings.TrimSpace(c.PostgresDB),
+		Host:     net.JoinHostPort(strings.TrimSpace(host), strings.TrimSpace(port)),
+		Path:     "/" + strings.TrimSpace(dbName),
 		RawQuery: query.Encode(),
 	}
 
-	if strings.TrimSpace(c.PostgresPassword) == "" {
-		dsn.User = url.User(strings.TrimSpace(c.PostgresUser))
+	if strings.TrimSpace(password) == "" {
+		dsn.User = url.User(strings.TrimSpace(user))
 	} else {
-		dsn.User = url.UserPassword(strings.TrimSpace(c.PostgresUser), c.PostgresPassword)
+		dsn.User = url.UserPassword(strings.TrimSpace(user), password)
 	}
 
 	return dsn.String()

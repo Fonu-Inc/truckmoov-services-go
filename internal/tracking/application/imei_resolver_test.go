@@ -55,6 +55,7 @@ func TestIngestLocation_ResolvesIMEIToVehicle(t *testing.T) {
 		historyRepo,
 		TelemetryConfig{},
 		resolver,
+		nil,
 	)
 
 	_, err := useCase.Execute(context.Background(), IngestLocationCommand{
@@ -90,6 +91,7 @@ func TestIngestLocation_UnresolvedIMEIFallsBack(t *testing.T) {
 		historyRepo,
 		TelemetryConfig{},
 		newFakeIMEIResolver(),
+		nil,
 	)
 
 	_, err := useCase.Execute(context.Background(), IngestLocationCommand{
@@ -118,6 +120,7 @@ func TestIngestLocation_AccuracyFilteredDespiteUnparseableFixTime(t *testing.T) 
 		"default",
 		historyRepo,
 		TelemetryConfig{MaxAccuracyM: 100},
+		nil,
 		nil,
 	)
 

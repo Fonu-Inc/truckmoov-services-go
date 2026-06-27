@@ -68,6 +68,7 @@ func TestIngestLocationUseCase_Execute(t *testing.T) {
 		historyRepo,
 		TelemetryConfig{},
 		nil,
+		nil,
 	)
 
 	result, err := useCase.Execute(context.Background(), IngestLocationCommand{

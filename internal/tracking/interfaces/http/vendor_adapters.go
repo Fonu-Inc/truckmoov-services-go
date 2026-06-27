@@ -110,12 +110,13 @@ func (queclinkAdapter) decode(r *http.Request) (application.IngestLocationComman
 // device.uniqueId is the IMEI; speed arrives in knots.
 type traccarPayload struct {
 	Position struct {
-		Latitude   float64 `json:"latitude"`
-		Longitude  float64 `json:"longitude"`
-		Speed      float64 `json:"speed"` // knots
-		Course     float64 `json:"course"`
-		DeviceTime string  `json:"deviceTime"`
-		FixTime    string  `json:"fixTime"`
+		Latitude   float64        `json:"latitude"`
+		Longitude  float64        `json:"longitude"`
+		Speed      float64        `json:"speed"` // knots
+		Course     float64        `json:"course"`
+		DeviceTime string         `json:"deviceTime"`
+		FixTime    string         `json:"fixTime"`
+		Attributes map[string]any `json:"attributes"`
 	} `json:"position"`
 	Device struct {
 		UniqueID string `json:"uniqueId"`
@@ -135,16 +136,53 @@ func (traccarAdapter) decode(r *http.Request) (application.IngestLocationCommand
 	if fixTime == "" {
 		fixTime = p.Position.DeviceTime
 	}
+	attrs := p.Position.Attributes
 	// Tenant is intentionally empty: it is resolved from the IMEI identity cache,
 	// since Traccar's forward payload carries no tenant.
 	return application.IngestLocationCommand{
-		IMEI:      p.Device.UniqueID,
-		Latitude:  p.Position.Latitude,
-		Longitude: p.Position.Longitude,
-		SpeedKPH:  &speed,
-		Heading:   &heading,
-		FixTime:   fixTime,
+		IMEI:            p.Device.UniqueID,
+		Latitude:        p.Position.Latitude,
+		Longitude:       p.Position.Longitude,
+		SpeedKPH:        &speed,
+		Heading:         &heading,
+		BatteryLevel:    attrFloat(attrs, "batteryLevel", "battery"),
+		SignalStrength:  attrFloat(attrs, "rssi", "signal"),
+		FuelLevel:       attrFloat(attrs, "fuel", "fuelLevel"),
+		EngineOn:        attrBool(attrs, "ignition"),
+		FirmwareVersion: attrString(attrs, "firmware", "version"),
+		FixTime:         fixTime,
 	}, nil
+}
+
+func attrFloat(m map[string]any, keys ...string) *float64 {
+	for _, k := range keys {
+		switch n := m[k].(type) {
+		case float64:
+			return &n
+		case int:
+			f := float64(n)
+			return &f
+		}
+	}
+	return nil
+}
+
+func attrBool(m map[string]any, keys ...string) *bool {
+	for _, k := range keys {
+		if b, ok := m[k].(bool); ok {
+			return &b
+		}
+	}
+	return nil
+}
+
+func attrString(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if s, ok := m[k].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func resolveAdapter(vendor string) (vendorAdapter, bool) {

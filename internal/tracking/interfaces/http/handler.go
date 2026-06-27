@@ -39,29 +39,32 @@ type activityPublisher interface {
 }
 
 type Handler struct {
-	ingestLocationUseCase *application.IngestLocationUseCase
-	publishAlertUseCase   *application.PublishAlertUseCase
-	trackingQueryUseCase  *application.TrackingQueryUseCase
-	gpsAPIKey             string
-	activityPublisher     activityPublisher
-	wsBridge              *trackingws.Bridge
+	ingestLocationUseCase       *application.IngestLocationUseCase
+	publishAlertUseCase         *application.PublishAlertUseCase
+	trackingQueryUseCase        *application.TrackingQueryUseCase
+	deviceTelemetryQueryUseCase *application.DeviceTelemetryQueryUseCase
+	gpsAPIKey                   string
+	activityPublisher           activityPublisher
+	wsBridge                    *trackingws.Bridge
 }
 
 func NewHandler(
 	ingestLocationUseCase *application.IngestLocationUseCase,
 	publishAlertUseCase *application.PublishAlertUseCase,
 	trackingQueryUseCase *application.TrackingQueryUseCase,
+	deviceTelemetryQueryUseCase *application.DeviceTelemetryQueryUseCase,
 	gpsAPIKey string,
 	jwtSecret string,
 	ap activityPublisher,
 ) *Handler {
 	return &Handler{
-		ingestLocationUseCase: ingestLocationUseCase,
-		publishAlertUseCase:   publishAlertUseCase,
-		trackingQueryUseCase:  trackingQueryUseCase,
-		gpsAPIKey:             gpsAPIKey,
-		activityPublisher:     ap,
-		wsBridge:              trackingws.NewBridge(ingestLocationUseCase, publishAlertUseCase, jwtSecret),
+		ingestLocationUseCase:       ingestLocationUseCase,
+		publishAlertUseCase:         publishAlertUseCase,
+		trackingQueryUseCase:        trackingQueryUseCase,
+		deviceTelemetryQueryUseCase: deviceTelemetryQueryUseCase,
+		gpsAPIKey:                   gpsAPIKey,
+		activityPublisher:           ap,
+		wsBridge:                    trackingws.NewBridge(ingestLocationUseCase, publishAlertUseCase, jwtSecret),
 	}
 }
 
@@ -73,6 +76,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/tracking/alerts", h.alert)
 	mux.HandleFunc("/tracking/vehicles", h.listVehicles)
 	mux.HandleFunc("/tracking/vehicles/", h.vehiclesResource)
+	mux.HandleFunc("/tracking/devices/", h.deviceResource)
 	mux.HandleFunc("/tracking/ws", h.wsBridge.ServeHTTP)
 	mux.HandleFunc("/health", h.health)
 }
@@ -291,6 +295,60 @@ func (h *Handler) vehicleHistory(w http.ResponseWriter, r *http.Request, vehicle
 		"vehicle_id": vehicleID,
 		"history":    history,
 	})
+}
+
+func (h *Handler) deviceResource(w http.ResponseWriter, r *http.Request) {
+	if h.deviceTelemetryQueryUseCase == nil {
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "telemetry query is not configured"})
+		return
+	}
+	if r.Method != http.MethodGet {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+
+	tenantID, ok := h.resolveTenantID(r)
+	if !ok {
+		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authenticated tenant context is required"})
+		return
+	}
+	if rejectClientTenantQuery(w, r) {
+		return
+	}
+
+	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/tracking/devices/"), "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 2 || parts[0] == "" {
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+
+	deviceID, tab := parts[0], parts[1]
+	ctx := r.Context()
+
+	var (
+		payload any
+		err     error
+	)
+	switch tab {
+	case "overview":
+		payload, err = h.deviceTelemetryQueryUseCase.Overview(ctx, tenantID, deviceID)
+	case "connectivity":
+		payload, err = h.deviceTelemetryQueryUseCase.Connectivity(ctx, tenantID, deviceID)
+	case "telemetry":
+		payload, err = h.deviceTelemetryQueryUseCase.Telemetry(ctx, tenantID, deviceID, parseLimit(r.URL.Query().Get("limit")))
+	case "firmware":
+		payload, err = h.deviceTelemetryQueryUseCase.Firmware(ctx, tenantID, deviceID)
+	default:
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return
+	}
+
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	respondJSON(w, http.StatusOK, payload)
 }
 
 func parseLimit(value string) int {

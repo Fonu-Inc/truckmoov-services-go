@@ -20,7 +20,14 @@ type IngestLocationCommand struct {
 	SpeedKPH  *float64
 	Heading   *float64
 	AccuracyM *float64
-	FixTime   string
+	// Optional non-GPS telemetry carried into the time-series store (nil when the
+	// vendor payload omits the signal).
+	BatteryLevel    *float64
+	SignalStrength  *float64
+	FuelLevel       *float64
+	EngineOn        *bool
+	FirmwareVersion string
+	FixTime         string
 }
 
 type IngestLocationResult struct {
@@ -32,14 +39,15 @@ type IngestLocationResult struct {
 }
 
 type IngestLocationUseCase struct {
-	publisher     TrackingEventPublisher
-	locationStore LatestLocationRepository
-	clock         Clock
-	idGenerator   IDGenerator
-	defaultTenant string
-	historyStore  LocationHistoryRepository
-	telemetry     TelemetryConfig
-	resolver      IMEIResolver
+	publisher      TrackingEventPublisher
+	locationStore  LatestLocationRepository
+	clock          Clock
+	idGenerator    IDGenerator
+	defaultTenant  string
+	historyStore   LocationHistoryRepository
+	telemetry      TelemetryConfig
+	resolver       IMEIResolver
+	telemetryStore TelemetryStore
 }
 
 func NewIngestLocationUseCase(
@@ -51,16 +59,18 @@ func NewIngestLocationUseCase(
 	historyStore LocationHistoryRepository,
 	telemetry TelemetryConfig,
 	resolver IMEIResolver,
+	telemetryStore TelemetryStore,
 ) *IngestLocationUseCase {
 	return &IngestLocationUseCase{
-		publisher:     publisher,
-		locationStore: locationStore,
-		clock:         clock,
-		idGenerator:   idGenerator,
-		defaultTenant: defaultTenant,
-		historyStore:  historyStore,
-		telemetry:     telemetry,
-		resolver:      resolver,
+		publisher:      publisher,
+		locationStore:  locationStore,
+		clock:          clock,
+		idGenerator:    idGenerator,
+		defaultTenant:  defaultTenant,
+		historyStore:   historyStore,
+		telemetry:      telemetry,
+		resolver:       resolver,
+		telemetryStore: telemetryStore,
 	}
 }
 
@@ -161,6 +171,35 @@ func (u *IngestLocationUseCase) Execute(
 		EventID:    locationUpdate.EventID,
 	}); err != nil {
 		return IngestLocationResult{}, fmt.Errorf("append location history: %w", err)
+	}
+
+	// Time-series persistence is best-effort: the live path (Redis snapshot + NATS
+	// event) is the source of truth, so a Timescale outage must not fail ingest.
+	if u.telemetryStore != nil {
+		var fixTimePtr *time.Time
+		if fixErr == nil {
+			f := parsedFix
+			fixTimePtr = &f
+		}
+		_ = u.telemetryStore.SaveSample(ctx, TelemetrySample{
+			TenantID:        locationUpdate.TenantID,
+			DeviceID:        locationUpdate.DeviceID,
+			VehicleID:       locationUpdate.VehicleID,
+			IMEI:            command.IMEI,
+			Latitude:        locationUpdate.Latitude,
+			Longitude:       locationUpdate.Longitude,
+			SpeedKPH:        locationUpdate.SpeedKPH,
+			Heading:         locationUpdate.Heading,
+			AccuracyM:       locationUpdate.AccuracyM,
+			BatteryLevel:    command.BatteryLevel,
+			SignalStrength:  command.SignalStrength,
+			FuelLevel:       command.FuelLevel,
+			EngineOn:        command.EngineOn,
+			FirmwareVersion: command.FirmwareVersion,
+			FixTime:         fixTimePtr,
+			ObservedAt:      locationUpdate.OccurredAt,
+			EventID:         locationUpdate.EventID,
+		})
 	}
 
 	if err := u.publisher.PublishLocationUpdate(ctx, locationUpdate); err != nil {
