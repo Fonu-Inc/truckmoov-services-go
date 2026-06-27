@@ -156,4 +156,3 @@ func (b *natsEventBus) Close() error {
 	}
 	return b.nc.Drain()
 }
-
