@@ -274,3 +274,41 @@ func TestHandler_AlertPublishesActivity(t *testing.T) {
 		t.Fatalf("expected dispatcher actor role, got %q", command.ActorRole)
 	}
 }
+
+func TestHandler_DocsContract(t *testing.T) {
+	handler, _ := buildTrackingTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	for _, path := range []string{"/tracking/docs", "/docs/tracking"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		res := httptest.NewRecorder()
+		mux.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("docs path %s expected %d, got %d", path, http.StatusOK, res.Code)
+		}
+		if !bytes.Contains(res.Body.Bytes(), []byte("SwaggerUIBundle")) {
+			t.Fatalf("docs path %s did not return swagger ui html", path)
+		}
+	}
+
+	for _, path := range []string{"/tracking/docs/openapi.json", "/docs/tracking/openapi.json"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		res := httptest.NewRecorder()
+		mux.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("openapi path %s expected %d, got %d", path, http.StatusOK, res.Code)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("openapi path %s invalid json: %v", path, err)
+		}
+		if payload["openapi"] != "3.0.3" {
+			t.Fatalf("openapi path %s expected openapi=3.0.3", path)
+		}
+		paths, ok := payload["paths"].(map[string]any)
+		if !ok || paths["/tracking/devices/{deviceId}/telemetry"] == nil {
+			t.Fatalf("openapi path %s missing device telemetry path", path)
+		}
+	}
+}

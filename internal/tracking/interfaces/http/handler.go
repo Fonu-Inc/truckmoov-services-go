@@ -71,6 +71,10 @@ func NewHandler(
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/tracking/health", h.health)
 	mux.HandleFunc("/tracking/ready", h.ready)
+	mux.HandleFunc("/tracking/docs", h.docsUI)
+	mux.HandleFunc("/tracking/docs/openapi.json", h.docsOpenAPI)
+	mux.HandleFunc("/docs/tracking", h.docsUI)
+	mux.HandleFunc("/docs/tracking/openapi.json", h.docsOpenAPI)
 	mux.Handle("/tracking/ingest", h.withAPIKey(http.HandlerFunc(h.ingest)))
 	mux.Handle("/tracking/ingest/vendor/", h.withAPIKey(http.HandlerFunc(h.ingestVendor)))
 	mux.HandleFunc("/tracking/alerts", h.alert)
