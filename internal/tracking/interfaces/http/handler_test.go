@@ -87,7 +87,7 @@ func buildTrackingTestHandler() (*Handler, *fakeTrackingActivityPublisher) {
 		historyRepo,
 		"default",
 	)
-	deviceQueryUseCase := application.NewDeviceTelemetryQueryUseCase(telemetryRepo, clock, 600)
+	deviceQueryUseCase := application.NewDeviceTelemetryQueryUseCase(telemetryRepo, clock, 600, nil)
 
 	return NewHandler(ingestUseCase, alertUseCase, queryUseCase, deviceQueryUseCase, "", "", activityPublisher), activityPublisher
 }

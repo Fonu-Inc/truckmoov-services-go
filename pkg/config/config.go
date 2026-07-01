@@ -35,6 +35,7 @@ type Config struct {
 	HistoryTTLSeconds            int
 	LatestTTLSeconds             int
 	IMEIIdentityTTLSeconds       int
+	SIMTTLSeconds                int
 	StatusTimeoutSeconds         int
 	GPSAPIKey                    string
 	RateLimitRPS                 int
@@ -84,6 +85,7 @@ func Load(serviceName, defaultPort string) Config {
 		HistoryTTLSeconds:            getEnvInt("TRACKING_HISTORY_TTL_SECONDS", 7*24*3600),
 		LatestTTLSeconds:             getEnvInt("TRACKING_LATEST_TTL_SECONDS", 30*24*3600),
 		IMEIIdentityTTLSeconds:       getEnvInt("TRACKING_IMEI_IDENTITY_TTL_SECONDS", 90*24*3600),
+		SIMTTLSeconds:                getEnvInt("TRACKING_SIM_TTL_SECONDS", 90*24*3600),
 		StatusTimeoutSeconds:         getEnvInt("TRACKING_STATUS_TIMEOUT_SECONDS", 600),
 		GPSAPIKey:                    getEnv("GPS_API_KEY", ""),
 		RateLimitRPS:                 getEnvInt("RATE_LIMIT_RPS", 100),

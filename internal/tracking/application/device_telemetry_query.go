@@ -9,16 +9,17 @@ const telemetryWindow = 24 * time.Hour
 
 // DeviceOverview backs the device-detail Overview tab.
 type DeviceOverview struct {
-	DeviceID        string   `json:"device_id"`
-	VehicleID       string   `json:"vehicle_id,omitempty"`
-	IMEI            string   `json:"imei,omitempty"`
-	Health          string   `json:"health"`
-	LastSeen        string   `json:"last_seen,omitempty"`
-	SignalStrength  *float64 `json:"signal_strength,omitempty"`
-	BatteryLevel    *float64 `json:"battery_level,omitempty"`
-	Latitude        *float64 `json:"latitude,omitempty"`
-	Longitude       *float64 `json:"longitude,omitempty"`
-	FirmwareVersion string   `json:"firmware_version,omitempty"`
+	DeviceID        string     `json:"device_id"`
+	VehicleID       string     `json:"vehicle_id,omitempty"`
+	IMEI            string     `json:"imei,omitempty"`
+	Health          string     `json:"health"`
+	LastSeen        string     `json:"last_seen,omitempty"`
+	SignalStrength  *float64   `json:"signal_strength,omitempty"`
+	BatteryLevel    *float64   `json:"battery_level,omitempty"`
+	Latitude        *float64   `json:"latitude,omitempty"`
+	Longitude       *float64   `json:"longitude,omitempty"`
+	FirmwareVersion string     `json:"firmware_version,omitempty"`
+	SIM             *DeviceSIM `json:"sim,omitempty"`
 }
 
 type HeartbeatConfig struct {
@@ -66,14 +67,20 @@ type DeviceTelemetryQueryUseCase struct {
 	store                TelemetryStore
 	clock                Clock
 	statusTimeoutSeconds int
+	simResolver          SIMResolver
 }
 
-func NewDeviceTelemetryQueryUseCase(store TelemetryStore, clock Clock, statusTimeoutSeconds int) *DeviceTelemetryQueryUseCase {
-	return &DeviceTelemetryQueryUseCase{store: store, clock: clock, statusTimeoutSeconds: statusTimeoutSeconds}
+func NewDeviceTelemetryQueryUseCase(store TelemetryStore, clock Clock, statusTimeoutSeconds int, simResolver SIMResolver) *DeviceTelemetryQueryUseCase {
+	return &DeviceTelemetryQueryUseCase{store: store, clock: clock, statusTimeoutSeconds: statusTimeoutSeconds, simResolver: simResolver}
 }
 
 func (u *DeviceTelemetryQueryUseCase) Overview(ctx context.Context, tenantID, deviceID string) (DeviceOverview, error) {
 	view := DeviceOverview{DeviceID: deviceID, Health: string(DeviceHealthUnknown)}
+	if u.simResolver != nil {
+		if sim, simErr := u.simResolver.Resolve(deviceID); simErr == nil && sim != nil {
+			view.SIM = sim
+		}
+	}
 	if u.store == nil {
 		return view, nil
 	}

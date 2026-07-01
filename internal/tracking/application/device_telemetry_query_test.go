@@ -117,7 +117,47 @@ func seededQueryUseCase() (*DeviceTelemetryQueryUseCase, time.Time) {
 		Latitude: 6.6, Longitude: 3.5, SignalStrength: &sig2, BatteryLevel: &bat2,
 		FirmwareVersion: "1.0.0", Protocol: "teltonika", ObservedAt: now.Add(-2 * time.Minute),
 	})
-	return NewDeviceTelemetryQueryUseCase(store, fixedTrackingClock{now: now}, 600), now
+	return NewDeviceTelemetryQueryUseCase(store, fixedTrackingClock{now: now}, 600, nil), now
+}
+
+type fakeSIMResolver struct {
+	sims map[string]DeviceSIM
+}
+
+func (f *fakeSIMResolver) Resolve(deviceID string) (*DeviceSIM, error) {
+	sim, ok := f.sims[deviceID]
+	if !ok {
+		return nil, nil
+	}
+	return &sim, nil
+}
+func (f *fakeSIMResolver) Upsert(sim DeviceSIM) error { f.sims[sim.DeviceID] = sim; return nil }
+func (f *fakeSIMResolver) Evict(deviceID string) error {
+	delete(f.sims, deviceID)
+	return nil
+}
+
+func TestDeviceQuery_OverviewIncludesSIM(t *testing.T) {
+	uc, _ := seededQueryUseCase()
+	uc.simResolver = &fakeSIMResolver{sims: map[string]DeviceSIM{
+		"d1": {DeviceID: "d1", ICCID: "8934071100001", Carrier: "MTN", Plan: "iot_basic", Status: "assigned", DataUsageMB: 120, DataLimitMB: 500},
+	}}
+
+	overview, err := uc.Overview(context.Background(), "t1", "d1")
+	if err != nil {
+		t.Fatalf("overview: %v", err)
+	}
+	if overview.SIM == nil || overview.SIM.ICCID != "8934071100001" || overview.SIM.Carrier != "MTN" {
+		t.Fatalf("expected SIM block populated, got %+v", overview.SIM)
+	}
+
+	bare, err := uc.Overview(context.Background(), "t1", "unknown-device")
+	if err != nil {
+		t.Fatalf("overview unknown: %v", err)
+	}
+	if bare.SIM != nil {
+		t.Fatalf("expected nil SIM for unlinked device, got %+v", bare.SIM)
+	}
 }
 
 func TestDeviceQuery_OverviewAndConnectivity(t *testing.T) {
@@ -188,7 +228,7 @@ func TestDeviceQuery_TelemetryAndFirmware(t *testing.T) {
 }
 
 func TestDeviceQuery_NilStoreDegrades(t *testing.T) {
-	uc := NewDeviceTelemetryQueryUseCase(nil, fixedTrackingClock{now: time.Now().UTC()}, 600)
+	uc := NewDeviceTelemetryQueryUseCase(nil, fixedTrackingClock{now: time.Now().UTC()}, 600, nil)
 	ov, err := uc.Overview(context.Background(), "t1", "d1")
 	if err != nil || ov.Health != string(DeviceHealthUnknown) {
 		t.Fatalf("expected unknown health on nil store, got %s err %v", ov.Health, err)

@@ -250,6 +250,22 @@ func trackingOpenAPISpec() map[string]any {
 						"latitude":         map[string]any{"type": "number", "nullable": true},
 						"longitude":        map[string]any{"type": "number", "nullable": true},
 						"firmware_version": map[string]any{"type": "string"},
+						"sim": map[string]any{
+							"type":        "object",
+							"nullable":    true,
+							"description": "SIM card assigned to the device, cached from the auth service's sim.changed events. Null when no SIM is linked.",
+							"properties": map[string]any{
+								"device_id":     map[string]any{"type": "string"},
+								"iccid":         map[string]any{"type": "string"},
+								"msisdn":        map[string]any{"type": "string"},
+								"carrier":       map[string]any{"type": "string"},
+								"plan":          map[string]any{"type": "string"},
+								"status":        map[string]any{"type": "string"},
+								"data_usage_mb": map[string]any{"type": "number"},
+								"data_limit_mb": map[string]any{"type": "number"},
+								"expiry_date":   map[string]any{"type": "string", "format": "date-time"},
+							},
+						},
 					},
 				},
 				"DeviceConnectivity": map[string]any{

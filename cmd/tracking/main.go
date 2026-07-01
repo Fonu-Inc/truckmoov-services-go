@@ -54,6 +54,7 @@ func main() {
 	latestLocationStore := infrastructure.NewRedisLatestLocationRepository(redisClient, cfg.LatestTTLSeconds)
 	historyStore := infrastructure.NewRedisLocationHistoryRepository(redisClient, cfg.HistoryTTLSeconds)
 	imeiResolver := infrastructure.NewRedisIMEIResolver(redisClient, cfg.IMEIIdentityTTLSeconds)
+	simResolver := infrastructure.NewRedisSIMResolver(redisClient, cfg.SIMTTLSeconds)
 
 	// Self-hosted TimescaleDB backs the device-detail time-series. Connection is
 	// best-effort: if it is unreachable the live path (Redis + NATS) still works and
@@ -80,6 +81,13 @@ func main() {
 	consumeDeviceIdentity := application.NewConsumeDeviceIdentityUseCase(imeiResolver, log)
 	if _, subErr := bus.Subscribe(ctx, "tm.*.device.identity.changed", "tracking-device-identity", consumeDeviceIdentity.Handle); subErr != nil {
 		log.Warn("device_identity_subscribe_failed", "error", subErr.Error())
+	}
+
+	// Cache device→SIM from auth's SIM events so the overview tab serves SIM info
+	// without a synchronous auth call.
+	consumeSIMChanged := application.NewConsumeSIMChangedUseCase(simResolver, log)
+	if _, subErr := bus.Subscribe(ctx, "tm.*.sim.changed", "tracking-sim-changed", consumeSIMChanged.Handle); subErr != nil {
+		log.Warn("sim_changed_subscribe_failed", "error", subErr.Error())
 	}
 
 	ingestLocationUseCase := application.NewIngestLocationUseCase(
@@ -117,6 +125,7 @@ func main() {
 			telemetryStore,
 			clock,
 			cfg.StatusTimeoutSeconds,
+			simResolver,
 		)
 	}
 
