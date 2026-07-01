@@ -115,7 +115,7 @@ func seededQueryUseCase() (*DeviceTelemetryQueryUseCase, time.Time) {
 	_ = store.SaveSample(context.Background(), TelemetrySample{
 		TenantID: "t1", DeviceID: "d1", VehicleID: "v1", IMEI: "359779090012345",
 		Latitude: 6.6, Longitude: 3.5, SignalStrength: &sig2, BatteryLevel: &bat2,
-		FirmwareVersion: "1.0.0", ObservedAt: now.Add(-2 * time.Minute),
+		FirmwareVersion: "1.0.0", Protocol: "teltonika", ObservedAt: now.Add(-2 * time.Minute),
 	})
 	return NewDeviceTelemetryQueryUseCase(store, fixedTrackingClock{now: now}, 600), now
 }
@@ -147,6 +147,18 @@ func TestDeviceQuery_OverviewAndConnectivity(t *testing.T) {
 	if conn.ReportingIntervalSeconds == nil || *conn.ReportingIntervalSeconds != 180 {
 		t.Fatalf("expected 180s interval, got %v", conn.ReportingIntervalSeconds)
 	}
+	if conn.Heartbeat.OnlineThresholdSeconds != 600 || conn.Heartbeat.OfflineThresholdSeconds != 1800 {
+		t.Fatalf("expected thresholds 600/1800, got %d/%d", conn.Heartbeat.OnlineThresholdSeconds, conn.Heartbeat.OfflineThresholdSeconds)
+	}
+	if conn.Heartbeat.ExpectedIntervalSeconds == nil || *conn.Heartbeat.ExpectedIntervalSeconds != 180 {
+		t.Fatalf("expected heartbeat interval 180, got %v", conn.Heartbeat.ExpectedIntervalSeconds)
+	}
+	if conn.LastTelemetry != conn.LastContact || conn.LastTelemetry == "" {
+		t.Fatalf("expected last_telemetry == last_contact, got %q vs %q", conn.LastTelemetry, conn.LastContact)
+	}
+	if conn.LastHealthCheck.Result != string(DeviceHealthOnline) || conn.LastHealthCheck.At == "" {
+		t.Fatalf("expected passive health check online, got %+v", conn.LastHealthCheck)
+	}
 }
 
 func TestDeviceQuery_TelemetryAndFirmware(t *testing.T) {
@@ -169,6 +181,9 @@ func TestDeviceQuery_TelemetryAndFirmware(t *testing.T) {
 	}
 	if fw.CurrentVersion != "1.0.0" || len(fw.History) != 1 {
 		t.Fatalf("expected current 1.0.0 + 1 history, got %s / %d", fw.CurrentVersion, len(fw.History))
+	}
+	if fw.Protocol != "teltonika" {
+		t.Fatalf("expected protocol teltonika, got %q", fw.Protocol)
 	}
 }
 

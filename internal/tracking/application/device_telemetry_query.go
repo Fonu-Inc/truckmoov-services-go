@@ -21,15 +21,28 @@ type DeviceOverview struct {
 	FirmwareVersion string   `json:"firmware_version,omitempty"`
 }
 
-// DeviceConnectivity backs the Connectivity tab.
+type HeartbeatConfig struct {
+	ExpectedIntervalSeconds *float64 `json:"expected_interval_seconds,omitempty"`
+	OnlineThresholdSeconds  int      `json:"online_threshold_seconds"`
+	OfflineThresholdSeconds int      `json:"offline_threshold_seconds"`
+}
+
+type HealthCheck struct {
+	At     string `json:"at"`
+	Result string `json:"result"`
+}
+
 type DeviceConnectivity struct {
-	DeviceID                 string   `json:"device_id"`
-	Health                   string   `json:"health"`
-	LastContact              string   `json:"last_contact,omitempty"`
-	SecondsSinceContact      *float64 `json:"seconds_since_contact,omitempty"`
-	StatusTimeoutSeconds     int      `json:"status_timeout_seconds"`
-	ReportingIntervalSeconds *float64 `json:"reporting_interval_seconds,omitempty"`
-	SampleCount24h           int      `json:"sample_count_24h"`
+	DeviceID                 string          `json:"device_id"`
+	Health                   string          `json:"health"`
+	LastContact              string          `json:"last_contact,omitempty"`
+	LastTelemetry            string          `json:"last_telemetry,omitempty"`
+	SecondsSinceContact      *float64        `json:"seconds_since_contact,omitempty"`
+	StatusTimeoutSeconds     int             `json:"status_timeout_seconds"`
+	ReportingIntervalSeconds *float64        `json:"reporting_interval_seconds,omitempty"`
+	SampleCount24h           int             `json:"sample_count_24h"`
+	Heartbeat                HeartbeatConfig `json:"heartbeat"`
+	LastHealthCheck          HealthCheck     `json:"last_health_check"`
 }
 
 // DeviceTelemetry backs the Telemetry tab.
@@ -44,6 +57,7 @@ type DeviceTelemetry struct {
 type DeviceFirmware struct {
 	DeviceID                 string           `json:"device_id"`
 	CurrentVersion           string           `json:"current_version,omitempty"`
+	Protocol                 string           `json:"protocol,omitempty"`
 	History                  []FirmwareReport `json:"history"`
 	ReportingIntervalSeconds *float64         `json:"reporting_interval_seconds,omitempty"`
 }
@@ -110,7 +124,26 @@ func (u *DeviceTelemetryQueryUseCase) Connectivity(ctx context.Context, tenantID
 	}
 	view.SampleCount24h = agg.SampleCount
 	view.ReportingIntervalSeconds = agg.AvgIntervalSeconds
+	view.LastTelemetry = view.LastContact
+
+	online, offline := heartbeatThresholds(u.statusTimeoutSeconds)
+	view.Heartbeat = HeartbeatConfig{
+		ExpectedIntervalSeconds: agg.AvgIntervalSeconds,
+		OnlineThresholdSeconds:  online,
+		OfflineThresholdSeconds: offline,
+	}
+	view.LastHealthCheck = HealthCheck{
+		At:     now.UTC().Format(time.RFC3339),
+		Result: view.Health,
+	}
 	return view, nil
+}
+
+func heartbeatThresholds(statusTimeoutSeconds int) (online, offline int) {
+	if statusTimeoutSeconds <= 0 {
+		statusTimeoutSeconds = 600
+	}
+	return statusTimeoutSeconds, 3 * statusTimeoutSeconds
 }
 
 func (u *DeviceTelemetryQueryUseCase) Telemetry(ctx context.Context, tenantID, deviceID string, limit int) (DeviceTelemetry, error) {
@@ -157,6 +190,7 @@ func (u *DeviceTelemetryQueryUseCase) Firmware(ctx context.Context, tenantID, de
 	}
 	if ok {
 		view.CurrentVersion = latest.FirmwareVersion
+		view.Protocol = latest.Protocol
 	}
 
 	history, err := u.store.FirmwareHistory(ctx, tenantID, deviceID)

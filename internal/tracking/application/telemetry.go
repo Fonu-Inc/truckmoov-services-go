@@ -23,6 +23,7 @@ type TelemetrySample struct {
 	FuelLevel       *float64   `json:"fuel_level,omitempty"`
 	EngineOn        *bool      `json:"engine_on,omitempty"`
 	FirmwareVersion string     `json:"firmware_version,omitempty"`
+	Protocol        string     `json:"protocol,omitempty"`
 	FixTime         *time.Time `json:"fix_time,omitempty"`
 	ObservedAt      time.Time  `json:"observed_at"`
 	EventID         string     `json:"event_id,omitempty"`

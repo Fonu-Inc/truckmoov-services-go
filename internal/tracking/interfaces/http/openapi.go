@@ -258,10 +258,26 @@ func trackingOpenAPISpec() map[string]any {
 						"device_id":                  map[string]any{"type": "string"},
 						"health":                     map[string]any{"type": "string", "enum": []string{"online", "degraded", "offline", "unknown"}},
 						"last_contact":               map[string]any{"type": "string", "format": "date-time"},
+						"last_telemetry":             map[string]any{"type": "string", "format": "date-time"},
 						"seconds_since_contact":      map[string]any{"type": "number", "nullable": true},
 						"status_timeout_seconds":     map[string]any{"type": "integer"},
 						"reporting_interval_seconds": map[string]any{"type": "number", "nullable": true},
 						"sample_count_24h":           map[string]any{"type": "integer"},
+						"heartbeat": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"expected_interval_seconds": map[string]any{"type": "number", "nullable": true},
+								"online_threshold_seconds":  map[string]any{"type": "integer"},
+								"offline_threshold_seconds": map[string]any{"type": "integer"},
+							},
+						},
+						"last_health_check": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"at":     map[string]any{"type": "string", "format": "date-time"},
+								"result": map[string]any{"type": "string", "enum": []string{"online", "degraded", "offline", "unknown"}},
+							},
+						},
 					},
 				},
 				"TelemetrySample": map[string]any{
@@ -281,6 +297,7 @@ func trackingOpenAPISpec() map[string]any {
 						"fuel_level":       map[string]any{"type": "number", "nullable": true},
 						"engine_on":        map[string]any{"type": "boolean", "nullable": true},
 						"firmware_version": map[string]any{"type": "string"},
+						"protocol":         map[string]any{"type": "string"},
 						"fix_time":         map[string]any{"type": "string", "format": "date-time", "nullable": true},
 						"observed_at":      map[string]any{"type": "string", "format": "date-time"},
 						"event_id":         map[string]any{"type": "string"},
@@ -318,6 +335,7 @@ func trackingOpenAPISpec() map[string]any {
 					"properties": map[string]any{
 						"device_id":                  map[string]any{"type": "string"},
 						"current_version":            map[string]any{"type": "string"},
+						"protocol":                   map[string]any{"type": "string", "description": "Device protocol from the Traccar payload (e.g. teltonika, gt06); for direct non-Traccar adapters this is the ingest source (generic/teltonika/queclink)."},
 						"history":                    map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/FirmwareReport"}},
 						"reporting_interval_seconds": map[string]any{"type": "number", "nullable": true},
 					},

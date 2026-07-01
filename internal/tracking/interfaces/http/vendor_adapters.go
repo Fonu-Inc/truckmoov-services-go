@@ -32,6 +32,7 @@ func (genericAdapter) decode(r *http.Request) (application.IngestLocationCommand
 		Heading:   req.Heading,
 		AccuracyM: req.AccuracyM,
 		FixTime:   req.FixTime,
+		Protocol:  "generic",
 	}, nil
 }
 
@@ -69,6 +70,7 @@ func (teltonikaAdapter) decode(r *http.Request) (application.IngestLocationComma
 		SpeedKPH:  &speed,
 		Heading:   &heading,
 		FixTime:   fixTime,
+		Protocol:  "teltonika",
 	}, nil
 }
 
@@ -103,6 +105,7 @@ func (queclinkAdapter) decode(r *http.Request) (application.IngestLocationComman
 		Heading:   &heading,
 		AccuracyM: &accuracy,
 		FixTime:   p.FixTime,
+		Protocol:  "queclink",
 	}, nil
 }
 
@@ -110,6 +113,7 @@ func (queclinkAdapter) decode(r *http.Request) (application.IngestLocationComman
 // device.uniqueId is the IMEI; speed arrives in knots.
 type traccarPayload struct {
 	Position struct {
+		Protocol   string         `json:"protocol"`
 		Latitude   float64        `json:"latitude"`
 		Longitude  float64        `json:"longitude"`
 		Speed      float64        `json:"speed"` // knots
@@ -151,6 +155,7 @@ func (traccarAdapter) decode(r *http.Request) (application.IngestLocationCommand
 		EngineOn:        attrBool(attrs, "ignition"),
 		FirmwareVersion: attrString(attrs, "firmware", "version"),
 		FixTime:         fixTime,
+		Protocol:        p.Position.Protocol,
 	}, nil
 }
 

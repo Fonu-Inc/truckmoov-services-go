@@ -27,6 +27,7 @@ type IngestLocationCommand struct {
 	FuelLevel       *float64
 	EngineOn        *bool
 	FirmwareVersion string
+	Protocol        string
 	FixTime         string
 }
 
@@ -196,6 +197,7 @@ func (u *IngestLocationUseCase) Execute(
 			FuelLevel:       command.FuelLevel,
 			EngineOn:        command.EngineOn,
 			FirmwareVersion: command.FirmwareVersion,
+			Protocol:        command.Protocol,
 			FixTime:         fixTimePtr,
 			ObservedAt:      locationUpdate.OccurredAt,
 			EventID:         locationUpdate.EventID,

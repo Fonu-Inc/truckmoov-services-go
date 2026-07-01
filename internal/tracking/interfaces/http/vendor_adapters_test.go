@@ -25,7 +25,7 @@ func TestTeltonikaAdapter_FixTimeIsRFC3339(t *testing.T) {
 }
 
 func TestTraccarAdapter_KnotsToKMHAndIMEI(t *testing.T) {
-	body := `{"position":{"latitude":6.5,"longitude":3.4,"speed":10,"course":90,"fixTime":"2026-02-02T11:00:00Z"},"device":{"uniqueId":"359779090012345"}}`
+	body := `{"position":{"protocol":"teltonika","latitude":6.5,"longitude":3.4,"speed":10,"course":90,"fixTime":"2026-02-02T11:00:00Z"},"device":{"uniqueId":"359779090012345"}}`
 	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest/vendor/traccar", strings.NewReader(body))
 
 	cmd, err := traccarAdapter{}.decode(req)
@@ -37,5 +37,21 @@ func TestTraccarAdapter_KnotsToKMHAndIMEI(t *testing.T) {
 	}
 	if cmd.SpeedKPH == nil || *cmd.SpeedKPH < 18.5 || *cmd.SpeedKPH > 18.53 {
 		t.Fatalf("expected ~18.52 km/h from 10 knots, got %v", cmd.SpeedKPH)
+	}
+	if cmd.Protocol != "teltonika" {
+		t.Fatalf("expected protocol teltonika from traccar payload, got %q", cmd.Protocol)
+	}
+}
+
+func TestGenericAdapter_SetsProtocol(t *testing.T) {
+	body := `{"vehicle_id":"v1","device_id":"d1","lat":6.5,"lng":3.4}`
+	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", strings.NewReader(body))
+
+	cmd, err := genericAdapter{}.decode(req)
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if cmd.Protocol != "generic" {
+		t.Fatalf("expected protocol generic, got %q", cmd.Protocol)
 	}
 }

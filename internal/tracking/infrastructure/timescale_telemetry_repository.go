@@ -27,8 +27,11 @@ CREATE TABLE IF NOT EXISTS telemetry_samples (
     fuel_level DOUBLE PRECISION NULL,
     engine_on BOOLEAN NULL,
     firmware_version TEXT NOT NULL DEFAULT '',
-    event_id TEXT NOT NULL DEFAULT ''
+    event_id TEXT NOT NULL DEFAULT '',
+    protocol TEXT NOT NULL DEFAULT ''
 );
+
+ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_telemetry_device_time
     ON telemetry_samples (tenant_id, device_id, observed_at DESC);
@@ -79,12 +82,12 @@ func (r *TimescaleTelemetryRepository) SaveSample(ctx context.Context, s applica
 INSERT INTO telemetry_samples (
     tenant_id, device_id, vehicle_id, imei, observed_at, fix_time,
     latitude, longitude, speed_kph, heading, accuracy_m,
-    battery_level, signal_strength, fuel_level, engine_on, firmware_version, event_id
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+    battery_level, signal_strength, fuel_level, engine_on, firmware_version, event_id, protocol
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
 		s.TenantID, s.DeviceID, s.VehicleID, s.IMEI, s.ObservedAt, nullTime(s.FixTime),
 		s.Latitude, s.Longitude, nullFloat(s.SpeedKPH), nullFloat(s.Heading), nullFloat(s.AccuracyM),
 		nullFloat(s.BatteryLevel), nullFloat(s.SignalStrength), nullFloat(s.FuelLevel), nullBool(s.EngineOn),
-		s.FirmwareVersion, s.EventID,
+		s.FirmwareVersion, s.EventID, s.Protocol,
 	)
 	if err != nil {
 		// Surfaced here because the ingest caller intentionally discards the error to
@@ -97,7 +100,7 @@ INSERT INTO telemetry_samples (
 
 const telemetryColumns = `tenant_id, device_id, vehicle_id, imei, observed_at, fix_time,
     latitude, longitude, speed_kph, heading, accuracy_m,
-    battery_level, signal_strength, fuel_level, engine_on, firmware_version, event_id`
+    battery_level, signal_strength, fuel_level, engine_on, firmware_version, event_id, protocol`
 
 func (r *TimescaleTelemetryRepository) LatestSample(ctx context.Context, tenantID, deviceID string) (*application.TelemetrySample, bool, error) {
 	row := r.db.QueryRowContext(ctx,
@@ -216,7 +219,7 @@ func scanSample(row rowScanner) (application.TelemetrySample, error) {
 	if err := row.Scan(
 		&s.TenantID, &s.DeviceID, &s.VehicleID, &s.IMEI, &s.ObservedAt, &fixTime,
 		&s.Latitude, &s.Longitude, &speed, &heading, &accuracy,
-		&battery, &signal, &fuel, &engineOn, &s.FirmwareVersion, &s.EventID,
+		&battery, &signal, &fuel, &engineOn, &s.FirmwareVersion, &s.EventID, &s.Protocol,
 	); err != nil {
 		return application.TelemetrySample{}, err
 	}
