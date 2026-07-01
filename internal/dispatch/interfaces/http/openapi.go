@@ -153,6 +153,23 @@ func dispatchOpenAPISpec() map[string]any {
 					},
 				},
 			},
+			"/dispatch/jobs/summary": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Job counts by status for the Dispatch Center",
+					"operationId": "jobStatusSummary",
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Job status counts",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/JobStatusSummaryResponse"},
+								},
+							},
+						},
+					},
+				},
+			},
 			"/dispatch/jobs": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"dispatch"},
@@ -1052,6 +1069,25 @@ func dispatchOpenAPISpec() map[string]any {
 						"status":  map[string]any{"type": "boolean"},
 						"message": map[string]any{"type": "string"},
 						"data":    map[string]any{"$ref": "#/components/schemas/DriverStatusRequestActionPayload"},
+					},
+				},
+				"JobStatusSummary": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"total": map[string]any{"type": "integer"},
+						"by_status": map[string]any{
+							"type":                 "object",
+							"additionalProperties": map[string]any{"type": "integer"},
+							"description":          "Count per status: created, assigned, en-route, arrived, loaded, delivered, cancelled.",
+						},
+					},
+				},
+				"JobStatusSummaryResponse": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"status":  map[string]any{"type": "boolean"},
+						"message": map[string]any{"type": "string"},
+						"data":    map[string]any{"$ref": "#/components/schemas/JobStatusSummary"},
 					},
 				},
 				"ErrorResponse": map[string]any{

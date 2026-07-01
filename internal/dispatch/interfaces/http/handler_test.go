@@ -963,6 +963,40 @@ func TestHandler_DocsContract(t *testing.T) {
 	}
 }
 
+func TestHandler_JobsSummaryCountsByStatus(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	body := `{"vehicleId":"veh-1","pickupLocation":"A","deliveryLocation":"B"}`
+	if res := dispatchRequest(t, mux, http.MethodPost, "/dispatch/jobs", body); res.Code != http.StatusCreated {
+		t.Fatalf("create job expected 201, got %d body=%s", res.Code, res.Body.String())
+	}
+
+	res := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs/summary", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("summary expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			Total    int            `json:"total"`
+			ByStatus map[string]int `json:"by_status"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if payload.Data.Total != 1 {
+		t.Fatalf("expected total 1, got %d", payload.Data.Total)
+	}
+	if payload.Data.ByStatus["created"] != 1 {
+		t.Fatalf("expected 1 created, got %d (map=%v)", payload.Data.ByStatus["created"], payload.Data.ByStatus)
+	}
+	if payload.Data.ByStatus["delivered"] != 0 {
+		t.Fatalf("expected delivered baseline 0, got %d", payload.Data.ByStatus["delivered"])
+	}
+}
+
 func TestHandler_OptimizeRouteSingleJobContract(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()

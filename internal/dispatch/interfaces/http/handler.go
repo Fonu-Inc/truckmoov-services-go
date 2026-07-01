@@ -213,6 +213,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/docs/dispatch", h.docsUI)
 	mux.HandleFunc("/docs/dispatch/openapi.json", h.docsOpenAPI)
 	mux.HandleFunc("/dispatch/jobs", h.jobsCollection)
+	mux.HandleFunc("/dispatch/jobs/summary", h.jobsSummary)
 	mux.HandleFunc("/dispatch/jobs/", h.jobResource)
 	mux.HandleFunc("/dispatch/routes/optimize", h.optimizeRoute)
 	// Legacy contract kept for existing integrations that publish status events directly.
@@ -382,6 +383,31 @@ func isDispatcherCapableRole(role string) bool {
 	default:
 		return false
 	}
+}
+
+func (h *Handler) jobsSummary(w http.ResponseWriter, r *http.Request) {
+	if h.jobLifecycleUseCase == nil {
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "job lifecycle is not configured"})
+		return
+	}
+	if r.Method != http.MethodGet {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+	if rejectClientTenantQuery(w, r) {
+		return
+	}
+
+	summary, err := h.jobLifecycleUseCase.SummarizeJobs(r.Context(), tenantID)
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": summary})
 }
 
 func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {

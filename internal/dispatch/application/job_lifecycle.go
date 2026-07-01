@@ -588,6 +588,31 @@ func (u *JobLifecycleUseCase) ListJobs(_ context.Context, tenantID string, filte
 	return filtered, nil
 }
 
+type JobStatusSummary struct {
+	Total    int            `json:"total"`
+	ByStatus map[string]int `json:"by_status"`
+}
+
+func (u *JobLifecycleUseCase) SummarizeJobs(ctx context.Context, tenantID string) (JobStatusSummary, error) {
+	jobs, err := u.ListJobs(ctx, tenantID, ListJobsFilter{})
+	if err != nil {
+		return JobStatusSummary{}, err
+	}
+	byStatus := map[string]int{
+		string(domain.StatusCreated):   0,
+		string(domain.StatusAssigned):  0,
+		string(domain.StatusEnRoute):   0,
+		string(domain.StatusArrived):   0,
+		string(domain.StatusLoaded):    0,
+		string(domain.StatusDelivered): 0,
+		string(domain.StatusCancelled): 0,
+	}
+	for _, job := range jobs {
+		byStatus[string(job.Status)]++
+	}
+	return JobStatusSummary{Total: len(jobs), ByStatus: byStatus}, nil
+}
+
 func (u *JobLifecycleUseCase) GetTimeline(_ context.Context, tenantID, jobID string) ([]domain.JobTimelineEntry, error) {
 	job, err := u.findJobForTenant(tenantID, jobID)
 	if err != nil {
