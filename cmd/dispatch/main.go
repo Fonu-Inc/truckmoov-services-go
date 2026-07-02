@@ -155,6 +155,7 @@ func main() {
 	handler.RegisterRoutes(mux)
 	handlerWithCORS := httpx.WithCORS(mux, cfg.CORSOrigins)
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
+	handlerWithCORS = httpx.WithAuthContext(handlerWithCORS, cfg.JWTSecret)
 
 	if runErr := httpx.Run(ctx, ":"+cfg.Port, httpx.WithLogging(handlerWithCORS, log), log); runErr != nil {
 		log.Error("service_stopped", "error", runErr.Error())

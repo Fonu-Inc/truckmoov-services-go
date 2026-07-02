@@ -11,7 +11,8 @@ import (
 )
 
 type lifecycleRepository struct {
-	data map[string]domain.Job
+	data        map[string]domain.Job
+	deleteCalls int
 }
 
 func newLifecycleRepository() *lifecycleRepository {
@@ -28,6 +29,12 @@ func (r *lifecycleRepository) Save(job domain.Job) error {
 func (r *lifecycleRepository) FindByTenantAndID(tenantID, id string) (domain.Job, bool) {
 	job, ok := r.data[fmt.Sprintf("%s:%s", tenantID, id)]
 	return job, ok
+}
+
+func (r *lifecycleRepository) Delete(tenantID, id string) error {
+	r.deleteCalls++
+	delete(r.data, fmt.Sprintf("%s:%s", tenantID, id))
+	return nil
 }
 
 func (r *lifecycleRepository) FindByTenant(tenantID string) []domain.Job {
@@ -485,5 +492,288 @@ func TestJobLifecycleUseCase_RejectsDuplicatePendingDriverStatusRequest(t *testi
 	})
 	if err == nil {
 		t.Fatal("expected duplicate pending request to be rejected")
+	}
+}
+
+func TestJobLifecycleUseCase_UpdateDetails_HappyPath(t *testing.T) {
+	repo := newLifecycleRepository()
+	useCase := NewJobLifecycleUseCase(
+		repo,
+		&lifecycleEmitter{},
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:     "job-update-1",
+		AmountNgn: 1000,
+		Pickup:    domain.JobStop{Address: "Apapa Port"},
+		Dropoff:   domain.JobStop{Address: "Lekki Free Zone"},
+	})
+	if err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+
+	updatedJob, err := useCase.UpdateDetails(context.Background(), UpdateJobDetailsCommand{
+		JobID:            job.ID,
+		Pickup:           domain.JobStop{Address: "Ikeja"},
+		Dropoff:          domain.JobStop{Address: "Yaba"},
+		Stops:            []domain.JobStop{{Address: "Oshodi"}},
+		CargoType:        "Furniture",
+		CargoDescription: "Office chairs",
+		AmountNgn:        5000,
+	})
+	if err != nil {
+		t.Fatalf("update details failed: %v", err)
+	}
+	if updatedJob.Pickup.Address != "Ikeja" || updatedJob.Dropoff.Address != "Yaba" {
+		t.Fatalf("expected pickup/dropoff to change, got %#v/%#v", updatedJob.Pickup, updatedJob.Dropoff)
+	}
+	if updatedJob.CargoType != "Furniture" || updatedJob.AmountNgn != 5000 {
+		t.Fatalf("expected cargo/amount to change, got cargo=%q amount=%v", updatedJob.CargoType, updatedJob.AmountNgn)
+	}
+	if len(updatedJob.Stops) != 1 || updatedJob.Stops[0].Address != "Oshodi" {
+		t.Fatalf("expected one stop Oshodi, got %#v", updatedJob.Stops)
+	}
+
+	saved, ok := repo.FindByTenantAndID("default", job.ID)
+	if !ok {
+		t.Fatal("expected job to be saved")
+	}
+	if saved.Pickup.Address != "Ikeja" || saved.AmountNgn != 5000 {
+		t.Fatalf("expected saved job to reflect update, got %#v", saved)
+	}
+}
+
+func TestJobLifecycleUseCase_UpdateDetails_NotFound(t *testing.T) {
+	useCase := NewJobLifecycleUseCase(
+		newLifecycleRepository(),
+		&lifecycleEmitter{},
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	_, err := useCase.UpdateDetails(context.Background(), UpdateJobDetailsCommand{
+		JobID:   "unknown-job",
+		Pickup:  domain.JobStop{Address: "Ikeja"},
+		Dropoff: domain.JobStop{Address: "Yaba"},
+	})
+	if !errors.Is(err, ErrJobNotFound) {
+		t.Fatalf("expected ErrJobNotFound, got %v", err)
+	}
+}
+
+func TestJobLifecycleUseCase_UpdateDetails_CancelledJob(t *testing.T) {
+	useCase := NewJobLifecycleUseCase(
+		newLifecycleRepository(),
+		&lifecycleEmitter{},
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:   "job-update-2",
+		Pickup:  domain.JobStop{Address: "Apapa Port"},
+		Dropoff: domain.JobStop{Address: "Lekki Free Zone"},
+	})
+	if err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+
+	_, err = useCase.CancelJob(context.Background(), CancelJobCommand{
+		JobID:  job.ID,
+		Reason: "customer request",
+	})
+	if err != nil {
+		t.Fatalf("cancel job failed: %v", err)
+	}
+
+	_, err = useCase.UpdateDetails(context.Background(), UpdateJobDetailsCommand{
+		JobID:   job.ID,
+		Pickup:  domain.JobStop{Address: "Ikeja"},
+		Dropoff: domain.JobStop{Address: "Yaba"},
+	})
+	if err == nil {
+		t.Fatal("expected error updating details of a cancelled job")
+	}
+}
+
+func TestJobLifecycleUseCase_DeleteJob_HappyPath(t *testing.T) {
+	repo := newLifecycleRepository()
+	useCase := NewJobLifecycleUseCase(
+		repo,
+		&lifecycleEmitter{},
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:   "job-delete-1",
+		Pickup:  domain.JobStop{Address: "Apapa Port"},
+		Dropoff: domain.JobStop{Address: "Lekki Free Zone"},
+	})
+	if err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+
+	if err := useCase.DeleteJob(context.Background(), DeleteJobCommand{JobID: job.ID}); err != nil {
+		t.Fatalf("delete job failed: %v", err)
+	}
+
+	if _, ok := repo.FindByTenantAndID("default", job.ID); ok {
+		t.Fatal("expected job to be deleted from repository")
+	}
+}
+
+func TestJobLifecycleUseCase_DeleteJob_NotFound(t *testing.T) {
+	repo := newLifecycleRepository()
+	useCase := NewJobLifecycleUseCase(
+		repo,
+		&lifecycleEmitter{},
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	err := useCase.DeleteJob(context.Background(), DeleteJobCommand{JobID: "unknown-job"})
+	if !errors.Is(err, ErrJobNotFound) {
+		t.Fatalf("expected ErrJobNotFound, got %v", err)
+	}
+	if repo.deleteCalls != 0 {
+		t.Fatalf("expected repository.Delete not to be called, got %d calls", repo.deleteCalls)
+	}
+}
+
+func TestJobLifecycleUseCase_DeleteJob_TenantIsolation(t *testing.T) {
+	repo := newLifecycleRepository()
+	useCase := NewJobLifecycleUseCase(
+		repo,
+		&lifecycleEmitter{},
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		TenantID: "tenant-a",
+		JobID:    "job-delete-2",
+		Pickup:   domain.JobStop{Address: "Apapa Port"},
+		Dropoff:  domain.JobStop{Address: "Lekki Free Zone"},
+	})
+	if err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+
+	err = useCase.DeleteJob(context.Background(), DeleteJobCommand{TenantID: "tenant-b", JobID: job.ID})
+	if !errors.Is(err, ErrJobNotFound) {
+		t.Fatalf("expected ErrJobNotFound for cross-tenant delete, got %v", err)
+	}
+	if repo.deleteCalls != 0 {
+		t.Fatalf("expected repository.Delete not to be called, got %d calls", repo.deleteCalls)
+	}
+	if _, ok := repo.FindByTenantAndID("tenant-a", job.ID); !ok {
+		t.Fatal("expected tenant-a job to remain untouched")
+	}
+}
+
+func TestJobLifecycleUseCase_SummarizeJobs_ExcludesCancelledFromTotalValue(t *testing.T) {
+	useCase := NewJobLifecycleUseCase(
+		newLifecycleRepository(),
+		&lifecycleEmitter{},
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	jobOne, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:     "job-summary-1",
+		AmountNgn: 1000,
+		Pickup:    domain.JobStop{Address: "Apapa Port"},
+		Dropoff:   domain.JobStop{Address: "Lekki Free Zone"},
+	})
+	if err != nil {
+		t.Fatalf("create job one failed: %v", err)
+	}
+	_, err = useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:     "job-summary-2",
+		AmountNgn: 2000,
+		Pickup:    domain.JobStop{Address: "Ikeja"},
+		Dropoff:   domain.JobStop{Address: "Yaba"},
+	})
+	if err != nil {
+		t.Fatalf("create job two failed: %v", err)
+	}
+	jobThree, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:     "job-summary-3",
+		AmountNgn: 4000,
+		Pickup:    domain.JobStop{Address: "Ojota"},
+		Dropoff:   domain.JobStop{Address: "Surulere"},
+	})
+	if err != nil {
+		t.Fatalf("create job three failed: %v", err)
+	}
+
+	if _, err := useCase.CancelJob(context.Background(), CancelJobCommand{JobID: jobThree.ID, Reason: "duplicate"}); err != nil {
+		t.Fatalf("cancel job three failed: %v", err)
+	}
+
+	summary, err := useCase.SummarizeJobs(context.Background(), "")
+	if err != nil {
+		t.Fatalf("summarize jobs failed: %v", err)
+	}
+	if summary.Total != 3 {
+		t.Fatalf("expected total 3, got %d", summary.Total)
+	}
+	wantTotalValue := jobOne.AmountNgn + 2000.0
+	if summary.TotalValueNgn != wantTotalValue {
+		t.Fatalf("expected total value %v excluding cancelled job, got %v", wantTotalValue, summary.TotalValueNgn)
+	}
+}
+
+func TestJobLifecycleUseCase_CreateJobWithStops(t *testing.T) {
+	repo := newLifecycleRepository()
+	useCase := NewJobLifecycleUseCase(
+		repo,
+		&lifecycleEmitter{},
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	stops := []domain.JobStop{
+		{Address: "Ojota Junction"},
+		{Address: "Maryland"},
+	}
+	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:   "job-stops-1",
+		Pickup:  domain.JobStop{Address: "Apapa Port"},
+		Dropoff: domain.JobStop{Address: "Lekki Free Zone"},
+		Stops:   stops,
+	})
+	if err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+	if len(job.Stops) != 2 || job.Stops[0].Address != "Ojota Junction" || job.Stops[1].Address != "Maryland" {
+		t.Fatalf("expected returned job to have 2 stops, got %#v", job.Stops)
+	}
+
+	saved, ok := repo.FindByTenantAndID("default", job.ID)
+	if !ok {
+		t.Fatal("expected job to be saved")
+	}
+	if len(saved.Stops) != 2 || saved.Stops[0].Address != "Ojota Junction" || saved.Stops[1].Address != "Maryland" {
+		t.Fatalf("expected saved job to have 2 stops, got %#v", saved.Stops)
 	}
 }

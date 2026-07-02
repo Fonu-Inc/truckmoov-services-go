@@ -1237,3 +1237,219 @@ func TestHandler_ListJobsRejectsTenantQuery(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, listRes.Code, listRes.Body.String())
 	}
 }
+
+func TestHandler_UpdateJobDetailsContract(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{"vehicleId":"veh-1","pickupLocation":"Old Pickup","deliveryLocation":"Old Dropoff"}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+	jobID := decodeJobBody(t, createRes.Body.Bytes()).ID
+
+	patchRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPatch,
+		"/dispatch/jobs/"+jobID,
+		`{
+			"pickup":{"address":"New Pickup Address"},
+			"dropoff":{"address":"New Dropoff Address"},
+			"cargo_type":"Frozen Goods",
+			"amount":75000,
+			"deadline":"2026-01-02T10:00:00Z",
+			"stops":[{"address":"Waypoint 1"}]
+		}`,
+	)
+	if patchRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, patchRes.Code, patchRes.Body.String())
+	}
+
+	updatedJob := decodeJobBody(t, patchRes.Body.Bytes())
+	if updatedJob.Pickup.Address != "New Pickup Address" {
+		t.Fatalf("expected updated pickup address, got %q", updatedJob.Pickup.Address)
+	}
+	if updatedJob.Dropoff.Address != "New Dropoff Address" {
+		t.Fatalf("expected updated dropoff address, got %q", updatedJob.Dropoff.Address)
+	}
+	if updatedJob.CargoType != "Frozen Goods" {
+		t.Fatalf("expected updated cargo type, got %q", updatedJob.CargoType)
+	}
+	if updatedJob.AmountNgn != 75000 {
+		t.Fatalf("expected updated amount 75000, got %v", updatedJob.AmountNgn)
+	}
+	if updatedJob.Deadline == nil || !updatedJob.Deadline.Equal(time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)) {
+		t.Fatalf("expected updated deadline, got %v", updatedJob.Deadline)
+	}
+	if len(updatedJob.Stops) != 1 || updatedJob.Stops[0].Address != "Waypoint 1" {
+		t.Fatalf("expected updated stops, got %#v", updatedJob.Stops)
+	}
+}
+
+func TestHandler_UpdateJobDetailsNotFound(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	patchRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPatch,
+		"/dispatch/jobs/does-not-exist",
+		`{"pickup":{"address":"A"},"dropoff":{"address":"B"}}`,
+	)
+	if patchRes.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusNotFound, patchRes.Code, patchRes.Body.String())
+	}
+}
+
+func TestHandler_DeleteJobContract(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{"vehicleId":"veh-1","pickupLocation":"A","deliveryLocation":"B"}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+	jobID := decodeJobBody(t, createRes.Body.Bytes()).ID
+
+	deleteRes := dispatchRequest(t, mux, http.MethodDelete, "/dispatch/jobs/"+jobID, "")
+	if deleteRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, deleteRes.Code, deleteRes.Body.String())
+	}
+
+	getRes := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs/"+jobID, "")
+	if getRes.Code != http.StatusNotFound {
+		t.Fatalf("expected deleted job to 404, got %d body=%s", getRes.Code, getRes.Body.String())
+	}
+}
+
+func TestHandler_DeleteJobNotFound(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	deleteRes := dispatchRequest(t, mux, http.MethodDelete, "/dispatch/jobs/does-not-exist", "")
+	if deleteRes.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusNotFound, deleteRes.Code, deleteRes.Body.String())
+	}
+}
+
+func TestHandler_JobsSummaryIncludesTotalValueNgn(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	for _, body := range []string{
+		`{"vehicleId":"veh-1","pickupLocation":"A","deliveryLocation":"B","amount":100000}`,
+		`{"vehicleId":"veh-2","pickupLocation":"C","deliveryLocation":"D","amount":250000}`,
+	} {
+		res := dispatchRequest(t, mux, http.MethodPost, "/dispatch/jobs", body)
+		if res.Code != http.StatusCreated {
+			t.Fatalf("create job expected 201, got %d body=%s", res.Code, res.Body.String())
+		}
+	}
+
+	res := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs/summary", "")
+	if res.Code != http.StatusOK {
+		t.Fatalf("summary expected 200, got %d body=%s", res.Code, res.Body.String())
+	}
+
+	var payload struct {
+		Data struct {
+			Total         int     `json:"total"`
+			TotalValueNgn float64 `json:"total_value_ngn"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if payload.Data.Total != 2 {
+		t.Fatalf("expected total 2, got %d", payload.Data.Total)
+	}
+	if payload.Data.TotalValueNgn != 350000 {
+		t.Fatalf("expected total_value_ngn 350000, got %v", payload.Data.TotalValueNgn)
+	}
+}
+
+func TestHandler_CreateJobWithStopsIncludedInResponse(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{
+			"vehicleId":"veh-1",
+			"pickupLocation":"A",
+			"deliveryLocation":"B",
+			"stops":[
+				{"address":"Stop 1","contact_name":"John"},
+				{"address":"Stop 2"}
+			]
+		}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+
+	createdJob := decodeJobBody(t, createRes.Body.Bytes())
+	if len(createdJob.Stops) != 2 {
+		t.Fatalf("expected 2 stops, got %#v", createdJob.Stops)
+	}
+	if createdJob.Stops[0].Address != "Stop 1" || createdJob.Stops[0].ContactName != "John" {
+		t.Fatalf("expected stop 1 to match request, got %#v", createdJob.Stops[0])
+	}
+	if createdJob.Stops[1].Address != "Stop 2" {
+		t.Fatalf("expected stop 2 to match request, got %#v", createdJob.Stops[1])
+	}
+}
+
+func TestHandler_JobResourceBarePathGetAndMethodNotAllowed(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+
+	createRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs",
+		`{"vehicleId":"veh-1","pickupLocation":"A","deliveryLocation":"B"}`,
+	)
+	if createRes.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
+	}
+	jobID := decodeJobBody(t, createRes.Body.Bytes()).ID
+
+	getRes := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs/"+jobID, "")
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, getRes.Code, getRes.Body.String())
+	}
+	if decodeJobBody(t, getRes.Body.Bytes()).ID != jobID {
+		t.Fatalf("expected GET to return job %q", jobID)
+	}
+
+	postRes := dispatchRequest(t, mux, http.MethodPost, "/dispatch/jobs/"+jobID, "")
+	if postRes.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusMethodNotAllowed, postRes.Code, postRes.Body.String())
+	}
+}

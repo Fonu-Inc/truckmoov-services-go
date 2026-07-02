@@ -227,6 +227,19 @@ func (r *PostgresJobRepository) FindByTenant(tenantID string) []domain.Job {
 	return results
 }
 
+func (r *PostgresJobRepository) Delete(tenantID, id string) error {
+	_, err := r.db.ExecContext(
+		context.Background(),
+		`DELETE FROM dispatch_jobs WHERE tenant_id = $1 AND id = $2`,
+		strings.TrimSpace(tenantID),
+		strings.TrimSpace(id),
+	)
+	if err != nil {
+		return fmt.Errorf("delete dispatch job: %w", err)
+	}
+	return nil
+}
+
 func decodeStoredJob(payload []byte) (domain.Job, error) {
 	var job domain.Job
 	if err := json.Unmarshal(payload, &job); err != nil {

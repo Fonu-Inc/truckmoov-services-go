@@ -30,6 +30,11 @@ func (r *routingRepository) FindByTenantAndID(tenantID, id string) (domain.Job, 
 	return j, ok
 }
 
+func (r *routingRepository) Delete(tenantID, id string) error {
+	delete(r.data, tenantID+":"+id)
+	return nil
+}
+
 func (r *routingRepository) FindByTenant(tenantID string) []domain.Job {
 	var out []domain.Job
 	for _, j := range r.data {

@@ -17,6 +17,7 @@ type JobRepository interface {
 	Save(job domain.Job) error
 	FindByTenantAndID(tenantID, id string) (domain.Job, bool)
 	FindByTenant(tenantID string) []domain.Job
+	Delete(tenantID, id string) error
 }
 
 type JobStatusChangedEmitter interface {
@@ -39,6 +40,7 @@ type CreateJobCommand struct {
 	DriverPhone             string
 	Pickup                  domain.JobStop
 	Dropoff                 domain.JobStop
+	Stops                   []domain.JobStop
 	CargoType               string
 	CargoDescription        string
 	InitialNote             string
@@ -72,6 +74,25 @@ type CancelJobCommand struct {
 	TenantID string
 	JobID    string
 	Reason   string
+}
+
+type DeleteJobCommand struct {
+	TenantID string
+	JobID    string
+}
+
+type UpdateJobDetailsCommand struct {
+	TenantID         string
+	JobID            string
+	Pickup           domain.JobStop
+	Dropoff          domain.JobStop
+	Stops            []domain.JobStop
+	CargoType        string
+	CargoDescription string
+	AmountNgn        float64
+	Deadline         *time.Time
+	LoadWeightKg     float64
+	LoadVolumeM3     float64
 }
 
 type AcknowledgeJobCommand struct {
@@ -235,6 +256,7 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		TenantID:                tenantID,
 		Pickup:                  command.Pickup,
 		Dropoff:                 command.Dropoff,
+		Stops:                   command.Stops,
 		CargoType:               command.CargoType,
 		CargoDescription:        command.CargoDescription,
 		AmountNgn:               command.AmountNgn,
@@ -310,6 +332,43 @@ func (u *JobLifecycleUseCase) UpdateScheduling(_ context.Context, command Update
 		return domain.Job{}, fmt.Errorf("save job scheduling: %w", err)
 	}
 	return updatedJob, nil
+}
+
+func (u *JobLifecycleUseCase) UpdateDetails(_ context.Context, command UpdateJobDetailsCommand) (domain.Job, error) {
+	job, err := u.findJobForTenant(command.TenantID, command.JobID)
+	if err != nil {
+		return domain.Job{}, err
+	}
+
+	updatedJob, err := job.UpdateDetails(domain.JobDetailsUpdate{
+		Pickup:           command.Pickup,
+		Dropoff:          command.Dropoff,
+		Stops:            command.Stops,
+		CargoType:        command.CargoType,
+		CargoDescription: command.CargoDescription,
+		AmountNgn:        command.AmountNgn,
+		Deadline:         command.Deadline,
+		LoadWeightKg:     command.LoadWeightKg,
+		LoadVolumeM3:     command.LoadVolumeM3,
+	}, u.clock.Now(), u.idGenerator.New())
+	if err != nil {
+		return domain.Job{}, err
+	}
+	if err := u.repository.Save(updatedJob); err != nil {
+		return domain.Job{}, fmt.Errorf("save job details: %w", err)
+	}
+	return updatedJob, nil
+}
+
+func (u *JobLifecycleUseCase) DeleteJob(_ context.Context, command DeleteJobCommand) error {
+	if _, err := u.findJobForTenant(command.TenantID, command.JobID); err != nil {
+		return err
+	}
+	resolvedTenant := u.resolveTenant(command.TenantID)
+	if err := u.repository.Delete(resolvedTenant, strings.TrimSpace(command.JobID)); err != nil {
+		return fmt.Errorf("delete job: %w", err)
+	}
+	return nil
 }
 
 func (u *JobLifecycleUseCase) AssignJob(ctx context.Context, command AssignJobCommand) (domain.Job, error) {
@@ -589,8 +648,9 @@ func (u *JobLifecycleUseCase) ListJobs(_ context.Context, tenantID string, filte
 }
 
 type JobStatusSummary struct {
-	Total    int            `json:"total"`
-	ByStatus map[string]int `json:"by_status"`
+	Total         int            `json:"total"`
+	ByStatus      map[string]int `json:"by_status"`
+	TotalValueNgn float64        `json:"total_value_ngn"`
 }
 
 func (u *JobLifecycleUseCase) SummarizeJobs(ctx context.Context, tenantID string) (JobStatusSummary, error) {
@@ -607,10 +667,14 @@ func (u *JobLifecycleUseCase) SummarizeJobs(ctx context.Context, tenantID string
 		string(domain.StatusDelivered): 0,
 		string(domain.StatusCancelled): 0,
 	}
+	var totalValueNgn float64
 	for _, job := range jobs {
 		byStatus[string(job.Status)]++
+		if job.Status != domain.StatusCancelled {
+			totalValueNgn += job.AmountNgn
+		}
 	}
-	return JobStatusSummary{Total: len(jobs), ByStatus: byStatus}, nil
+	return JobStatusSummary{Total: len(jobs), ByStatus: byStatus, TotalValueNgn: totalValueNgn}, nil
 }
 
 func (u *JobLifecycleUseCase) GetTimeline(_ context.Context, tenantID, jobID string) ([]domain.JobTimelineEntry, error) {

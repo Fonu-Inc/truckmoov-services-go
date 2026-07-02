@@ -98,6 +98,7 @@ type Job struct {
 	TenantID                string                `json:"tenant_id"`
 	Pickup                  JobStop               `json:"pickup"`
 	Dropoff                 JobStop               `json:"dropoff"`
+	Stops                   []JobStop             `json:"stops,omitempty"`
 	CargoType               string                `json:"cargo_type,omitempty"`
 	CargoDescription        string                `json:"cargo_description,omitempty"`
 	AmountNgn               float64               `json:"amount_ngn,omitempty"`
@@ -174,6 +175,7 @@ func NewJob(params Job) (Job, error) {
 		TenantID:                strings.TrimSpace(params.TenantID),
 		Pickup:                  normalizeStop(params.Pickup),
 		Dropoff:                 normalizeStop(params.Dropoff),
+		Stops:                   normalizeStops(params.Stops),
 		CargoType:               strings.TrimSpace(params.CargoType),
 		CargoDescription:        strings.TrimSpace(params.CargoDescription),
 		AmountNgn:               params.AmountNgn,
@@ -244,6 +246,58 @@ func (j Job) SetScheduling(priority JobPriority, timeWindow JobTimeWindow, now t
 		Metadata: map[string]string{
 			"priority": string(priority),
 		},
+	})
+	return updated, nil
+}
+
+type JobDetailsUpdate struct {
+	Pickup           JobStop
+	Dropoff          JobStop
+	Stops            []JobStop
+	CargoType        string
+	CargoDescription string
+	AmountNgn        float64
+	Deadline         *time.Time
+	LoadWeightKg     float64
+	LoadVolumeM3     float64
+}
+
+func (j Job) UpdateDetails(update JobDetailsUpdate, now time.Time, timelineID string) (Job, error) {
+	if j.Status == StatusCancelled || j.Status == StatusDelivered {
+		return Job{}, errors.New("cannot edit a completed/cancelled job")
+	}
+	if strings.TrimSpace(update.Pickup.Address) == "" {
+		return Job{}, errors.New("pickup address is required")
+	}
+	if strings.TrimSpace(update.Dropoff.Address) == "" {
+		return Job{}, errors.New("dropoff address is required")
+	}
+	if update.AmountNgn < 0 {
+		return Job{}, errors.New("amount_ngn cannot be negative")
+	}
+	if update.LoadWeightKg < 0 {
+		return Job{}, errors.New("load_weight_kg cannot be negative")
+	}
+	if update.LoadVolumeM3 < 0 {
+		return Job{}, errors.New("load_volume_m3 cannot be negative")
+	}
+
+	updated := j
+	updated.Pickup = normalizeStop(update.Pickup)
+	updated.Dropoff = normalizeStop(update.Dropoff)
+	updated.Stops = normalizeStops(update.Stops)
+	updated.CargoType = strings.TrimSpace(update.CargoType)
+	updated.CargoDescription = strings.TrimSpace(update.CargoDescription)
+	updated.AmountNgn = update.AmountNgn
+	updated.Deadline = normalizeOptionalTime(update.Deadline)
+	updated.LoadWeightKg = update.LoadWeightKg
+	updated.LoadVolumeM3 = update.LoadVolumeM3
+	updated.UpdatedAt = now.UTC()
+	updated.appendTimeline(JobTimelineEntry{
+		ID:         strings.TrimSpace(timelineID),
+		Type:       "job_details_updated",
+		Summary:    "Job details updated",
+		OccurredAt: now.UTC(),
 	})
 	return updated, nil
 }
@@ -624,6 +678,23 @@ func normalizeStop(stop JobStop) JobStop {
 		Longitude:    stop.Longitude,
 		Notes:        strings.TrimSpace(stop.Notes),
 	}
+}
+
+func normalizeStops(stops []JobStop) []JobStop {
+	if len(stops) == 0 {
+		return nil
+	}
+	normalized := make([]JobStop, 0, len(stops))
+	for _, stop := range stops {
+		if strings.TrimSpace(stop.Address) == "" && stop.Latitude == nil && stop.Longitude == nil {
+			continue
+		}
+		normalized = append(normalized, normalizeStop(stop))
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+	return normalized
 }
 
 func normalizeOptionalTime(value *time.Time) *time.Time {

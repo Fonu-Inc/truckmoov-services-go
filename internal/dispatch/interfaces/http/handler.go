@@ -64,6 +64,7 @@ type createJobRequest struct {
 	Deadline                *string           `json:"deadline,omitempty"`
 	Pickup                  stopRequest       `json:"pickup"`
 	Dropoff                 stopRequest       `json:"dropoff"`
+	Stops                   []stopRequest     `json:"stops,omitempty"`
 	RequiredVehicleType     string            `json:"required_vehicle_type,omitempty"`
 	LoadWeightKg            *float64          `json:"load_weight_kg,omitempty"`
 	LoadVolumeM3            float64           `json:"load_volume_m3,omitempty"`
@@ -75,6 +76,43 @@ type createJobRequest struct {
 type updateJobSchedulingRequest struct {
 	Priority   string            `json:"priority,omitempty"`
 	TimeWindow timeWindowRequest `json:"time_window,omitempty"`
+}
+
+type updateJobDetailsRequest struct {
+	Pickup           stopRequest   `json:"pickup"`
+	Dropoff          stopRequest   `json:"dropoff"`
+	Stops            []stopRequest `json:"stops,omitempty"`
+	CargoType        string        `json:"cargo_type,omitempty"`
+	CargoDescription string        `json:"cargo_description,omitempty"`
+	Amount           *float64      `json:"amount,omitempty"`
+	Deadline         *string       `json:"deadline,omitempty"`
+	LoadWeightKg     *float64      `json:"load_weight_kg,omitempty"`
+	LoadVolumeM3     float64       `json:"load_volume_m3,omitempty"`
+}
+
+func (r updateJobDetailsRequest) stops() []domain.JobStop {
+	if len(r.Stops) == 0 {
+		return nil
+	}
+	stops := make([]domain.JobStop, 0, len(r.Stops))
+	for _, s := range r.Stops {
+		stops = append(stops, s.toDomain())
+	}
+	return stops
+}
+
+func (r updateJobDetailsRequest) amountNgn() float64 {
+	if r.Amount == nil {
+		return 0
+	}
+	return *r.Amount
+}
+
+func (r updateJobDetailsRequest) loadWeightKg() float64 {
+	if r.LoadWeightKg == nil {
+		return 0
+	}
+	return *r.LoadWeightKg
 }
 
 type assignJobRequest struct {
@@ -292,6 +330,7 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 		DriverPhone:             req.driverPhone(),
 		Pickup:                  req.pickupStop().toDomain(),
 		Dropoff:                 req.dropoffStop().toDomain(),
+		Stops:                   req.stops(),
 		CargoType:               req.CargoType,
 		CargoDescription:        req.CargoDescription,
 		InitialNote:             req.initialNote(),
@@ -446,7 +485,16 @@ func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
 
 	switch action {
 	case "":
-		h.getJob(w, r, jobID)
+		switch r.Method {
+		case http.MethodGet:
+			h.getJob(w, r, jobID)
+		case http.MethodPatch, http.MethodPut:
+			h.updateJobDetails(w, r, jobID)
+		case http.MethodDelete:
+			h.deleteJob(w, r, jobID)
+		default:
+			respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		}
 	case "scheduling":
 		h.updateJobScheduling(w, r, jobID)
 	case "assign":
@@ -500,6 +548,80 @@ func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, jobID string) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+}
+
+func (h *Handler) updateJobDetails(w http.ResponseWriter, r *http.Request, jobID string) {
+	var req updateJobDetailsRequest
+	if err := decodeJSONBody(r, &req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	deadline, err := parseTimeValue(req.Deadline)
+	if err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
+	job, err := h.jobLifecycleUseCase.UpdateDetails(r.Context(), application.UpdateJobDetailsCommand{
+		TenantID:         tenantID,
+		JobID:            jobID,
+		Pickup:           req.Pickup.toDomain(),
+		Dropoff:          req.Dropoff.toDomain(),
+		Stops:            req.stops(),
+		CargoType:        req.CargoType,
+		CargoDescription: req.CargoDescription,
+		AmountNgn:        req.amountNgn(),
+		Deadline:         deadline,
+		LoadWeightKg:     req.loadWeightKg(),
+		LoadVolumeM3:     req.LoadVolumeM3,
+	})
+	if err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.details.updated",
+		EntityType: "job",
+		EntityID:   job.ID,
+		Summary:    "Dispatch job details updated",
+		Metadata: map[string]any{
+			"amount_ngn": job.AmountNgn,
+			"deadline":   job.Deadline,
+		},
+	})
+}
+
+func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request, jobID string) {
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+
+	if err := h.jobLifecycleUseCase.DeleteJob(r.Context(), application.DeleteJobCommand{
+		TenantID: tenantID,
+		JobID:    jobID,
+	}); err != nil {
+		respondLifecycleError(w, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success"})
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "dispatch",
+		Action:     "job.deleted",
+		EntityType: "job",
+		EntityID:   jobID,
+		Summary:    "Dispatch job deleted",
+	})
 }
 
 func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jobID string) {
@@ -1179,6 +1301,17 @@ func (r createJobRequest) dropoffStop() stopRequest {
 		Latitude:  r.DeliveryLat,
 		Longitude: r.DeliveryLng,
 	}
+}
+
+func (r createJobRequest) stops() []domain.JobStop {
+	if len(r.Stops) == 0 {
+		return nil
+	}
+	stops := make([]domain.JobStop, 0, len(r.Stops))
+	for _, s := range r.Stops {
+		stops = append(stops, s.toDomain())
+	}
+	return stops
 }
 
 func (r createJobRequest) vehicleID() string {

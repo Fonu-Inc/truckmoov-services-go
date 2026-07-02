@@ -80,6 +80,14 @@ func (s *Store) SAdd(key string, members ...string) error {
 	return err
 }
 
+func (s *Store) SRem(key string, members ...string) error {
+	args := make([]string, 0, len(members)+1)
+	args = append(args, key)
+	args = append(args, members...)
+	_, err := s.do("SREM", args...)
+	return err
+}
+
 func (s *Store) SMembers(key string) ([]string, error) {
 	reply, err := s.do("SMEMBERS", key)
 	if err != nil {

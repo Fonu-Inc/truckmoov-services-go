@@ -56,6 +56,13 @@ func (r *InMemoryJobRepository) FindByTenant(tenantID string) []domain.Job {
 	return results
 }
 
+func (r *InMemoryJobRepository) Delete(tenantID, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.jobs, buildJobKey(tenantID, id))
+	return nil
+}
+
 func buildJobKey(tenantID, jobID string) string {
 	return strings.TrimSpace(tenantID) + ":" + strings.TrimSpace(jobID)
 }
@@ -112,6 +119,13 @@ func (r *RedisJobRepository) FindByTenant(tenantID string) []domain.Job {
 		return results[i].CreatedAt.Before(results[j].CreatedAt)
 	})
 	return results
+}
+
+func (r *RedisJobRepository) Delete(tenantID, id string) error {
+	if err := r.store.Del(redisJobKey(tenantID, id)); err != nil {
+		return err
+	}
+	return r.store.SRem(redisJobIndexKey(tenantID), strings.TrimSpace(id))
 }
 
 func redisJobKey(tenantID, jobID string) string {
