@@ -56,6 +56,9 @@ type Config struct {
 	SMSServiceSenderID           string
 	RouteSolverAddr              string
 	ValhallaURL                  string
+	NtfyErrorTopicURL            string
+	NtfyErrorAuthToken           string
+	FleetServiceURL              string
 }
 
 func Load(serviceName, defaultPort string) Config {
@@ -106,6 +109,9 @@ func Load(serviceName, defaultPort string) Config {
 		SMSServiceSenderID:           getEnv("SMS_SERVICE_SENDER_ID", ""),
 		RouteSolverAddr:              getEnv("ROUTE_SOLVER_ADDR", ""),
 		ValhallaURL:                  getEnv("VALHALLA_URL", "http://valhalla:8002"),
+		NtfyErrorTopicURL:            getEnv("NTFY_ERROR_TOPIC_URL", ""),
+		NtfyErrorAuthToken:           getEnv("NTFY_ERROR_AUTH_TOKEN", ""),
+		FleetServiceURL:              getEnv("FLEET_SERVICE_URL", "http://fleet-service:3002"),
 		CORSOrigins: parseCSVEnv(
 			"CORS_ALLOWED_ORIGINS",
 			"http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000",

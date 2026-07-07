@@ -15,6 +15,7 @@ import (
 	"github.com/truckmoov/services-go/internal/dispatch/infrastructure"
 	dispatchhttp "github.com/truckmoov/services-go/internal/dispatch/interfaces/http"
 	"github.com/truckmoov/services-go/pkg/activitylog"
+	"github.com/truckmoov/services-go/pkg/alert"
 	"github.com/truckmoov/services-go/pkg/config"
 	"github.com/truckmoov/services-go/pkg/eventbus"
 	httpx "github.com/truckmoov/services-go/pkg/http"
@@ -143,12 +144,15 @@ func main() {
 		}
 	}()
 
+	fleetClient := infrastructure.NewFleetClient(cfg.FleetServiceURL, cfg.JWTSecret, nil)
+
 	handler := dispatchhttp.NewHandler(
 		publishJobStatusUseCase,
 		jobLifecycleUseCase,
 		routingUseCase,
 		sendJobInstructionUseCase,
 		activitylog.NewPublisher(bus),
+		fleetClient,
 	)
 
 	mux := http.NewServeMux()
@@ -156,6 +160,7 @@ func main() {
 	handlerWithCORS := httpx.WithCORS(mux, cfg.CORSOrigins)
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
 	handlerWithCORS = httpx.WithAuthContext(handlerWithCORS, cfg.JWTSecret)
+	handlerWithCORS = httpx.WithErrorAlerts(handlerWithCORS, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)
 
 	if runErr := httpx.Run(ctx, ":"+cfg.Port, httpx.WithLogging(handlerWithCORS, log), log); runErr != nil {
 		log.Error("service_stopped", "error", runErr.Error())

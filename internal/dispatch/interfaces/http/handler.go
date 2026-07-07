@@ -1,6 +1,7 @@
 package dispatchhttp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
+	"github.com/truckmoov/services-go/internal/dispatch/infrastructure"
 	"github.com/truckmoov/services-go/pkg/activitylog"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
@@ -223,6 +225,7 @@ type Handler struct {
 	routingUseCase            *application.RoutingUseCase
 	sendJobInstructionUseCase *application.SendJobInstructionUseCase
 	activityPublisher         *activitylog.Publisher
+	fleetClient               *infrastructure.FleetClient
 }
 
 func NewHandler(
@@ -231,6 +234,7 @@ func NewHandler(
 	routingUseCase *application.RoutingUseCase,
 	sendJobInstructionUseCase *application.SendJobInstructionUseCase,
 	activityPublisher *activitylog.Publisher,
+	fleetClient *infrastructure.FleetClient,
 ) *Handler {
 	return &Handler{
 		publishJobStatusUseCase:   publishJobStatusUseCase,
@@ -238,7 +242,44 @@ func NewHandler(
 		routingUseCase:            routingUseCase,
 		sendJobInstructionUseCase: sendJobInstructionUseCase,
 		activityPublisher:         activityPublisher,
+		fleetClient:               fleetClient,
 	}
+}
+
+// jobWithAssignments flattens domain.Job and adds driver/vehicle display details
+// fetched from the fleet service, so API consumers don't need a second round-trip.
+type jobWithAssignments struct {
+	domain.Job
+	AssignedDriverName   string `json:"assigned_driver_name,omitempty"`
+	AssignedVehicleReg   string `json:"assigned_vehicle_reg,omitempty"`
+	AssignedVehicleModel string `json:"assigned_vehicle_model,omitempty"`
+}
+
+func (h *Handler) enrichJob(ctx context.Context, tenantID string, job domain.Job) jobWithAssignments {
+	enriched := jobWithAssignments{Job: job}
+	if h.fleetClient == nil {
+		return enriched
+	}
+	if job.AssignedDriverID != "" {
+		if driver, err := h.fleetClient.GetDriver(ctx, tenantID, job.AssignedDriverID); err == nil {
+			enriched.AssignedDriverName = driver.Name
+		}
+	}
+	if job.AssignedVehicleID != "" {
+		if vehicle, err := h.fleetClient.GetVehicle(ctx, tenantID, job.AssignedVehicleID); err == nil {
+			enriched.AssignedVehicleReg = vehicle.PlateNumber
+			enriched.AssignedVehicleModel = vehicle.Model
+		}
+	}
+	return enriched
+}
+
+func (h *Handler) enrichJobs(ctx context.Context, tenantID string, jobs []domain.Job) []jobWithAssignments {
+	enriched := make([]jobWithAssignments, len(jobs))
+	for i, job := range jobs {
+		enriched[i] = h.enrichJob(ctx, tenantID, job)
+	}
+	return enriched
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
@@ -468,7 +509,7 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": jobs})
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": h.enrichJobs(r.Context(), tenantID, jobs)})
 }
 
 func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
@@ -547,7 +588,7 @@ func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, jobID string) {
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": h.enrichJob(r.Context(), tenantID, job)})
 }
 
 func (h *Handler) updateJobDetails(w http.ResponseWriter, r *http.Request, jobID string) {
