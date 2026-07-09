@@ -13,7 +13,6 @@ import (
 )
 
 const (
-	alertBodyCapBytes  = 2048
 	alertStackCapBytes = 4000
 )
 
@@ -21,6 +20,7 @@ var (
 	jwtPattern    = regexp.MustCompile(`[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}`)
 	bearerPattern = regexp.MustCompile(`(?i)(bearer|authorization)\s*[:=]?\s*\S+`)
 	emailPattern  = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)
+	idSegment     = regexp.MustCompile(`^[0-9a-fA-F-]{8,}$|^\d+$`)
 )
 
 // redact strips secret- and PII-shaped substrings before a payload leaves
@@ -33,14 +33,29 @@ func redact(s string) string {
 	return s
 }
 
-// statusRecorder wraps a ResponseWriter to capture the status code and a
-// bounded prefix of the response body, so an error alert can show what the
-// handler actually sent back.
+// routeTemplate collapses UUID/numeric-looking path segments (tenant,
+// vehicle, job IDs, etc.) into ":id" so alerts identify the route without
+// leaking specific record identifiers to an external channel.
+func routeTemplate(path string) string {
+	segments := strings.Split(path, "/")
+	for i, seg := range segments {
+		if idSegment.MatchString(seg) {
+			segments[i] = ":id"
+		}
+	}
+	return strings.Join(segments, "/")
+}
+
+// statusRecorder wraps a ResponseWriter to capture the status code, so an
+// error alert can report it. It deliberately does not capture the response
+// body: handler bodies can echo request input (PII, validation messages
+// quoting user-supplied strings, tenant data) and a denylist-style redactor
+// can't be made complete for arbitrary handler output. Alerts carry the
+// route/status/tenant only; the full body lives in the primary log store.
 type statusRecorder struct {
 	http.ResponseWriter
 	status      int
 	wroteHeader bool
-	body        strings.Builder
 }
 
 func (s *statusRecorder) WriteHeader(code int) {
@@ -55,13 +70,6 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 	if !s.wroteHeader {
 		s.status = http.StatusOK
 		s.wroteHeader = true
-	}
-	if s.body.Len() < alertBodyCapBytes {
-		remaining := alertBodyCapBytes - s.body.Len()
-		if remaining > len(b) {
-			remaining = len(b)
-		}
-		s.body.Write(b[:remaining])
 	}
 	return s.ResponseWriter.Write(b)
 }
@@ -110,7 +118,6 @@ func WithErrorAlerts(next http.Handler, notifier *alert.NtfyClient, recent *Rece
 				Path:     r.URL.Path,
 				Status:   rec.status,
 				TenantID: tenantID,
-				Detail:   rec.body.String(),
 				Prior:    prior,
 			})
 		}
@@ -135,25 +142,39 @@ func sendAlert(notifier *alert.NtfyClient, serviceName string, a alertContext) {
 	if tenant == "" {
 		tenant = "-"
 	}
+	route := routeTemplate(a.Path)
+
+	// Prior requests are process-wide, not per-tenant: only surface entries
+	// belonging to the same tenant as the failing request so one tenant's
+	// alert never discloses another tenant's traffic (method/path/tenant).
+	var samePrior []RequestSnapshot
+	for _, p := range a.Prior {
+		if p.TenantID == a.TenantID {
+			p.Path = routeTemplate(p.Path)
+			samePrior = append(samePrior, p)
+		}
+	}
 
 	var body strings.Builder
-	fmt.Fprintf(&body, "%s %s -> %d (tenant=%s)\n", a.Method, a.Path, a.Status, tenant)
+	fmt.Fprintf(&body, "%s %s -> %d (tenant=%s)\n", a.Method, route, a.Status, tenant)
 	if a.Detail != "" {
 		fmt.Fprintf(&body, "\n%s\n", a.Detail)
 	}
 	if a.Stack != "" {
 		fmt.Fprintf(&body, "\nstack:\n%s\n", a.Stack)
 	}
-	fmt.Fprintf(&body, "\nlast %d requests before this:\n%s", len(a.Prior), FormatRecentRequests(a.Prior))
+	fmt.Fprintf(&body, "\nlast %d requests before this (same tenant):\n%s", len(samePrior), FormatRecentRequests(samePrior))
 
-	title := fmt.Sprintf("%s: %d %s %s", serviceName, a.Status, a.Method, a.Path)
+	title := fmt.Sprintf("%s: %d %s %s", serviceName, a.Status, a.Method, route)
 	priority, tag := 3, "warning"
 	if a.Status >= http.StatusInternalServerError || a.Stack != "" {
 		priority, tag = 5, "rotating_light"
 	}
 
 	// Redact secret/PII-shaped substrings once, over the fully assembled
-	// message, right before it leaves the process for an external channel.
+	// title and message, right before they leave the process for an
+	// external channel.
+	title = redact(title)
 	message := redact(body.String())
 
 	go func() {
