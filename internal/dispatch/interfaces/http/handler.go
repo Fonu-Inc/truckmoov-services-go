@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -263,12 +264,16 @@ func (h *Handler) enrichJob(ctx context.Context, tenantID string, job domain.Job
 	if job.AssignedDriverID != "" {
 		if driver, err := h.fleetClient.GetDriver(ctx, tenantID, job.AssignedDriverID); err == nil {
 			enriched.AssignedDriverName = driver.Name
+		} else {
+			log.Printf("dispatch: enrichJob: fleet GetDriver failed for driver_id=%s tenant_id=%s: %v", job.AssignedDriverID, tenantID, err)
 		}
 	}
 	if job.AssignedVehicleID != "" {
 		if vehicle, err := h.fleetClient.GetVehicle(ctx, tenantID, job.AssignedVehicleID); err == nil {
 			enriched.AssignedVehicleReg = vehicle.PlateNumber
 			enriched.AssignedVehicleModel = vehicle.Model
+		} else {
+			log.Printf("dispatch: enrichJob: fleet GetVehicle failed for vehicle_id=%s tenant_id=%s: %v", job.AssignedVehicleID, tenantID, err)
 		}
 	}
 	return enriched
