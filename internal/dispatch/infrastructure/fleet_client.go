@@ -24,6 +24,7 @@ type FleetClient struct {
 
 type FleetVehicle struct {
 	PlateNumber string
+	Make        string
 	Model       string
 }
 
@@ -55,13 +56,14 @@ func (c *FleetClient) GetVehicle(ctx context.Context, tenantID, vehicleID string
 	var envelope struct {
 		Data struct {
 			PlateNumber string `json:"plateNumber"`
+			Make        string `json:"make"`
 			Model       string `json:"model"`
 		} `json:"data"`
 	}
 	if err := c.get(ctx, tenantID, "/fleet/vehicles/"+strings.TrimSpace(vehicleID), &envelope); err != nil {
 		return FleetVehicle{}, err
 	}
-	return FleetVehicle{PlateNumber: envelope.Data.PlateNumber, Model: envelope.Data.Model}, nil
+	return FleetVehicle{PlateNumber: envelope.Data.PlateNumber, Make: envelope.Data.Make, Model: envelope.Data.Model}, nil
 }
 
 func (c *FleetClient) GetDriver(ctx context.Context, tenantID, driverID string) (FleetDriver, error) {

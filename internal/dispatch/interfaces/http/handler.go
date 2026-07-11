@@ -253,6 +253,7 @@ type jobWithAssignments struct {
 	domain.Job
 	AssignedDriverName   string `json:"assigned_driver_name,omitempty"`
 	AssignedVehicleReg   string `json:"assigned_vehicle_reg,omitempty"`
+	AssignedVehicleMake  string `json:"assigned_vehicle_make,omitempty"`
 	AssignedVehicleModel string `json:"assigned_vehicle_model,omitempty"`
 }
 
@@ -271,6 +272,7 @@ func (h *Handler) enrichJob(ctx context.Context, tenantID string, job domain.Job
 	if job.AssignedVehicleID != "" {
 		if vehicle, err := h.fleetClient.GetVehicle(ctx, tenantID, job.AssignedVehicleID); err == nil {
 			enriched.AssignedVehicleReg = vehicle.PlateNumber
+			enriched.AssignedVehicleMake = vehicle.Make
 			enriched.AssignedVehicleModel = vehicle.Model
 		} else {
 			log.Printf("dispatch: enrichJob: fleet GetVehicle failed for vehicle_id=%s tenant_id=%s: %v", job.AssignedVehicleID, tenantID, err)
