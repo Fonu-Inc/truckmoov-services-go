@@ -13,6 +13,7 @@ import (
 	"github.com/truckmoov/services-go/internal/tracking/infrastructure"
 	trackinghttp "github.com/truckmoov/services-go/internal/tracking/interfaces/http"
 	"github.com/truckmoov/services-go/pkg/activitylog"
+	"github.com/truckmoov/services-go/pkg/alert"
 	"github.com/truckmoov/services-go/pkg/config"
 	"github.com/truckmoov/services-go/pkg/eventbus"
 	httpx "github.com/truckmoov/services-go/pkg/http"
@@ -27,6 +28,7 @@ func main() {
 
 	cfg := config.Load("TRACKING", "3004")
 	log := logger.New("tracking")
+	log.Info("jwt_secret_fingerprint", "fingerprint", cfg.JWTSecretFingerprint())
 
 	shutdownTelemetry, err := otel.Setup(ctx, "tracking", log)
 	if err != nil {
@@ -135,6 +137,7 @@ func main() {
 	handlerWithCORS := httpx.WithCORS(mux, cfg.CORSOrigins)
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
 	handlerWithCORS = httpx.WithAuthContext(handlerWithCORS, cfg.JWTSecret)
+	handlerWithCORS = httpx.WithErrorAlerts(handlerWithCORS, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)
 
 	// cmd/tracking is kept as composition root only: all business rules live in internal/tracking.
 	if runErr := httpx.Run(ctx, ":"+cfg.Port, httpx.WithLogging(handlerWithCORS, log), log); runErr != nil {

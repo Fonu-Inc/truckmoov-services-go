@@ -14,6 +14,7 @@ import (
 	"github.com/truckmoov/services-go/internal/notification/infrastructure"
 	notificationhttp "github.com/truckmoov/services-go/internal/notification/interfaces/http"
 	"github.com/truckmoov/services-go/pkg/activitylog"
+	"github.com/truckmoov/services-go/pkg/alert"
 	"github.com/truckmoov/services-go/pkg/config"
 	"github.com/truckmoov/services-go/pkg/eventbus"
 	httpx "github.com/truckmoov/services-go/pkg/http"
@@ -28,6 +29,7 @@ func main() {
 
 	cfg := config.Load("NOTIFICATION", "3003")
 	log := logger.New("notification")
+	log.Info("jwt_secret_fingerprint", "fingerprint", cfg.JWTSecretFingerprint())
 
 	shutdownTelemetry, err := otel.Setup(ctx, "notification", log)
 	if err != nil {
@@ -231,6 +233,7 @@ func main() {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 	handlerWithAuth := httpx.WithAuthContext(mux, cfg.JWTSecret)
+	handlerWithAuth = httpx.WithErrorAlerts(handlerWithAuth, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)
 	handlerWithCORS := httpx.WithCORS(handlerWithAuth, cfg.CORSOrigins)
 
 	if runErr := httpx.Run(ctx, ":"+cfg.Port, httpx.WithLogging(handlerWithCORS, log), log); runErr != nil {

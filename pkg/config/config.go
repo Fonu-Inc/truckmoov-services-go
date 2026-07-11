@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"net/url"
 	"os"
@@ -158,6 +160,17 @@ func getFirstEnv(keys []string, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+// JWTSecretFingerprint returns a short, non-reversible fingerprint of the
+// configured JWT_SECRET (first 8 hex chars of its SHA-256 digest) — safe to
+// log at startup. JWT_SECRET itself must never be logged; this exists so
+// two services' logs can be diffed to confirm they're using the same
+// secret value without ever exposing the secret. See config for the
+// JWT_SECRET drift incident this was added for.
+func (c Config) JWTSecretFingerprint() string {
+	sum := sha256.Sum256([]byte(c.JWTSecret))
+	return hex.EncodeToString(sum[:])[:8]
 }
 
 func (c Config) PostgresDSN() string {
