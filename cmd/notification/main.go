@@ -29,7 +29,7 @@ func main() {
 
 	cfg := config.Load("NOTIFICATION", "3003")
 	log := logger.New("notification")
-	log.Info("jwt_secret_fingerprint", "fingerprint", cfg.JWTSecretFingerprint())
+	log.Info("jwt_key_id", "key_id", cfg.JWTKeyID)
 
 	shutdownTelemetry, err := otel.Setup(ctx, "notification", log)
 	if err != nil {

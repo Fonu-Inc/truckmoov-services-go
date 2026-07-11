@@ -28,7 +28,7 @@ func main() {
 
 	cfg := config.Load("TRACKING", "3004")
 	log := logger.New("tracking")
-	log.Info("jwt_secret_fingerprint", "fingerprint", cfg.JWTSecretFingerprint())
+	log.Info("jwt_key_id", "key_id", cfg.JWTKeyID)
 
 	shutdownTelemetry, err := otel.Setup(ctx, "tracking", log)
 	if err != nil {

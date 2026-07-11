@@ -31,7 +31,7 @@ func main() {
 
 	cfg := config.Load("DISPATCH", "3005")
 	log := logger.New("dispatch")
-	log.Info("jwt_secret_fingerprint", "fingerprint", cfg.JWTSecretFingerprint())
+	log.Info("jwt_key_id", "key_id", cfg.JWTKeyID)
 
 	shutdownTelemetry, err := otel.Setup(ctx, "dispatch", log)
 	if err != nil {
