@@ -380,6 +380,55 @@ func TestJobLifecycleUseCase_ListJobsSupportsFilters(t *testing.T) {
 	}
 }
 
+func TestJobLifecycleUseCase_ListJobsSupportsWeightAmountDeadlineFilters(t *testing.T) {
+	repo := newLifecycleRepository()
+	useCase := NewJobLifecycleUseCase(
+		repo,
+		&lifecycleEmitter{},
+		&lifecycleNotifier{},
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+
+	deadline := time.Date(2026, 3, 15, 18, 0, 0, 0, time.UTC)
+	if _, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID: "light", Pickup: domain.JobStop{Address: "A"}, Dropoff: domain.JobStop{Address: "B"},
+		LoadWeightKg: 2000, AmountNgn: 50000, Deadline: &deadline,
+	}); err != nil {
+		t.Fatalf("create light: %v", err)
+	}
+	if _, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID: "heavy", Pickup: domain.JobStop{Address: "A"}, Dropoff: domain.JobStop{Address: "B"},
+		LoadWeightKg: 9000, AmountNgn: 300000,
+	}); err != nil {
+		t.Fatalf("create heavy: %v", err)
+	}
+
+	f := func(v float64) *float64 { return &v }
+
+	// Weight 3-8 tons (3000-8000 kg) matches neither (light=2t, heavy=9t).
+	if got, _ := useCase.ListJobs(context.Background(), "", ListJobsFilter{WeightFromKg: f(3000), WeightToKg: f(8000)}); len(got) != 0 {
+		t.Fatalf("weight 3-8t expected 0, got %d", len(got))
+	}
+	// Weight >= 5t matches only heavy.
+	got, _ := useCase.ListJobs(context.Background(), "", ListJobsFilter{WeightFromKg: f(5000)})
+	if len(got) != 1 || got[0].ID != "heavy" {
+		t.Fatalf("weight >=5t expected [heavy], got %#v", got)
+	}
+	// Amount <= 100000 matches only light.
+	got, _ = useCase.ListJobs(context.Background(), "", ListJobsFilter{AmountTo: f(100000)})
+	if len(got) != 1 || got[0].ID != "light" {
+		t.Fatalf("amount <=100k expected [light], got %#v", got)
+	}
+	// Deadline on 2026-03-15 matches only light (heavy has no deadline).
+	d := time.Date(2026, 3, 15, 0, 0, 0, 0, time.UTC)
+	got, _ = useCase.ListJobs(context.Background(), "", ListJobsFilter{Deadline: &d})
+	if len(got) != 1 || got[0].ID != "light" {
+		t.Fatalf("deadline filter expected [light], got %#v", got)
+	}
+}
+
 func TestJobLifecycleUseCase_CreateAndConfirmDriverStatusRequest(t *testing.T) {
 	repo := newLifecycleRepository()
 	emitter := &lifecycleEmitter{}

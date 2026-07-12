@@ -145,6 +145,14 @@ type ListJobsFilter struct {
 	Query     string
 	DriverID  string
 	VehicleID string
+	// Optional range/date filters for the Dispatch Center "Only show
+	// shipments by..." panel. Weight bounds are in kilograms (the handler
+	// converts the tons the UI submits). nil means "not filtering on it".
+	WeightFromKg *float64
+	WeightToKg   *float64
+	AmountFrom   *float64
+	AmountTo     *float64
+	Deadline     *time.Time
 }
 
 var ErrDriverStatusRequestNotFound = errors.New("driver status request not found")
@@ -638,6 +646,21 @@ func (u *JobLifecycleUseCase) ListJobs(_ context.Context, tenantID string, filte
 		if query != "" && !jobMatchesQuery(job, query) {
 			continue
 		}
+		if filter.WeightFromKg != nil && job.LoadWeightKg < *filter.WeightFromKg {
+			continue
+		}
+		if filter.WeightToKg != nil && job.LoadWeightKg > *filter.WeightToKg {
+			continue
+		}
+		if filter.AmountFrom != nil && job.AmountNgn < *filter.AmountFrom {
+			continue
+		}
+		if filter.AmountTo != nil && job.AmountNgn > *filter.AmountTo {
+			continue
+		}
+		if filter.Deadline != nil && !jobDeadlineOnDate(job, *filter.Deadline) {
+			continue
+		}
 		filtered = append(filtered, job)
 	}
 
@@ -645,6 +668,16 @@ func (u *JobLifecycleUseCase) ListJobs(_ context.Context, tenantID string, filte
 		return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
 	})
 	return filtered, nil
+}
+
+// jobDeadlineOnDate reports whether the job's deadline falls on the given
+// calendar day (compared in UTC). Jobs without a deadline never match.
+func jobDeadlineOnDate(job domain.Job, date time.Time) bool {
+	if job.Deadline == nil {
+		return false
+	}
+	d := job.Deadline.UTC()
+	return d.Year() == date.Year() && d.Month() == date.Month() && d.Day() == date.Day()
 }
 
 type JobStatusSummary struct {

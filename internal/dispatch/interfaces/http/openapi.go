@@ -181,6 +181,11 @@ func dispatchOpenAPISpec() map[string]any {
 						{"name": "query", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "driver_id", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "vehicle_id", "in": "query", "schema": map[string]any{"type": "string"}},
+						{"name": "weight_from", "in": "query", "description": "Minimum cargo weight in tons", "schema": map[string]any{"type": "number"}},
+						{"name": "weight_to", "in": "query", "description": "Maximum cargo weight in tons", "schema": map[string]any{"type": "number"}},
+						{"name": "amount_from", "in": "query", "description": "Minimum quoted amount (NGN)", "schema": map[string]any{"type": "number"}},
+						{"name": "amount_to", "in": "query", "description": "Maximum quoted amount (NGN)", "schema": map[string]any{"type": "number"}},
+						{"name": "deadline", "in": "query", "description": "Only jobs whose deadline falls on this date (YYYY-MM-DD)", "schema": map[string]any{"type": "string", "format": "date"}},
 					},
 					"responses": map[string]any{
 						"200": map[string]any{
@@ -262,6 +267,68 @@ func dispatchOpenAPISpec() map[string]any {
 						"404": map[string]any{
 							"description": "Job not found",
 						},
+					},
+				},
+				"patch": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Edit job details (pickup/dropoff/stops/cargo/amount/deadline/weight)",
+					"operationId": "updateJobDetails",
+					"parameters":  []any{jobIDParameter},
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/UpdateJobDetailsRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Job details updated",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/JobResponse"},
+								},
+							},
+						},
+						"400": map[string]any{"description": "Validation error"},
+						"404": map[string]any{"description": "Job not found"},
+					},
+				},
+				"put": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Edit job details (alias of PATCH)",
+					"operationId": "replaceJobDetails",
+					"parameters":  []any{jobIDParameter},
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/UpdateJobDetailsRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Job details updated",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/JobResponse"},
+								},
+							},
+						},
+						"400": map[string]any{"description": "Validation error"},
+						"404": map[string]any{"description": "Job not found"},
+					},
+				},
+				"delete": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Delete a job",
+					"operationId": "deleteJob",
+					"parameters":  []any{jobIDParameter},
+					"responses": map[string]any{
+						"200": map[string]any{"description": "Job deleted"},
+						"404": map[string]any{"description": "Job not found"},
 					},
 				},
 			},
@@ -645,6 +712,21 @@ func dispatchOpenAPISpec() map[string]any {
 						"pickup_end":    map[string]any{"type": "string", "format": "date-time"},
 						"dropoff_start": map[string]any{"type": "string", "format": "date-time"},
 						"dropoff_end":   map[string]any{"type": "string", "format": "date-time"},
+					},
+				},
+				"UpdateJobDetailsRequest": map[string]any{
+					"type":        "object",
+					"description": "Edit a job's pickup/dropoff, intermediate stops, cargo, amount, deadline, and load details.",
+					"properties": map[string]any{
+						"pickup":            map[string]any{"$ref": "#/components/schemas/Stop"},
+						"dropoff":           map[string]any{"$ref": "#/components/schemas/Stop"},
+						"stops":             map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/Stop"}},
+						"cargo_type":        map[string]any{"type": "string"},
+						"cargo_description": map[string]any{"type": "string"},
+						"amount":            map[string]any{"type": "number"},
+						"deadline":          map[string]any{"type": "string", "format": "date-time"},
+						"load_weight_kg":    map[string]any{"type": "number"},
+						"load_volume_m3":    map[string]any{"type": "number"},
 					},
 				},
 				"CreateJobRequest": map[string]any{

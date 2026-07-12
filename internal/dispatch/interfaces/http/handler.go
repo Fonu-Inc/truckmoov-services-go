@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -506,17 +507,63 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs, err := h.jobLifecycleUseCase.ListJobs(r.Context(), tenantID, application.ListJobsFilter{
-		Status:    r.URL.Query().Get("status"),
-		Query:     r.URL.Query().Get("query"),
-		DriverID:  r.URL.Query().Get("driver_id"),
-		VehicleID: r.URL.Query().Get("vehicle_id"),
-	})
+	q := r.URL.Query()
+	filter := application.ListJobsFilter{
+		Status:     q.Get("status"),
+		Query:      q.Get("query"),
+		DriverID:   q.Get("driver_id"),
+		VehicleID:  q.Get("vehicle_id"),
+		AmountFrom: parseOptionalFloat(q.Get("amount_from")),
+		AmountTo:   parseOptionalFloat(q.Get("amount_to")),
+		Deadline:   parseOptionalDate(q.Get("deadline")),
+	}
+	// UI submits weight in tons; the domain stores kilograms.
+	if from := parseOptionalFloat(q.Get("weight_from")); from != nil {
+		kg := *from * 1000
+		filter.WeightFromKg = &kg
+	}
+	if to := parseOptionalFloat(q.Get("weight_to")); to != nil {
+		kg := *to * 1000
+		filter.WeightToKg = &kg
+	}
+
+	jobs, err := h.jobLifecycleUseCase.ListJobs(r.Context(), tenantID, filter)
 	if err != nil {
 		respondLifecycleError(w, err)
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": h.enrichJobs(r.Context(), tenantID, jobs)})
+}
+
+// parseOptionalFloat returns a pointer to the parsed value, or nil when the
+// query param is absent or unparseable (treated as "no filter").
+func parseOptionalFloat(raw string) *float64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return nil
+	}
+	return &v
+}
+
+// parseOptionalDate parses a calendar date (YYYY-MM-DD, or a full RFC3339
+// timestamp) into midnight UTC of that day, or nil when absent/unparseable.
+func parseOptionalDate(raw string) *time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if t, err := time.Parse("2006-01-02", raw); err == nil {
+		return &t
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+		return &day
+	}
+	return nil
 }
 
 func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
