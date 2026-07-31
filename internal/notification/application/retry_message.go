@@ -34,8 +34,8 @@ func NewRetryMessageUseCase(
 	}
 }
 
-func (u *RetryMessageUseCase) Execute(ctx context.Context, id string) (domain.OutboxMessage, error) {
-	message, ok := u.repository.FindByID(id)
+func (u *RetryMessageUseCase) Execute(ctx context.Context, tenantID, id string) (domain.OutboxMessage, error) {
+	message, ok := u.repository.FindByTenantAndID(tenantID, id)
 	if !ok {
 		return domain.OutboxMessage{}, ErrMessageNotFound
 	}

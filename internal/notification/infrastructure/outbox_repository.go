@@ -39,6 +39,14 @@ func (r *InMemoryOutboxRepository) FindByID(id string) (domain.OutboxMessage, bo
 	return message, ok
 }
 
+func (r *InMemoryOutboxRepository) FindByTenantAndID(tenantID, id string) (domain.OutboxMessage, bool) {
+	message, ok := r.FindByID(id)
+	if !ok || message.TenantID != tenantID {
+		return domain.OutboxMessage{}, false
+	}
+	return message, true
+}
+
 func (r *InMemoryOutboxRepository) FindByProviderMessageID(providerMessageID string) (domain.OutboxMessage, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -82,6 +90,14 @@ func (r *RedisOutboxRepository) FindByID(id string) (domain.OutboxMessage, bool)
 
 	var message domain.OutboxMessage
 	if err := json.Unmarshal(payload, &message); err != nil {
+		return domain.OutboxMessage{}, false
+	}
+	return message, true
+}
+
+func (r *RedisOutboxRepository) FindByTenantAndID(tenantID, id string) (domain.OutboxMessage, bool) {
+	message, ok := r.FindByID(id)
+	if !ok || message.TenantID != tenantID {
 		return domain.OutboxMessage{}, false
 	}
 	return message, true

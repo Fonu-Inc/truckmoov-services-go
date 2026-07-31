@@ -55,6 +55,34 @@ func sanitizeJetStreamName(streamName string) string {
 	return normalized
 }
 
+// buildStreamConfig is factored out of New so its fields (retention, bounds,
+// replication) can be unit tested without a live NATS connection.
+//
+// Replicas is intentionally left unset (NATS default: 1). The NATS
+// StatefulSet (see truckmoov-gitops/manifests/platform/base/nats-statefulset.yaml)
+// currently runs as a 3-node cluster capable of R3, but the stream itself has
+// not yet been bumped to Replicas:3 pending manual confirmation that the
+// cluster has actually formed a healthy quorum post-deploy — requesting R3
+// against a cluster that hasn't finished forming would fail stream
+// creation/update, and that error is fatal at service startup (see
+// cmd/*/main.go), taking down every Go service at once. Bump this only after
+// verifying cluster health (e.g. `nats server list` or the /varz endpoint on
+// port 8222 across all three pods shows a formed cluster).
+func buildStreamConfig(streamName string) *nats.StreamConfig {
+	// Bounded retention so a high-rate stream can never fill the data PVC and
+	// stall JetStream. Discard oldest once limits are hit.
+	return &nats.StreamConfig{
+		Name:              streamName,
+		Subjects:          []string{"tm.*.>"},
+		Storage:           nats.FileStorage,
+		Retention:         nats.LimitsPolicy,
+		Discard:           nats.DiscardOld,
+		MaxAge:            7 * 24 * time.Hour,
+		MaxBytes:          1 << 30, // 1 GiB
+		MaxMsgsPerSubject: 100_000,
+	}
+}
+
 // New connects to NATS JetStream and ensures the event stream exists with
 // bounded retention. It fails loudly (returns an error) rather than silently
 // dropping events through a no-op bus — callers should treat a nil error as a
@@ -76,18 +104,7 @@ func New(ctx context.Context, natsURL, streamName string, log *slog.Logger) (Eve
 		return nil, fmt.Errorf("init jetstream: %w", err)
 	}
 
-	// Bounded retention so a high-rate stream can never fill the data PVC and
-	// stall JetStream. Discard oldest once limits are hit.
-	streamCfg := &nats.StreamConfig{
-		Name:              effectiveStreamName,
-		Subjects:          []string{"tm.*.>"},
-		Storage:           nats.FileStorage,
-		Retention:         nats.LimitsPolicy,
-		Discard:           nats.DiscardOld,
-		MaxAge:            7 * 24 * time.Hour,
-		MaxBytes:          1 << 30, // 1 GiB
-		MaxMsgsPerSubject: 100_000,
-	}
+	streamCfg := buildStreamConfig(effectiveStreamName)
 	if _, infoErr := js.StreamInfo(effectiveStreamName); infoErr != nil {
 		if _, err = js.AddStream(streamCfg); err != nil {
 			_ = nc.Drain()

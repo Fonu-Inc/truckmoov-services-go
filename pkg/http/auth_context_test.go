@@ -69,3 +69,76 @@ func TestWithAuthContextStoresClaimsOnRequestContext(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusNoContent, res.Code)
 	}
 }
+
+func TestRequireAuthRejectsMissingHeader(t *testing.T) {
+	const secret = "replace-me"
+	called := false
+	wrapped := RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}), secret)
+
+	req := httptest.NewRequest(http.MethodGet, "/dispatch/jobs", nil)
+	res := httptest.NewRecorder()
+
+	wrapped.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, res.Code)
+	}
+	if called {
+		t.Fatal("expected next handler not to be called without an Authorization header")
+	}
+}
+
+func TestRequireAuthRejectsInvalidSignature(t *testing.T) {
+	const secret = "replace-me"
+	called := false
+	wrapped := RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}), secret)
+
+	req := httptest.NewRequest(http.MethodGet, "/dispatch/jobs", nil)
+	token := makeTestBearerToken(secret, "tenant-42", "DISPATCHER")
+	req.Header.Set("Authorization", "Bearer "+token+"tampered")
+	res := httptest.NewRecorder()
+
+	wrapped.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, res.Code)
+	}
+	if called {
+		t.Fatal("expected next handler not to be called with a tampered signature")
+	}
+}
+
+func TestRequireAuthRejectsExpiredToken(t *testing.T) {
+	const secret = "replace-me"
+	called := false
+	wrapped := RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusNoContent)
+	}), secret)
+
+	payload := fmt.Sprintf(`{"sub":"user-1","email":"ops@example.com","role":"DISPATCHER","tenantId":"tenant-42","exp":%d}`,
+		time.Now().Add(-time.Hour).Unix(),
+	)
+	encoded := encodeBase64URL([]byte(payload))
+	signature := signTokenValue(encoded, secret)
+	expiredToken := encoded + "." + signature
+
+	req := httptest.NewRequest(http.MethodGet, "/dispatch/jobs", nil)
+	req.Header.Set("Authorization", "Bearer "+expiredToken)
+	res := httptest.NewRecorder()
+
+	wrapped.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, res.Code)
+	}
+	if called {
+		t.Fatal("expected next handler not to be called with an expired token")
+	}
+}

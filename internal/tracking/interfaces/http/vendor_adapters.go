@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/truckmoov/services-go/internal/tracking/application"
@@ -113,6 +114,7 @@ func (queclinkAdapter) decode(r *http.Request) (application.IngestLocationComman
 // device.uniqueId is the IMEI; speed arrives in knots.
 type traccarPayload struct {
 	Position struct {
+		ID         int64          `json:"id"`
 		Protocol   string         `json:"protocol"`
 		Latitude   float64        `json:"latitude"`
 		Longitude  float64        `json:"longitude"`
@@ -141,21 +143,26 @@ func (traccarAdapter) decode(r *http.Request) (application.IngestLocationCommand
 		fixTime = p.Position.DeviceTime
 	}
 	attrs := p.Position.Attributes
+	var vendorPositionID string
+	if p.Position.ID != 0 {
+		vendorPositionID = strconv.FormatInt(p.Position.ID, 10)
+	}
 	// Tenant is intentionally empty: it is resolved from the IMEI identity cache,
 	// since Traccar's forward payload carries no tenant.
 	return application.IngestLocationCommand{
-		IMEI:            p.Device.UniqueID,
-		Latitude:        p.Position.Latitude,
-		Longitude:       p.Position.Longitude,
-		SpeedKPH:        &speed,
-		Heading:         &heading,
-		BatteryLevel:    attrFloat(attrs, "batteryLevel", "battery"),
-		SignalStrength:  attrFloat(attrs, "rssi", "signal"),
-		FuelLevel:       attrFloat(attrs, "fuel", "fuelLevel"),
-		EngineOn:        attrBool(attrs, "ignition"),
-		FirmwareVersion: attrString(attrs, "firmware", "version"),
-		FixTime:         fixTime,
-		Protocol:        p.Position.Protocol,
+		IMEI:             p.Device.UniqueID,
+		Latitude:         p.Position.Latitude,
+		Longitude:        p.Position.Longitude,
+		SpeedKPH:         &speed,
+		Heading:          &heading,
+		BatteryLevel:     attrFloat(attrs, "batteryLevel", "battery"),
+		SignalStrength:   attrFloat(attrs, "rssi", "signal"),
+		FuelLevel:        attrFloat(attrs, "fuel", "fuelLevel"),
+		EngineOn:         attrBool(attrs, "ignition"),
+		FirmwareVersion:  attrString(attrs, "firmware", "version"),
+		FixTime:          fixTime,
+		Protocol:         p.Position.Protocol,
+		VendorPositionID: vendorPositionID,
 	}, nil
 }
 

@@ -244,6 +244,12 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenantID, ok := authenticatedTenantID(r)
+	if !ok {
+		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+
 	var req sendRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -251,7 +257,7 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	message, err := h.sendMessageUseCase.Execute(r.Context(), application.SendMessageCommand{
-		TenantID:  req.TenantID,
+		TenantID:  tenantID,
 		Channel:   req.Channel,
 		Recipient: req.Recipient,
 		Content:   req.Content,
@@ -264,7 +270,7 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, responseCode, message)
 	if err == nil {
 		h.publishActivity(r, activitylog.PublishCommand{
-			TenantID:   req.TenantID,
+			TenantID:   tenantID,
 			Service:    "notification",
 			Action:     "message.sent",
 			EntityType: "message",
@@ -285,13 +291,19 @@ func (h *Handler) retryMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenantID, ok := authenticatedTenantID(r)
+	if !ok {
+		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		return
+	}
+
 	id := strings.TrimPrefix(r.URL.Path, "/notify/messages/retry/")
 	if id == "" {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "missing message id"})
 		return
 	}
 
-	message, err := h.retryMessageUseCase.Execute(r.Context(), id)
+	message, err := h.retryMessageUseCase.Execute(r.Context(), tenantID, id)
 	if err == application.ErrMessageNotFound {
 		respondJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return

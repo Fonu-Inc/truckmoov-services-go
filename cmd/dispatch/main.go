@@ -104,6 +104,7 @@ func main() {
 		routeOptimizer = infrastructure.NewSolverRouteOptimizer(
 			solverv1.NewRouteSolverClient(conn),
 			infrastructure.NewValhallaClient(cfg.ValhallaURL),
+			cfg.RouteSolverAuthToken,
 		)
 		log.Info("route_solver_enabled", "address", cfg.RouteSolverAddr, "valhalla_url", cfg.ValhallaURL)
 	} else {

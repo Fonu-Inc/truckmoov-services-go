@@ -385,6 +385,35 @@ func TestWhatsAppTemplateEndpointsRequireAuthentication(t *testing.T) {
 	}
 }
 
+func TestSendMessage_RequiresAuth(t *testing.T) {
+	handler, _, _, _, _, _, _ := notificationHandlerForTests(t)
+	req := makeNotificationAuthRequest(http.MethodPost, "/notify/messages/send", []byte(`{
+		"tenant_id":"tenant-a",
+		"channel":"sms",
+		"recipient":"+23400000000",
+		"content":"hello"
+	}`), "")
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, res.Code, res.Body.String())
+	}
+}
+
+func TestRetryMessage_RequiresAuth(t *testing.T) {
+	handler, _, _, _, _, _, _ := notificationHandlerForTests(t)
+	req := makeNotificationAuthRequest(http.MethodPost, "/notify/messages/retry/msg-1", nil, "")
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, res.Code, res.Body.String())
+	}
+}
+
 func TestWhatsAppSettingsConnectGetAndDisconnect(t *testing.T) {
 	handler, _, _, _, _, _, activityPublisher := notificationHandlerForTests(t)
 

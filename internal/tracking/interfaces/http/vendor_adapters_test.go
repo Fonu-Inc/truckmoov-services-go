@@ -25,7 +25,7 @@ func TestTeltonikaAdapter_FixTimeIsRFC3339(t *testing.T) {
 }
 
 func TestTraccarAdapter_KnotsToKMHAndIMEI(t *testing.T) {
-	body := `{"position":{"protocol":"teltonika","latitude":6.5,"longitude":3.4,"speed":10,"course":90,"fixTime":"2026-02-02T11:00:00Z"},"device":{"uniqueId":"359779090012345"}}`
+	body := `{"position":{"id":987654,"protocol":"teltonika","latitude":6.5,"longitude":3.4,"speed":10,"course":90,"fixTime":"2026-02-02T11:00:00Z"},"device":{"uniqueId":"359779090012345"}}`
 	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest/vendor/traccar", strings.NewReader(body))
 
 	cmd, err := traccarAdapter{}.decode(req)
@@ -40,6 +40,22 @@ func TestTraccarAdapter_KnotsToKMHAndIMEI(t *testing.T) {
 	}
 	if cmd.Protocol != "teltonika" {
 		t.Fatalf("expected protocol teltonika from traccar payload, got %q", cmd.Protocol)
+	}
+	if cmd.VendorPositionID != "987654" {
+		t.Fatalf("expected vendor position id 987654 from traccar payload, got %q", cmd.VendorPositionID)
+	}
+}
+
+func TestTraccarAdapter_MissingPositionIDLeavesVendorPositionIDEmpty(t *testing.T) {
+	body := `{"position":{"protocol":"teltonika","latitude":6.5,"longitude":3.4,"speed":10,"course":90,"fixTime":"2026-02-02T11:00:00Z"},"device":{"uniqueId":"359779090012345"}}`
+	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest/vendor/traccar", strings.NewReader(body))
+
+	cmd, err := traccarAdapter{}.decode(req)
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if cmd.VendorPositionID != "" {
+		t.Fatalf("expected empty vendor position id when traccar payload omits it, got %q", cmd.VendorPositionID)
 	}
 }
 

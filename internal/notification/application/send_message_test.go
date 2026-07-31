@@ -34,6 +34,14 @@ func (r *fakeOutboxRepository) FindByID(id string) (domain.OutboxMessage, bool) 
 	return message, ok
 }
 
+func (r *fakeOutboxRepository) FindByTenantAndID(tenantID, id string) (domain.OutboxMessage, bool) {
+	message, ok := r.data[id]
+	if !ok || message.TenantID != tenantID {
+		return domain.OutboxMessage{}, false
+	}
+	return message, true
+}
+
 func (r *fakeOutboxRepository) FindByProviderMessageID(providerMessageID string) (domain.OutboxMessage, bool) {
 	id, ok := r.providerMessageID[providerMessageID]
 	if !ok {
@@ -103,8 +111,33 @@ func TestRetryMessageUseCase_Execute_NotFound(t *testing.T) {
 		fixedNotificationIDGenerator{id: "2"},
 	)
 
-	_, err := useCase.Execute(context.Background(), "missing")
+	_, err := useCase.Execute(context.Background(), "tenant-a", "missing")
 	if !errors.Is(err, ErrMessageNotFound) {
 		t.Fatalf("expected ErrMessageNotFound, got %v", err)
+	}
+}
+
+func TestRetryMessageUseCase_Execute_WrongTenant_ReturnsNotFound(t *testing.T) {
+	repository := newFakeOutboxRepository()
+	repository.data["msg-1"] = domain.OutboxMessage{
+		ID:        "msg-1",
+		TenantID:  "tenant-a",
+		Channel:   "sms",
+		Recipient: "+23400000000",
+		Content:   "hello",
+		Status:    "failed",
+	}
+
+	useCase := NewRetryMessageUseCase(
+		repository,
+		&fakeMessageProvider{status: "sent"},
+		&fakeDeliveryPublisher{},
+		fixedNotificationClock{now: time.Now()},
+		fixedNotificationIDGenerator{id: "3"},
+	)
+
+	_, err := useCase.Execute(context.Background(), "tenant-b", "msg-1")
+	if !errors.Is(err, ErrMessageNotFound) {
+		t.Fatalf("expected ErrMessageNotFound for cross-tenant retry attempt, got %v", err)
 	}
 }

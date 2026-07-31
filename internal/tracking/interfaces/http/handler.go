@@ -166,6 +166,12 @@ func (h *Handler) alert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tenantID, ok := h.resolveTenantID(r)
+	if !ok {
+		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authenticated tenant context is required"})
+		return
+	}
+
 	var req alertRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
@@ -173,7 +179,7 @@ func (h *Handler) alert(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.publishAlertUseCase.Execute(r.Context(), application.PublishAlertCommand{
-		TenantID:  req.TenantID,
+		TenantID:  tenantID,
 		AlertType: req.AlertType,
 		Severity:  req.Severity,
 		VehicleID: req.VehicleID,
@@ -187,7 +193,7 @@ func (h *Handler) alert(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusAccepted, result)
 	h.publishActivity(r, activitylog.PublishCommand{
-		TenantID:   req.TenantID,
+		TenantID:   tenantID,
 		Service:    "tracking",
 		Action:     "tracking.alert.published",
 		EntityType: "alert",

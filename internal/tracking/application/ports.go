@@ -46,4 +46,9 @@ type LatestLocation struct {
 	FixTimeRFC string    `json:"fix_time"`
 	ObservedAt time.Time `json:"observed_at"`
 	EventID    string    `json:"event_id"`
+	// VendorPositionID is the source system's own identifier for this fix
+	// (e.g. Traccar's position.id). Empty when the vendor adapter doesn't
+	// supply one. Used only for retry/duplicate-delivery detection, never
+	// published downstream.
+	VendorPositionID string `json:"vendor_position_id,omitempty"`
 }

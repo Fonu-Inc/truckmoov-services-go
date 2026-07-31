@@ -9,7 +9,7 @@ import (
 
 type OutboxRepository interface {
 	Save(message domain.OutboxMessage) error
-	FindByID(id string) (domain.OutboxMessage, bool)
+	FindByTenantAndID(tenantID, id string) (domain.OutboxMessage, bool)
 	FindByProviderMessageID(providerMessageID string) (domain.OutboxMessage, bool)
 }
 

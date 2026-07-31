@@ -13,7 +13,32 @@ import (
 	solverv1 "github.com/truckmoov/services-go/api/proto/gen/proto/solver/v1"
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
+	"google.golang.org/grpc/metadata"
 )
+
+func TestSolverRouteOptimizer_WithAuth_AttachesBearerToken(t *testing.T) {
+	o := &SolverRouteOptimizer{authToken: "shared-secret"}
+	ctx := o.withAuth(context.Background())
+
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		t.Fatal("expected outgoing metadata to be set")
+	}
+	got := md.Get("authorization")
+	if len(got) != 1 || got[0] != "Bearer shared-secret" {
+		t.Fatalf("expected authorization metadata %q, got %v", "Bearer shared-secret", got)
+	}
+}
+
+func TestSolverRouteOptimizer_WithAuth_NoTokenLeavesContextUnchanged(t *testing.T) {
+	o := &SolverRouteOptimizer{authToken: ""}
+	ctx := context.Background()
+	result := o.withAuth(ctx)
+
+	if _, ok := metadata.FromOutgoingContext(result); ok {
+		t.Fatal("expected no outgoing metadata when authToken is empty")
+	}
+}
 
 func TestBuildRoutePlanFromSolution_IncludesTurnByTurnManeuvers(t *testing.T) {
 	client := &http.Client{

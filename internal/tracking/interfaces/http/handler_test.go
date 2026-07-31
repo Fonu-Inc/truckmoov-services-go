@@ -275,6 +275,24 @@ func TestHandler_AlertPublishesActivity(t *testing.T) {
 	}
 }
 
+func TestAlert_RequiresAuth(t *testing.T) {
+	handler, _ := buildTrackingTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux)
+	server := httpx.WithAuthContext(mux, "replace-me")
+
+	body := bytes.NewBufferString(`{"tenant_id":"tenant-7","alert_type":"geofence_breach","severity":"high","vehicle_id":"vehicle-7","job_id":"job-7"}`)
+	req := httptest.NewRequest(http.MethodPost, "/tracking/alerts", body)
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+
+	server.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusUnauthorized, res.Code, res.Body.String())
+	}
+}
+
 func TestHandler_DocsContract(t *testing.T) {
 	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()

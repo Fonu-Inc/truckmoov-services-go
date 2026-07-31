@@ -48,6 +48,35 @@ func WithAuthContext(next http.Handler, jwtSecret string) http.Handler {
 	})
 }
 
+// RequireAuth rejects the request with 401 unless a valid Bearer token is
+// present, unlike WithAuthContext which only optionally attaches claims and
+// always calls next regardless of auth outcome.
+func RequireAuth(next http.Handler, jwtSecret string) http.Handler {
+	secret := strings.TrimSpace(jwtSecret)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if secret == "" {
+			writeUnauthorized(w, "authentication is not configured")
+			return
+		}
+
+		claims, ok := resolveAuthClaims(r.Header.Get("Authorization"), secret)
+		if !ok {
+			writeUnauthorized(w, "missing or invalid authorization")
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), authClaimsContextKey{}, claims)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func writeUnauthorized(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	_, _ = w.Write([]byte(`{"error":"` + message + `"}`))
+}
+
 func ClaimsFromRequest(r *http.Request) (*AuthClaims, bool) {
 	if r == nil {
 		return nil, false

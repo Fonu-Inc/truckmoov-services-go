@@ -60,10 +60,16 @@ type Config struct {
 	SMSServicePassword           string
 	SMSServiceSenderID           string
 	RouteSolverAddr              string
-	ValhallaURL                  string
-	NtfyErrorTopicURL            string
-	NtfyErrorAuthToken           string
-	FleetServiceURL              string
+	// RouteSolverAuthToken, when set, is sent as a bearer token in gRPC call
+	// metadata on every route-solver request. Empty by default — matches
+	// the route-solver service's own rollout-safety default (see its
+	// config.py), since both sides need this provisioned identically before
+	// enforcement is safe to turn on.
+	RouteSolverAuthToken string
+	ValhallaURL          string
+	NtfyErrorTopicURL    string
+	NtfyErrorAuthToken   string
+	FleetServiceURL      string
 }
 
 func Load(serviceName, defaultPort string) Config {
@@ -114,6 +120,7 @@ func Load(serviceName, defaultPort string) Config {
 		SMSServicePassword:           getEnv("SMS_SERVICE_PASSWORD", ""),
 		SMSServiceSenderID:           getEnv("SMS_SERVICE_SENDER_ID", ""),
 		RouteSolverAddr:              getEnv("ROUTE_SOLVER_ADDR", ""),
+		RouteSolverAuthToken:         getEnv("ROUTE_SOLVER_AUTH_TOKEN", ""),
 		ValhallaURL:                  getEnv("VALHALLA_URL", "http://valhalla:8002"),
 		NtfyErrorTopicURL:            getEnv("NTFY_ERROR_TOPIC_URL", ""),
 		NtfyErrorAuthToken:           getEnv("NTFY_ERROR_AUTH_TOKEN", ""),

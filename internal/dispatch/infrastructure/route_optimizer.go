@@ -11,6 +11,7 @@ import (
 	solverv1 "github.com/truckmoov/services-go/api/proto/gen/proto/solver/v1"
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
+	"google.golang.org/grpc/metadata"
 )
 
 const defaultAverageSpeedKPH = 35.0
@@ -21,10 +22,20 @@ var errRouteSolverNoSolution = errors.New("route solver returned no feasible sol
 type SolverRouteOptimizer struct {
 	client         solverv1.RouteSolverClient
 	valhallaClient *ValhallaClient
+	authToken      string
 }
 
-func NewSolverRouteOptimizer(client solverv1.RouteSolverClient, valhallaClient *ValhallaClient) *SolverRouteOptimizer {
-	return &SolverRouteOptimizer{client: client, valhallaClient: valhallaClient}
+func NewSolverRouteOptimizer(client solverv1.RouteSolverClient, valhallaClient *ValhallaClient, authToken string) *SolverRouteOptimizer {
+	return &SolverRouteOptimizer{client: client, valhallaClient: valhallaClient, authToken: authToken}
+}
+
+// withAuth attaches the shared bearer token as gRPC call metadata when
+// configured. See config.RouteSolverAuthToken.
+func (o *SolverRouteOptimizer) withAuth(ctx context.Context) context.Context {
+	if o.authToken == "" {
+		return ctx
+	}
+	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+o.authToken)
 }
 
 func (o *SolverRouteOptimizer) OptimizeRoute(
@@ -67,7 +78,7 @@ func (o *SolverRouteOptimizer) OptimizeRoute(
 		req.MaxRouteDuration = &maxDuration
 	}
 
-	resp, err := o.client.SolvePDP(ctx, req)
+	resp, err := o.client.SolvePDP(o.withAuth(ctx), req)
 	if err != nil {
 		return application.RoutePlan{}, fmt.Errorf("solve route over grpc: %w", err)
 	}

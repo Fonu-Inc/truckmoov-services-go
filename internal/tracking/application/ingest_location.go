@@ -29,6 +29,12 @@ type IngestLocationCommand struct {
 	FirmwareVersion string
 	Protocol        string
 	FixTime         string
+	// VendorPositionID, when set by a vendor adapter (e.g. Traccar's
+	// position.id), lets Execute detect and skip a re-delivered fix — a
+	// forwarding webhook retry after a timeout or non-2xx response — without
+	// depending solely on fix-time ordering, which a malformed/missing
+	// fix_time would otherwise bypass entirely.
+	VendorPositionID string
 }
 
 type IngestLocationResult struct {
@@ -121,6 +127,11 @@ func (u *IngestLocationUseCase) Execute(
 
 	parsedFix, fixErr := time.Parse(time.RFC3339, fixTime)
 	prev, _ := u.locationStore.Get(tenantID, vehicleID)
+
+	if command.VendorPositionID != "" && prev != nil && prev.VendorPositionID == command.VendorPositionID {
+		return IngestLocationResult{Skipped: true, SkipReason: "duplicate_vendor_position"}, nil
+	}
+
 	if r := applyTelemetryFilter(u.telemetry, prev, command, parsedFix, fixErr == nil); r.skip {
 		return IngestLocationResult{Skipped: true, SkipReason: r.reason}, nil
 	}
@@ -143,17 +154,18 @@ func (u *IngestLocationUseCase) Execute(
 	}
 
 	if err := u.locationStore.Save(LatestLocation{
-		TenantID:   locationUpdate.TenantID,
-		VehicleID:  locationUpdate.VehicleID,
-		DeviceID:   locationUpdate.DeviceID,
-		Latitude:   locationUpdate.Latitude,
-		Longitude:  locationUpdate.Longitude,
-		SpeedKPH:   locationUpdate.SpeedKPH,
-		Heading:    locationUpdate.Heading,
-		AccuracyM:  locationUpdate.AccuracyM,
-		FixTimeRFC: locationUpdate.FixTimeRFC,
-		ObservedAt: locationUpdate.OccurredAt,
-		EventID:    locationUpdate.EventID,
+		TenantID:         locationUpdate.TenantID,
+		VehicleID:        locationUpdate.VehicleID,
+		DeviceID:         locationUpdate.DeviceID,
+		Latitude:         locationUpdate.Latitude,
+		Longitude:        locationUpdate.Longitude,
+		SpeedKPH:         locationUpdate.SpeedKPH,
+		Heading:          locationUpdate.Heading,
+		AccuracyM:        locationUpdate.AccuracyM,
+		FixTimeRFC:       locationUpdate.FixTimeRFC,
+		ObservedAt:       locationUpdate.OccurredAt,
+		EventID:          locationUpdate.EventID,
+		VendorPositionID: command.VendorPositionID,
 	}); err != nil {
 		return IngestLocationResult{}, fmt.Errorf("save latest location: %w", err)
 	}
