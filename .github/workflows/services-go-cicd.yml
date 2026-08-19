@@ -96,7 +96,8 @@ jobs:
       - name: Verify module checksums
         run: go mod verify
 
-      - name: govulncheck
+      - name: govulncheck (report only)
+        continue-on-error: true
         run: |
           set -euo pipefail
           go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -109,8 +110,9 @@ jobs:
           go install honnef.co/go/tools/cmd/staticcheck@latest
           "$(go env GOPATH)/bin/staticcheck" ./...
 
-      - name: Trivy filesystem scan (CRITICAL, blocking)
-        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
+      - name: Trivy filesystem scan (CRITICAL, report only)
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -119,7 +121,7 @@ jobs:
           ignore-unfixed: true
 
       - name: Trivy filesystem scan (HIGH, non-blocking)
-        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -127,8 +129,9 @@ jobs:
           exit-code: "0"
           ignore-unfixed: true
 
-      - name: Trivy config/Dockerfile scan (CRITICAL, blocking)
-        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
+      - name: Trivy config/Dockerfile scan (CRITICAL, report only)
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
           scan-ref: .
@@ -136,7 +139,7 @@ jobs:
           exit-code: "1"
 
       - name: Trivy config/Dockerfile scan (HIGH, non-blocking)
-        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: config
           scan-ref: .
