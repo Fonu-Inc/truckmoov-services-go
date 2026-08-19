@@ -70,7 +70,6 @@ func NewHandler(
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/tracking/health", h.health)
-	mux.HandleFunc("/tracking/ready", h.ready)
 	mux.HandleFunc("/tracking/docs", h.docsUI)
 	mux.HandleFunc("/tracking/docs/openapi.json", h.docsOpenAPI)
 	mux.HandleFunc("/docs/tracking", h.docsUI)
@@ -104,24 +103,6 @@ func (h *Handler) withAPIKey(next http.Handler) http.Handler {
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"status": "ok", "service": "tracking"})
-}
-
-func (h *Handler) ready(w http.ResponseWriter, r *http.Request) {
-	checks := map[string]string{}
-	healthy := true
-
-	if h.ingestLocationUseCase == nil {
-		checks["use_case"] = "not initialised"
-		healthy = false
-	} else {
-		checks["use_case"] = "ok"
-	}
-
-	status := http.StatusOK
-	if !healthy {
-		status = http.StatusServiceUnavailable
-	}
-	respondJSON(w, status, map[string]any{"ready": healthy, "checks": checks})
 }
 
 func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {

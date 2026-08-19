@@ -30,6 +30,14 @@ func main() {
 	log := logger.New("tracking")
 	log.Info("jwt_key_id", "key_id", cfg.JWTKeyID)
 
+	if err := cfg.Validate(); err != nil {
+		log.Error("config_invalid", "error", err.Error())
+		os.Exit(1)
+	}
+	if cfg.UsingDefaultJWTSecret() {
+		log.Warn("jwt_secret_default", "detail", "JWT_SECRET is unset or the default placeholder; set it before running in production")
+	}
+
 	shutdownTelemetry, err := otel.Setup(ctx, "tracking", log)
 	if err != nil {
 		log.Error("otel_setup_failed", "error", err.Error())
@@ -134,7 +142,18 @@ func main() {
 	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, deviceTelemetryQueryUseCase, cfg.GPSAPIKey, cfg.JWTSecret, activityPublisher)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	handlerWithCORS := httpx.WithCORS(mux, cfg.CORSOrigins)
+
+	metrics := httpx.NewMetrics(cfg.ServiceName)
+	mux.Handle("/metrics", metrics.Handler())
+
+	readiness := httpx.ReadinessHandler("tracking",
+		httpx.ReadinessCheck{Name: "nats", Probe: bus.Ping},
+		httpx.ReadinessCheck{Name: "redis", Probe: func(context.Context) error { return redisClient.Ping() }},
+	)
+	mux.Handle("/ready", readiness)
+	mux.Handle("/tracking/ready", readiness)
+
+	handlerWithCORS := httpx.WithCORS(metrics.Middleware(mux), cfg.CORSOrigins)
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
 	handlerWithCORS = httpx.WithAuthContext(handlerWithCORS, cfg.JWTSecret)
 	handlerWithCORS = httpx.WithErrorAlerts(handlerWithCORS, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)

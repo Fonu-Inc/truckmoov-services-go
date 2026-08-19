@@ -81,10 +81,36 @@ func normalizeOrigins(origins []string) map[string]bool {
 	return normalized
 }
 
+const (
+	defaultReadHeaderTimeout = 5 * time.Second
+	defaultReadTimeout       = 15 * time.Second
+	defaultWriteTimeout      = 30 * time.Second
+	defaultIdleTimeout       = 60 * time.Second
+	defaultMaxHeaderBytes    = 1 << 20 // 1 MiB
+	defaultMaxBodyBytes      = 1 << 20 // 1 MiB
+)
+
+// WithMaxBodyBytes caps the size of request bodies read by downstream handlers.
+// Reads beyond the limit fail, and the wrapped MaxBytesReader writes a 413 hint,
+// so handlers that io.ReadAll or json.Decode the body stay bounded.
+func WithMaxBodyBytes(next http.Handler, limit int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func Run(ctx context.Context, addr string, handler http.Handler, log *slog.Logger) error {
 	server := &http.Server{
-		Addr:    addr,
-		Handler: handler,
+		Addr:              addr,
+		Handler:           WithMaxBodyBytes(handler, defaultMaxBodyBytes),
+		ReadHeaderTimeout: defaultReadHeaderTimeout,
+		ReadTimeout:       defaultReadTimeout,
+		WriteTimeout:      defaultWriteTimeout,
+		IdleTimeout:       defaultIdleTimeout,
+		MaxHeaderBytes:    defaultMaxHeaderBytes,
 	}
 
 	go func() {

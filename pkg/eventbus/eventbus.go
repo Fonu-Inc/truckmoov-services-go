@@ -31,6 +31,7 @@ type Subscription interface {
 type EventBus interface {
 	Publish(ctx context.Context, subject string, envelope EventEnvelope) error
 	Subscribe(ctx context.Context, subject, durable string, handler Handler) (Subscription, error)
+	Ping(ctx context.Context) error
 	Close() error
 }
 
@@ -165,6 +166,21 @@ func (b *natsEventBus) Subscribe(_ context.Context, subject, durable string, han
 
 	b.log.Info("event_subscription_ready", "subject", subject, "durable", durable)
 	return sub, nil
+}
+
+// Ping reports the broker as reachable only when the connection is live and a
+// PING/PONG round-trip to the server completes within the context deadline.
+func (b *natsEventBus) Ping(ctx context.Context) error {
+	if b.nc == nil || !b.nc.IsConnected() {
+		return fmt.Errorf("nats not connected")
+	}
+	timeout := 3 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 {
+			timeout = remaining
+		}
+	}
+	return b.nc.FlushTimeout(timeout)
 }
 
 func (b *natsEventBus) Close() error {

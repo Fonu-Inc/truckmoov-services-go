@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1.7
-# FROM golang:1.23-alpine AS builder
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /app
@@ -12,7 +11,8 @@ RUN GOOS="${TARGETOS:-$(go env GOOS)}" \
     GOARCH="${TARGETARCH:-$(go env GOARCH)}" \
     CGO_ENABLED=0 go build -o /bin/dispatch ./cmd/dispatch
 
-FROM gcr.io/distroless/base-debian12
+FROM gcr.io/distroless/base-debian12:nonroot@sha256:b12529fbbd0bb15eea8905f69d83148679e0b4d7d434c8808100792029b1caae
+USER nonroot:nonroot
 COPY --from=builder /bin/dispatch /dispatch
 EXPOSE 3005
 ENTRYPOINT ["/dispatch"]

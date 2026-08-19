@@ -45,6 +45,12 @@ func (b *Bridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// The http.Server's ReadTimeout/WriteTimeout deadlines are inherited by the
+	// hijacked connection; clear them so this long-lived WebSocket is not torn
+	// down after those windows elapse.
+	_ = conn.SetReadDeadline(time.Time{})
+	_ = conn.SetWriteDeadline(time.Time{})
+
 	for {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {

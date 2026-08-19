@@ -47,11 +47,11 @@ jobs:
     permissions:
       contents: read
     env:
-      GO_VERSION: "1.22.12"
+      GO_VERSION: "1.25.0"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
@@ -79,9 +79,90 @@ jobs:
           go build ./cmd/notification
           go build ./cmd/tracking
 
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GO_VERSION: "1.25.0"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Verify module checksums
+        run: go mod verify
+
+      - name: govulncheck
+        run: |
+          set -euo pipefail
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+      - name: staticcheck (non-blocking)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          "$(go env GOPATH)/bin/staticcheck" ./...
+
+      - name: Trivy filesystem scan (CRITICAL, blocking)
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Trivy filesystem scan (HIGH, non-blocking)
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH
+          exit-code: "0"
+          ignore-unfixed: true
+
+      - name: Trivy config/Dockerfile scan (CRITICAL, blocking)
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: CRITICAL
+          exit-code: "1"
+
+      - name: Trivy config/Dockerfile scan (HIGH, non-blocking)
+        uses: aquasecurity/trivy-action@18f2510ee396bbf400402947b394f2dd8c87dbb0 # v0.29.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH
+          exit-code: "0"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@df80a981bc6edbc4e220a492d3cbe9f5547a6e75 # v0.17.9
+        with:
+          path: .
+          format: spdx-json
+          artifact-name: sbom-services-go.spdx.json
+          output-file: sbom-services-go.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        with:
+          name: sbom-services-go
+          path: sbom-services-go.spdx.json
+          if-no-files-found: error
+
   publish:
     runs-on: ubuntu-latest
-    needs: validate
+    needs:
+      - validate
+      - security
     if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
@@ -97,17 +178,17 @@ jobs:
           - service: tracking
             dockerfile: Dockerfile.tracking
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -123,14 +204,14 @@ jobs:
     env:
       GIT_SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: Fonu-Inc/truckmoov-gitops
           token: ${{ secrets.GITOPS_TOKEN }}
           path: gitops
 
       - name: Install kustomize
-        uses: imranismail/setup-kustomize@v2
+        uses: imranismail/setup-kustomize@2ba527d4d055ab63514ba50a99456fc35684947f # v2.1.0
 
       - name: Bump image tags
         run: |

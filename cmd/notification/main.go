@@ -31,6 +31,14 @@ func main() {
 	log := logger.New("notification")
 	log.Info("jwt_key_id", "key_id", cfg.JWTKeyID)
 
+	if err := cfg.Validate(); err != nil {
+		log.Error("config_invalid", "error", err.Error())
+		os.Exit(1)
+	}
+	if cfg.UsingDefaultJWTSecret() {
+		log.Warn("jwt_secret_default", "detail", "JWT_SECRET is unset or the default placeholder; set it before running in production")
+	}
+
 	shutdownTelemetry, err := otel.Setup(ctx, "notification", log)
 	if err != nil {
 		log.Error("otel_setup_failed", "error", err.Error())
@@ -232,7 +240,19 @@ func main() {
 	)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	handlerWithAuth := httpx.WithAuthContext(mux, cfg.JWTSecret)
+
+	metrics := httpx.NewMetrics(cfg.ServiceName)
+	mux.Handle("/metrics", metrics.Handler())
+
+	readiness := httpx.ReadinessHandler("notification",
+		httpx.ReadinessCheck{Name: "postgres", Probe: postgresDB.PingContext},
+		httpx.ReadinessCheck{Name: "nats", Probe: bus.Ping},
+		httpx.ReadinessCheck{Name: "redis", Probe: func(context.Context) error { return redisClient.Ping() }},
+	)
+	mux.Handle("/ready", readiness)
+	mux.Handle("/notify/ready", readiness)
+
+	handlerWithAuth := httpx.WithAuthContext(metrics.Middleware(mux), cfg.JWTSecret)
 	handlerWithAuth = httpx.WithErrorAlerts(handlerWithAuth, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)
 	handlerWithCORS := httpx.WithCORS(handlerWithAuth, cfg.CORSOrigins)
 

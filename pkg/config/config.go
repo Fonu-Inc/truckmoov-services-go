@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -8,8 +9,16 @@ import (
 	"strings"
 )
 
+// defaultJWTSecret is the placeholder secret used for local/dev runs. It is
+// rejected at startup in production (see Config.Validate).
+const defaultJWTSecret = "replace-me"
+
 type Config struct {
-	ServiceName   string
+	ServiceName string
+	// Environment is the effective deployment environment (e.g. "production",
+	// "development"), resolved from APP_ENV/ENV/GO_ENV. Drives fail-closed
+	// validation.
+	Environment   string
 	Port          string
 	NATSURL       string
 	NATSStream    string
@@ -75,6 +84,7 @@ type Config struct {
 func Load(serviceName, defaultPort string) Config {
 	return Config{
 		ServiceName:                  serviceName,
+		Environment:                  normalizeEnv(getFirstEnv([]string{"APP_ENV", "ENV", "GO_ENV"}, "development")),
 		Port:                         getEnv(serviceName+"_PORT", defaultPort),
 		NATSURL:                      getEnv("NATS_URL", "nats://localhost:4222"),
 		NATSStream:                   getEnv("NATS_STREAM", "truckmoov_events"),
@@ -130,6 +140,31 @@ func Load(serviceName, defaultPort string) Config {
 			"http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000",
 		),
 	}
+}
+
+func normalizeEnv(v string) string {
+	return strings.ToLower(strings.TrimSpace(v))
+}
+
+func (c Config) IsProduction() bool {
+	return c.Environment == "production" || c.Environment == "prod"
+}
+
+// UsingDefaultJWTSecret reports whether the JWT secret is empty or the shipped
+// placeholder. Callers use it to warn (and allow) in non-production.
+func (c Config) UsingDefaultJWTSecret() bool {
+	secret := strings.TrimSpace(c.JWTSecret)
+	return secret == "" || secret == defaultJWTSecret
+}
+
+// Validate fails closed: in production an empty or default JWT secret is a fatal
+// misconfiguration and callers must refuse to boot. In non-production the same
+// state is permitted so local/dev runs work without provisioning secrets.
+func (c Config) Validate() error {
+	if c.IsProduction() && c.UsingDefaultJWTSecret() {
+		return fmt.Errorf("JWT_SECRET must be set to a non-default value in production (APP_ENV=%s)", c.Environment)
+	}
+	return nil
 }
 
 func getEnvFloat(key string, fallback float64) float64 {

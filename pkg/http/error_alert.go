@@ -1,8 +1,10 @@
 package httpx
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"regexp"
 	"runtime/debug"
@@ -72,6 +74,27 @@ func (s *statusRecorder) Write(b []byte) (int, error) {
 		s.wroteHeader = true
 	}
 	return s.ResponseWriter.Write(b)
+}
+
+func (s *statusRecorder) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
+}
+
+// Flush forwards to the underlying writer when it supports flushing, so
+// streaming responses are not buffered by this wrapper.
+func (s *statusRecorder) Flush() {
+	if flusher, ok := s.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Hijack forwards to the underlying writer so WebSocket upgrades keep working
+// when this recorder wraps the response (e.g. the tracking /tracking/ws route).
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hijacker, ok := s.ResponseWriter.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, fmt.Errorf("statusRecorder: underlying ResponseWriter does not implement http.Hijacker")
 }
 
 // WithErrorAlerts wraps next so that any non-2xx response or panic sends a

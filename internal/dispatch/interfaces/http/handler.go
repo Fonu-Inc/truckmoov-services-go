@@ -292,9 +292,7 @@ func (h *Handler) enrichJobs(ctx context.Context, tenantID string, jobs []domain
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/dispatch/health", h.health)
-	mux.HandleFunc("/dispatch/ready", h.ready)
 	mux.HandleFunc("/health", h.health)
-	mux.HandleFunc("/ready", h.ready)
 	mux.HandleFunc("/dispatch/docs", h.docsUI)
 	mux.HandleFunc("/dispatch/docs/openapi.json", h.docsOpenAPI)
 	mux.HandleFunc("/docs/dispatch", h.docsUI)
@@ -309,17 +307,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"status": "ok", "service": "dispatch"})
-}
-
-func (h *Handler) ready(w http.ResponseWriter, _ *http.Request) {
-	ready := h.jobLifecycleUseCase != nil
-	status := http.StatusOK
-	if !ready {
-		status = http.StatusServiceUnavailable
-	}
-	respondJSON(w, status, map[string]any{"ready": ready, "checks": map[string]string{
-		"job_lifecycle": map[bool]string{true: "ok", false: "not initialised"}[ready],
-	}})
 }
 
 func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
