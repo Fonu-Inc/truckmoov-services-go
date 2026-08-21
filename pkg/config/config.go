@@ -68,6 +68,12 @@ type Config struct {
 	SMSServiceUsername           string
 	SMSServicePassword           string
 	SMSServiceSenderID           string
+	SMTPHost                     string
+	SMTPPort                     int
+	SMTPUsername                 string
+	SMTPPassword                 string
+	SMTPFromAddress              string
+	SMTPFromName                 string
 	RouteSolverAddr              string
 	// RouteSolverAuthToken, when set, is sent as a bearer token in gRPC call
 	// metadata on every route-solver request. Empty by default — matches
@@ -129,6 +135,14 @@ func Load(serviceName, defaultPort string) Config {
 		SMSServiceUsername:           getEnv("SMS_SERVICE_USER_NAME", ""),
 		SMSServicePassword:           getEnv("SMS_SERVICE_PASSWORD", ""),
 		SMSServiceSenderID:           getEnv("SMS_SERVICE_SENDER_ID", ""),
+		SMTPHost:                     getEnv("SMTP_HOST", ""),
+		SMTPPort:                     getEnvInt("SMTP_PORT", 465),
+		SMTPUsername:                 getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:                 getEnv("SMTP_PASSWORD", ""),
+		// MAIL_FROM is what the auth service's mailer already reads, so both
+		// services send from one configured address.
+		SMTPFromAddress:              getFirstEnv([]string{"MAIL_FROM", "SMTP_FROM_ADDRESS"}, ""),
+		SMTPFromName:                 getEnv("SMTP_FROM_NAME", "TruckMoov"),
 		RouteSolverAddr:              getEnv("ROUTE_SOLVER_ADDR", ""),
 		RouteSolverAuthToken:         getEnv("ROUTE_SOLVER_AUTH_TOKEN", ""),
 		ValhallaURL:                  getEnv("VALHALLA_URL", "http://valhalla:8002"),

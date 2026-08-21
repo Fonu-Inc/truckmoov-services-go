@@ -285,6 +285,7 @@ func TestMultiChannelMessageProviderRoutesSMS(t *testing.T) {
 	provider := NewMultiChannelMessageProvider(
 		NewMetaWhatsAppMessageProvider(server.URL, nil, nil, "123456", "access-token"),
 		NewDotgoSMSMessageProviderWithClient(server.URL, "user", "pass", "Truckmoov", server.Client()),
+		nil,
 	)
 	status, err := provider.Send(context.Background(), "tenant-a", "sms", "+2348012345678", "Job assigned")
 	if err != nil {

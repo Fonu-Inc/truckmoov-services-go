@@ -64,6 +64,7 @@ type DotgoSMSMessageProvider struct {
 type MultiChannelMessageProvider struct {
 	whatsApp *MetaWhatsAppMessageProvider
 	sms      *DotgoSMSMessageProvider
+	email    *SMTPEmailMessageProvider
 }
 
 func NewMetaWhatsAppMessageProvider(baseURL string, accountRepository whatsAppAccountRepository, tokenCipher whatsAppTokenCipher, legacyPhoneNumberID, legacyAccessToken string) *MetaWhatsAppMessageProvider {
@@ -107,8 +108,8 @@ func NewDotgoSMSMessageProviderWithClient(baseURL, username, password, senderID 
 	}
 }
 
-func NewMultiChannelMessageProvider(whatsApp *MetaWhatsAppMessageProvider, sms *DotgoSMSMessageProvider) *MultiChannelMessageProvider {
-	return &MultiChannelMessageProvider{whatsApp: whatsApp, sms: sms}
+func NewMultiChannelMessageProvider(whatsApp *MetaWhatsAppMessageProvider, sms *DotgoSMSMessageProvider, email *SMTPEmailMessageProvider) *MultiChannelMessageProvider {
+	return &MultiChannelMessageProvider{whatsApp: whatsApp, sms: sms, email: email}
 }
 
 func (p *MetaWhatsAppMessageProvider) Send(ctx context.Context, tenantID, channel, recipient, content string) (string, error) {
@@ -180,6 +181,11 @@ func (p *MultiChannelMessageProvider) Send(ctx context.Context, tenantID, channe
 			return domain.StatusFailed, errors.New("sms provider is not configured")
 		}
 		return p.sms.Send(ctx, tenantID, "sms", recipient, content)
+	case "email":
+		if p.email == nil {
+			return domain.StatusFailed, errors.New("email provider is not configured")
+		}
+		return p.email.Send(ctx, tenantID, "email", recipient, content)
 	default:
 		return domain.StatusFailed, fmt.Errorf("unsupported notification channel: %s", channel)
 	}

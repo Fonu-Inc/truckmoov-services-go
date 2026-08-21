@@ -117,7 +117,18 @@ func main() {
 		cfg.SMSServicePassword,
 		cfg.SMSServiceSenderID,
 	)
-	messageProvider := infrastructure.NewMultiChannelMessageProvider(whatsAppMessageProvider, smsMessageProvider)
+	emailMessageProvider := infrastructure.NewSMTPEmailMessageProvider(
+		cfg.SMTPHost,
+		cfg.SMTPPort,
+		cfg.SMTPUsername,
+		cfg.SMTPPassword,
+		cfg.SMTPFromAddress,
+		cfg.SMTPFromName,
+	)
+	if strings.TrimSpace(cfg.SMTPHost) == "" || strings.TrimSpace(cfg.SMTPFromAddress) == "" {
+		log.Warn("email_provider_unconfigured", "message", "set SMTP_HOST, SMTP_PORT, and SMTP_FROM_ADDRESS before enabling email delivery")
+	}
+	messageProvider := infrastructure.NewMultiChannelMessageProvider(whatsAppMessageProvider, smsMessageProvider, emailMessageProvider)
 	templateProvider := infrastructure.NewMetaWhatsAppTemplateProvider(
 		cfg.WhatsAppAPIBaseURL,
 		whatsAppAccountRepository,
