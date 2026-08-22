@@ -81,7 +81,7 @@ func TestSendMessageUseCase_Execute_Success(t *testing.T) {
 	useCase := NewSendMessageUseCase(
 		repository,
 		&fakeMessageProvider{status: "sent"},
-		publisher,
+		publisher, nil,
 		fixedNotificationClock{now: time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)},
 		fixedNotificationIDGenerator{id: "1"},
 		"default",

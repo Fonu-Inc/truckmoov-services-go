@@ -140,6 +140,10 @@ func main() {
 		log.Warn("sms_provider_unconfigured", "message", "set SMS_SERVICE_URL, SMS_SERVICE_USER_NAME, SMS_SERVICE_PASSWORD, and SMS_SERVICE_SENDER_ID before enabling SMS fallback delivery")
 	}
 	deliveryPublisher := infrastructure.NewDeliveryEventPublisher(bus)
+	deliveryLogRepository := infrastructure.NewPostgresDeliveryLogRepository(postgresDB)
+	if err := deliveryLogRepository.EnsureSchema(ctx); err != nil {
+		log.Error("delivery_log_schema_failed", "error", err)
+	}
 	clock := infrastructure.SystemClock{}
 	idGenerator := infrastructure.TimeIDGenerator{}
 
@@ -147,6 +151,7 @@ func main() {
 		outboxRepository,
 		messageProvider,
 		deliveryPublisher,
+		deliveryLogRepository,
 		clock,
 		idGenerator,
 		cfg.DefaultTenant,

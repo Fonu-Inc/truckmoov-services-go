@@ -13,6 +13,16 @@ type OutboxRepository interface {
 	FindByProviderMessageID(providerMessageID string) (domain.OutboxMessage, bool)
 }
 
+// DeliveryLogRepository answers "did we tell them", across every notification
+// type rather than one log per feature.
+type DeliveryLogRepository interface {
+	EnsureSchema(ctx context.Context) error
+	Append(ctx context.Context, entry domain.DeliveryLogEntry) error
+	UpdateStatusByProviderMessageID(ctx context.Context, providerMessageID, status, failureReason string, occurredAt time.Time) (bool, error)
+	List(ctx context.Context, tenantID string, filters domain.DeliveryLogFilters) ([]domain.DeliveryLogEntry, int, error)
+	DeleteOlderThan(ctx context.Context, cutoff time.Time) (int64, error)
+}
+
 type MessageProvider interface {
 	Send(ctx context.Context, tenantID, channel, recipient, content string) (status string, err error)
 }
