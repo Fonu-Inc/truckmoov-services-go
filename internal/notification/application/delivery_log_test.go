@@ -10,7 +10,7 @@ import (
 )
 
 type recordingDeliveryLog struct {
-	entries []domain.DeliveryLogEntry
+	entries  []domain.DeliveryLogEntry
 	appended int
 }
 
