@@ -153,7 +153,12 @@ func main() {
 	mux.Handle("/ready", readiness)
 	mux.Handle("/tracking/ready", readiness)
 
-	handlerWithCORS := httpx.WithCORS(metrics.Middleware(mux), cfg.CORSOrigins)
+	// Kong answers CORS in every deployed environment. SERVICE_CORS_ENABLED=true
+	// turns it on here instead, which a local run without Kong needs.
+	var handlerWithCORS http.Handler = metrics.Middleware(mux)
+	if cfg.CORSEnabled {
+		handlerWithCORS = httpx.WithCORS(handlerWithCORS, cfg.CORSOrigins)
+	}
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
 	handlerWithCORS = httpx.WithAuthContext(handlerWithCORS, cfg.JWTSecret)
 	handlerWithCORS = httpx.WithErrorAlerts(handlerWithCORS, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)

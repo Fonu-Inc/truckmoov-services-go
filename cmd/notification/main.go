@@ -270,7 +270,11 @@ func main() {
 
 	handlerWithAuth := httpx.WithAuthContext(metrics.Middleware(mux), cfg.JWTSecret)
 	handlerWithAuth = httpx.WithErrorAlerts(handlerWithAuth, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)
-	handlerWithCORS := httpx.WithCORS(handlerWithAuth, cfg.CORSOrigins)
+	// Kong answers CORS in every deployed environment.
+	var handlerWithCORS http.Handler = handlerWithAuth
+	if cfg.CORSEnabled {
+		handlerWithCORS = httpx.WithCORS(handlerWithCORS, cfg.CORSOrigins)
+	}
 
 	if runErr := httpx.Run(ctx, ":"+cfg.Port, httpx.WithLogging(handlerWithCORS, log), log); runErr != nil {
 		log.Error("service_stopped", "error", runErr.Error())

@@ -28,22 +28,26 @@ type Config struct {
 	// derived from it) — safe to log at startup so two services' logs can
 	// be diffed to confirm they're on the same secret generation, without
 	// ever deriving anything from the secret material itself.
-	JWTKeyID                     string
-	PostgresHost                 string
-	PostgresPort                 string
-	PostgresUser                 string
-	PostgresPassword             string
-	PostgresDB                   string
-	PostgresSSLMode              string
-	TimescaleHost                string
-	TimescalePort                string
-	TimescaleUser                string
-	TimescalePassword            string
-	TimescaleDB                  string
-	TimescaleSSLMode             string
-	RedisAddr                    string
-	RedisDB                      string
-	CORSOrigins                  []string
+	JWTKeyID          string
+	PostgresHost      string
+	PostgresPort      string
+	PostgresUser      string
+	PostgresPassword  string
+	PostgresDB        string
+	PostgresSSLMode   string
+	TimescaleHost     string
+	TimescalePort     string
+	TimescaleUser     string
+	TimescalePassword string
+	TimescaleDB       string
+	TimescaleSSLMode  string
+	RedisAddr         string
+	RedisDB           string
+	CORSOrigins       []string
+	// CORSEnabled is false in every deployed environment: Kong answers CORS
+	// there, and two layers both setting Access-Control-Allow-Origin makes a
+	// browser reject the response for carrying two values.
+	CORSEnabled                  bool
 	MaxAccuracyM                 float64
 	MaxSpeedKPH                  float64
 	HistoryTTLSeconds            int
@@ -149,6 +153,7 @@ func Load(serviceName, defaultPort string) Config {
 		NtfyErrorTopicURL:    getEnv("NTFY_ERROR_TOPIC_URL", ""),
 		NtfyErrorAuthToken:   getEnv("NTFY_ERROR_AUTH_TOKEN", ""),
 		FleetServiceURL:      getEnv("FLEET_SERVICE_URL", "http://fleet-service:3002"),
+		CORSEnabled:          getEnvBoolStrict("SERVICE_CORS_ENABLED", false),
 		CORSOrigins: parseCSVEnv(
 			"CORS_ALLOWED_ORIGINS",
 			"http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000",
@@ -203,6 +208,18 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return i
+}
+
+func getEnvBoolStrict(key string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func getEnv(key, fallback string) string {
