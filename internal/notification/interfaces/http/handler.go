@@ -165,6 +165,7 @@ type Handler struct {
 	getWhatsAppConversationUseCase          *application.GetWhatsAppConversationUseCase
 	listWhatsAppConversationMessagesUseCase *application.ListWhatsAppConversationMessagesUseCase
 	handleWhatsAppWebhookUseCase            *application.HandleWhatsAppWebhookUseCase
+	listDeliveryLogUseCase                  *application.ListDeliveryLogUseCase
 	activityPublisher                       activityPublisher
 	clock                                   application.Clock
 	whatsAppWebhookVerifyToken              string
@@ -186,6 +187,7 @@ func NewHandler(
 	getWhatsAppConversationUseCase *application.GetWhatsAppConversationUseCase,
 	listWhatsAppConversationMessagesUseCase *application.ListWhatsAppConversationMessagesUseCase,
 	handleWhatsAppWebhookUseCase *application.HandleWhatsAppWebhookUseCase,
+	listDeliveryLogUseCase *application.ListDeliveryLogUseCase,
 	activityPublisher activityPublisher,
 	clock application.Clock,
 	whatsAppWebhookVerifyToken string,
@@ -206,6 +208,7 @@ func NewHandler(
 		getWhatsAppConversationUseCase:          getWhatsAppConversationUseCase,
 		listWhatsAppConversationMessagesUseCase: listWhatsAppConversationMessagesUseCase,
 		handleWhatsAppWebhookUseCase:            handleWhatsAppWebhookUseCase,
+		listDeliveryLogUseCase:                  listDeliveryLogUseCase,
 		activityPublisher:                       activityPublisher,
 		clock:                                   clock,
 		whatsAppWebhookVerifyToken:              strings.TrimSpace(whatsAppWebhookVerifyToken),
@@ -230,6 +233,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/notify/whatsapp/send-message-with-media", h.sendWhatsAppMediaMessage)
 	mux.HandleFunc("/notify/whatsapp/conversations", h.listWhatsAppConversations)
 	mux.HandleFunc("/notify/whatsapp/conversations/", h.whatsAppConversationByPath)
+	mux.HandleFunc("/notify/delivery-log", h.listDeliveryLog)
 	mux.HandleFunc("/notify/whatsapp/webhook", h.whatsAppWebhook)
 	mux.HandleFunc("/health", h.health)
 }

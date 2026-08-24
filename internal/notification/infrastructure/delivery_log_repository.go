@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/truckmoov/services-go/internal/notification/domain"
@@ -213,4 +215,119 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// InMemoryDeliveryLogRepository backs the service when it runs without
+// Postgres. It applies the same filters and ordering as the Postgres
+// implementation, so a caller sees one behaviour whichever backend is in use.
+type InMemoryDeliveryLogRepository struct {
+	mu      sync.RWMutex
+	entries []domain.DeliveryLogEntry
+}
+
+func NewInMemoryDeliveryLogRepository() *InMemoryDeliveryLogRepository {
+	return &InMemoryDeliveryLogRepository{}
+}
+
+func (r *InMemoryDeliveryLogRepository) EnsureSchema(context.Context) error { return nil }
+
+func (r *InMemoryDeliveryLogRepository) Append(_ context.Context, entry domain.DeliveryLogEntry) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.entries = append(r.entries, entry)
+	return nil
+}
+
+func (r *InMemoryDeliveryLogRepository) UpdateStatusByProviderMessageID(
+	_ context.Context,
+	providerMessageID, status, failureReason string,
+	occurredAt time.Time,
+) (bool, error) {
+	if strings.TrimSpace(providerMessageID) == "" {
+		return false, nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var deliveredAt *time.Time
+	if status == domain.StatusDelivered {
+		stamped := occurredAt
+		deliveredAt = &stamped
+	}
+
+	updated := false
+	for i := range r.entries {
+		if r.entries[i].ProviderMessageID != providerMessageID {
+			continue
+		}
+		r.entries[i].Status = status
+		r.entries[i].FailureReason = failureReason
+		r.entries[i].UpdatedAt = occurredAt
+		if deliveredAt != nil {
+			r.entries[i].DeliveredAt = deliveredAt
+		}
+		updated = true
+	}
+	return updated, nil
+}
+
+func (r *InMemoryDeliveryLogRepository) List(
+	_ context.Context, tenantID string, filters domain.DeliveryLogFilters,
+) ([]domain.DeliveryLogEntry, int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	matching := make([]domain.DeliveryLogEntry, 0, len(r.entries))
+	for _, entry := range r.entries {
+		if entry.TenantID != tenantID {
+			continue
+		}
+		if filters.NotificationType != "" && entry.NotificationType != filters.NotificationType {
+			continue
+		}
+		if filters.Channel != "" && entry.Channel != filters.Channel {
+			continue
+		}
+		if filters.Status != "" && entry.Status != filters.Status {
+			continue
+		}
+		matching = append(matching, entry)
+	}
+
+	// Newest first, matching the Postgres ORDER BY created_at DESC.
+	sort.SliceStable(matching, func(i, j int) bool {
+		return matching[i].CreatedAt.After(matching[j].CreatedAt)
+	})
+
+	total := len(matching)
+	offset := maxInt(filters.Offset, 0)
+	if offset >= total {
+		return []domain.DeliveryLogEntry{}, total, nil
+	}
+	limit := filters.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return matching[offset:end], total, nil
+}
+
+func (r *InMemoryDeliveryLogRepository) DeleteOlderThan(_ context.Context, cutoff time.Time) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	kept := make([]domain.DeliveryLogEntry, 0, len(r.entries))
+	var removed int64
+	for _, entry := range r.entries {
+		if entry.CreatedAt.Before(cutoff) {
+			removed++
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	r.entries = kept
+	return removed, nil
 }

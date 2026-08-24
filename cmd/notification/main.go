@@ -234,6 +234,8 @@ func main() {
 		log.Warn("notification_subscribe_failed", "error", subErr.Error())
 	}
 
+	listDeliveryLogUseCase := application.NewListDeliveryLogUseCase(deliveryLogRepository)
+
 	handler := notificationhttp.NewHandler(
 		sendMessageUseCase,
 		retryMessageUseCase,
@@ -250,6 +252,7 @@ func main() {
 		getWhatsAppConversationUseCase,
 		listWhatsAppConversationMessagesUseCase,
 		handleWhatsAppWebhookUseCase,
+		listDeliveryLogUseCase,
 		activityPublisher,
 		clock,
 		cfg.WhatsAppWebhookVerifyToken,

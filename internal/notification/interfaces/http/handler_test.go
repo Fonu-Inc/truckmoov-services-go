@@ -216,6 +216,7 @@ func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvi
 	t.Helper()
 
 	outboxRepository := infrastructure.NewInMemoryOutboxRepository()
+	deliveryLogRepository := infrastructure.NewInMemoryDeliveryLogRepository()
 	conversationRepository := infrastructure.NewInMemoryWhatsAppConversationRepository()
 	whatsAppAccountRepository := infrastructure.NewInMemoryWhatsAppAccountRepository()
 	provider := &fakeNotificationProvider{status: domain.StatusSent}
@@ -252,7 +253,7 @@ func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvi
 	clock := &mutableNotificationClock{now: time.Date(2026, 4, 4, 12, 0, 0, 0, time.UTC)}
 	ids := &sequentialNotificationID{}
 
-	sendUseCase := application.NewSendMessageUseCase(outboxRepository, provider, publisher, nil, clock, ids, "default")
+	sendUseCase := application.NewSendMessageUseCase(outboxRepository, provider, publisher, deliveryLogRepository, clock, ids, "default")
 	retryUseCase := application.NewRetryMessageUseCase(outboxRepository, provider, publisher, clock, ids)
 	connectWhatsAppAccountUseCase := application.NewConnectWhatsAppAccountUseCase(whatsAppAccountRepository, signupProvider, tokenCipher, clock, ids, "default")
 	getWhatsAppAccountUseCase := application.NewGetWhatsAppAccountUseCase(whatsAppAccountRepository, "default")
@@ -267,6 +268,8 @@ func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvi
 	getConversationUseCase := application.NewGetWhatsAppConversationUseCase(conversationRepository, "default")
 	listConversationMessagesUseCase := application.NewListWhatsAppConversationMessagesUseCase(conversationRepository, "default")
 	handleWebhookUseCase := application.NewHandleWhatsAppWebhookUseCase(conversationRepository, outboxRepository, whatsAppAccountRepository, provider, driverStatusRequestSender, publisher, activityPublisher, clock, ids)
+
+	listDeliveryLogUseCase := application.NewListDeliveryLogUseCase(deliveryLogRepository)
 
 	handler := NewHandler(
 		sendUseCase,
@@ -284,6 +287,7 @@ func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvi
 		getConversationUseCase,
 		listConversationMessagesUseCase,
 		handleWebhookUseCase,
+		listDeliveryLogUseCase,
 		activityPublisher,
 		clock,
 		"verify-token",

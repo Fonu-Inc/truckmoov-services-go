@@ -246,6 +246,27 @@ func notificationOpenAPISpec() map[string]any {
 					},
 				},
 			},
+			"/notify/delivery-log": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"notification"},
+					"summary":     "List the delivery log for the authenticated tenant",
+					"description": "Answers \"did we tell them\". The tenant comes from the token, never from a parameter.",
+					"operationId": "listDeliveryLog",
+					"parameters": []any{
+						map[string]any{"name": "notification_type", "in": "query", "required": false, "schema": map[string]any{"type": "string", "enum": []string{"generic", "kyc_decision", "compliance_reminder", "job_assignment", "campaign", "spending_limit"}}},
+						map[string]any{"name": "channel", "in": "query", "required": false, "schema": map[string]any{"type": "string"}},
+						map[string]any{"name": "status", "in": "query", "required": false, "schema": map[string]any{"type": "string"}},
+						map[string]any{"name": "limit", "in": "query", "required": false, "description": "Defaults to 50, capped at 200.", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": 200}},
+						map[string]any{"name": "offset", "in": "query", "required": false, "schema": map[string]any{"type": "integer", "minimum": 0}},
+					},
+					"responses": map[string]any{
+						"200": openAPIJSONResponse("Delivery log page", map[string]any{"$ref": "#/components/schemas/DeliveryLogPageEnvelope"}),
+						"401": openAPIJSONResponse("Authentication required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"403": openAPIJSONResponse("Dispatcher role required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"502": openAPIJSONResponse("Repository failure", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+					},
+				},
+			},
 			"/notify/whatsapp/conversations": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"notification"},
@@ -621,6 +642,41 @@ func notificationOpenAPISpec() map[string]any {
 						"last_message_type":        map[string]any{"type": "string"},
 						"created_at":               map[string]any{"type": "string", "format": "date-time"},
 						"updated_at":               map[string]any{"type": "string", "format": "date-time"},
+					},
+				},
+				"DeliveryLogEntry": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":                  map[string]any{"type": "string"},
+						"tenant_id":           map[string]any{"type": "string"},
+						"notification_type":   map[string]any{"type": "string"},
+						"channel":             map[string]any{"type": "string"},
+						"recipient":           map[string]any{"type": "string"},
+						"subject":             map[string]any{"type": "string"},
+						"content":             map[string]any{"type": "string", "description": "The message as it was sent, not as the template reads now."},
+						"status":              map[string]any{"type": "string"},
+						"provider_message_id": map[string]any{"type": "string"},
+						"failure_reason":      map[string]any{"type": "string"},
+						"created_at":          map[string]any{"type": "string", "format": "date-time"},
+						"updated_at":          map[string]any{"type": "string", "format": "date-time"},
+						"delivered_at":        map[string]any{"type": "string", "format": "date-time", "nullable": true},
+					},
+				},
+				"DeliveryLogPage": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"entries": map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/DeliveryLogEntry"}},
+						"total":   map[string]any{"type": "integer", "description": "Entries matching the filters, not the page."},
+						"limit":   map[string]any{"type": "integer"},
+						"offset":  map[string]any{"type": "integer"},
+					},
+				},
+				"DeliveryLogPageEnvelope": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"status":  map[string]any{"type": "boolean"},
+						"message": map[string]any{"type": "string"},
+						"data":    map[string]any{"$ref": "#/components/schemas/DeliveryLogPage"},
 					},
 				},
 				"WhatsAppConversationListEnvelope": map[string]any{
