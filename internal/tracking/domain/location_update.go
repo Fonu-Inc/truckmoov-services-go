@@ -13,6 +13,10 @@ type LocationUpdate struct {
 	TenantID   string
 	VehicleID  string
 	DeviceID   string
+	// IMEI the device reported by, when it reported by one. Optional: a device
+	// still being installed has no vehicle, so the IMEI is the only identifier
+	// fleet can match it on.
+	IMEI       string
 	Latitude   float64
 	Longitude  float64
 	SpeedKPH   *float64
@@ -47,6 +51,7 @@ func NewLocationUpdate(params LocationUpdate) (LocationUpdate, error) {
 		TenantID:   strings.TrimSpace(params.TenantID),
 		VehicleID:  strings.TrimSpace(params.VehicleID),
 		DeviceID:   strings.TrimSpace(params.DeviceID),
+		IMEI:       strings.TrimSpace(params.IMEI),
 		Latitude:   params.Latitude,
 		Longitude:  params.Longitude,
 		SpeedKPH:   params.SpeedKPH,

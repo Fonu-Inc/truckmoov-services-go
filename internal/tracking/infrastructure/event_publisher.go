@@ -25,6 +25,7 @@ func (p *EventPublisher) PublishLocationUpdate(ctx context.Context, event domain
 		Data: map[string]any{
 			"vehicle_id": event.VehicleID,
 			"device_id":  event.DeviceID,
+			"imei":       event.IMEI,
 			"lat":        event.Latitude,
 			"lng":        event.Longitude,
 			"speed_kph":  event.SpeedKPH,

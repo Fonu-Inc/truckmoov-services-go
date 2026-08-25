@@ -142,6 +142,7 @@ func (u *IngestLocationUseCase) Execute(
 		TenantID:   tenantID,
 		VehicleID:  vehicleID,
 		DeviceID:   deviceID,
+		IMEI:       command.IMEI,
 		Latitude:   command.Latitude,
 		Longitude:  command.Longitude,
 		SpeedKPH:   command.SpeedKPH,
