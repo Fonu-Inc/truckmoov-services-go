@@ -54,9 +54,13 @@ func (r *fakeOutboxRepository) FindByProviderMessageID(providerMessageID string)
 type fakeMessageProvider struct {
 	status string
 	err    error
+	// calls counts dispatches, so a test can assert a refused charge stopped
+	// the send rather than merely returning an error after it.
+	calls int
 }
 
 func (p *fakeMessageProvider) Send(_ context.Context, _, _, _, _ string) (string, error) {
+	p.calls++
 	return p.status, p.err
 }
 
@@ -81,7 +85,7 @@ func TestSendMessageUseCase_Execute_Success(t *testing.T) {
 	useCase := NewSendMessageUseCase(
 		repository,
 		&fakeMessageProvider{status: "sent"},
-		publisher, nil,
+		publisher, nil, nil,
 		fixedNotificationClock{now: time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)},
 		fixedNotificationIDGenerator{id: "1"},
 		"default",

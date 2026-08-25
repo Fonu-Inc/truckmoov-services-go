@@ -17,7 +17,7 @@ func buildConsumeUseCase(provider *fakeMessageProvider) *ConsumeNotificationUseC
 	publisher := &fakeDeliveryPublisher{}
 	clock := fixedNotificationClock{now: time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)}
 	ids := fixedNotificationIDGenerator{id: "1"}
-	send := NewSendMessageUseCase(repo, provider, publisher, nil, clock, ids, "default")
+	send := NewSendMessageUseCase(repo, provider, publisher, nil, nil, clock, ids, "default")
 	return NewConsumeNotificationUseCase(send, slog.Default())
 }
 

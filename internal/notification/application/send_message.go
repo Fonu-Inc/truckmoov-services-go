@@ -22,6 +22,7 @@ type SendMessageUseCase struct {
 	provider       MessageProvider
 	eventPublisher DeliveryEventPublisher
 	deliveryLog    DeliveryLogRepository
+	usageCharger   UsageCharger
 	clock          Clock
 	idGenerator    IDGenerator
 	defaultTenant  string
@@ -32,6 +33,7 @@ func NewSendMessageUseCase(
 	provider MessageProvider,
 	eventPublisher DeliveryEventPublisher,
 	deliveryLog DeliveryLogRepository,
+	usageCharger UsageCharger,
 	clock Clock,
 	idGenerator IDGenerator,
 	defaultTenant string,
@@ -41,6 +43,7 @@ func NewSendMessageUseCase(
 		provider:       provider,
 		eventPublisher: eventPublisher,
 		deliveryLog:    deliveryLog,
+		usageCharger:   usageCharger,
 		clock:          clock,
 		idGenerator:    idGenerator,
 		defaultTenant:  defaultTenant,
@@ -78,6 +81,18 @@ func (u *SendMessageUseCase) Execute(ctx context.Context, command SendMessageCom
 		return domain.OutboxMessage{}, fmt.Errorf("save queued outbox message: %w", err)
 	}
 
+	// Charged before the provider is called, never after. A prepaid wallet has
+	// to be able to refuse, and once the provider has accepted the message the
+	// money is spent whatever the balance says.
+	if err := u.chargeForSend(ctx, message); err != nil {
+		message = message.MarkFailed(u.clock.Now())
+		if saveErr := u.repository.Save(message); saveErr != nil {
+			return domain.OutboxMessage{}, fmt.Errorf("save refused outbox message: %w", saveErr)
+		}
+		u.recordDelivery(ctx, message, command.NotificationType, err)
+		return message, err
+	}
+
 	status, sendErr := u.provider.Send(ctx, message.TenantID, message.Channel, message.Recipient, message.Content)
 	if sendErr != nil {
 		message = message.MarkFailed(u.clock.Now())
@@ -96,6 +111,27 @@ func (u *SendMessageUseCase) Execute(ctx context.Context, command SendMessageCom
 	}
 
 	return message, sendErr
+}
+
+// chargeForSend debits the tenant's wallet for one message.
+//
+// A channel with no rate is not charged rather than being refused: email rides
+// on the tenant's own mail server and costs the platform nothing. A missing
+// charger means charging is not configured in this deployment, which must not
+// silently stop every send.
+func (u *SendMessageUseCase) chargeForSend(ctx context.Context, message domain.OutboxMessage) error {
+	if u.usageCharger == nil || !IsBillable(message.Channel) {
+		return nil
+	}
+
+	return u.usageCharger.Charge(ctx, UsageCharge{
+		TenantID: message.TenantID,
+		Channel:  message.Channel,
+		Quantity: 1,
+		Reason:   message.Channel + " message to " + message.Recipient,
+		// The message id, so a retry of the same message charges once.
+		Reference: message.ID,
+	})
 }
 
 // recordDelivery keeps the message as it was sent, so the log answers what the

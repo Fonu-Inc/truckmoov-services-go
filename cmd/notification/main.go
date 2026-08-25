@@ -147,11 +147,14 @@ func main() {
 	clock := infrastructure.SystemClock{}
 	idGenerator := infrastructure.TimeIDGenerator{}
 
+	usageCharger := infrastructure.NewAuthUsageCharger(cfg.AuthServiceURL, cfg.JWTSecret, nil)
+
 	sendMessageUseCase := application.NewSendMessageUseCase(
 		outboxRepository,
 		messageProvider,
 		deliveryPublisher,
 		deliveryLogRepository,
+		usageCharger,
 		clock,
 		idGenerator,
 		cfg.DefaultTenant,

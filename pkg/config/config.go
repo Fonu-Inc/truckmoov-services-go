@@ -64,6 +64,7 @@ type Config struct {
 	WhatsAppAccountEncryptionKey string
 	NotificationServiceURL       string
 	DispatchServiceURL           string
+	AuthServiceURL               string
 	WhatsAppAccessToken          string
 	WhatsAppPhoneNumberID        string
 	WhatsAppBusinessAccountID    string
@@ -131,18 +132,21 @@ func Load(serviceName, defaultPort string) Config {
 		WhatsAppAccountEncryptionKey: getEnv("WHATSAPP_ACCOUNT_ENCRYPTION_KEY", ""),
 		NotificationServiceURL:       getEnv("NOTIFICATION_SERVICE_URL", "http://localhost:3003"),
 		DispatchServiceURL:           getEnv("DISPATCH_SERVICE_URL", "http://localhost:3005"),
-		WhatsAppAccessToken:          getEnv("WHATSAPP_ACCESS_TOKEN", ""),
-		WhatsAppPhoneNumberID:        getFirstEnv([]string{"WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_BUSINESS_NUMBER_ID"}, ""),
-		WhatsAppBusinessAccountID:    getFirstEnv([]string{"WHATSAPP_BUSINESS_ACCOUNT_ID", "WHATSAPP_WABA_ID"}, ""),
-		WhatsAppWebhookVerifyToken:   getFirstEnv([]string{"WHATSAPP_WEBHOOK_VERIFY_TOKEN", "WEBHOOK_VERIFY_TOKEN"}, ""),
-		SMSServiceURL:                getEnv("SMS_SERVICE_URL", ""),
-		SMSServiceUsername:           getEnv("SMS_SERVICE_USER_NAME", ""),
-		SMSServicePassword:           getEnv("SMS_SERVICE_PASSWORD", ""),
-		SMSServiceSenderID:           getEnv("SMS_SERVICE_SENDER_ID", ""),
-		SMTPHost:                     getEnv("SMTP_HOST", ""),
-		SMTPPort:                     getEnvInt("SMTP_PORT", 465),
-		SMTPUsername:                 getEnv("SMTP_USERNAME", ""),
-		SMTPPassword:                 getEnv("SMTP_PASSWORD", ""),
+		// In-cluster by default, not localhost: an unset variable must not leave
+		// the wallet uncharged for every message this service sends.
+		AuthServiceURL:             getEnv("AUTH_SERVICE_URL", "http://auth-service:3001"),
+		WhatsAppAccessToken:        getEnv("WHATSAPP_ACCESS_TOKEN", ""),
+		WhatsAppPhoneNumberID:      getFirstEnv([]string{"WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_BUSINESS_NUMBER_ID"}, ""),
+		WhatsAppBusinessAccountID:  getFirstEnv([]string{"WHATSAPP_BUSINESS_ACCOUNT_ID", "WHATSAPP_WABA_ID"}, ""),
+		WhatsAppWebhookVerifyToken: getFirstEnv([]string{"WHATSAPP_WEBHOOK_VERIFY_TOKEN", "WEBHOOK_VERIFY_TOKEN"}, ""),
+		SMSServiceURL:              getEnv("SMS_SERVICE_URL", ""),
+		SMSServiceUsername:         getEnv("SMS_SERVICE_USER_NAME", ""),
+		SMSServicePassword:         getEnv("SMS_SERVICE_PASSWORD", ""),
+		SMSServiceSenderID:         getEnv("SMS_SERVICE_SENDER_ID", ""),
+		SMTPHost:                   getEnv("SMTP_HOST", ""),
+		SMTPPort:                   getEnvInt("SMTP_PORT", 465),
+		SMTPUsername:               getEnv("SMTP_USERNAME", ""),
+		SMTPPassword:               getEnv("SMTP_PASSWORD", ""),
 		// MAIL_FROM is what the auth service's mailer already reads, so both
 		// services send from one configured address.
 		SMTPFromAddress:      getFirstEnv([]string{"MAIL_FROM", "SMTP_FROM_ADDRESS"}, ""),
