@@ -33,6 +33,28 @@ type AlertSettingsReader interface {
 // severities rank lowest, so a typo suppresses rather than pages everyone.
 var severityRank = map[string]int{"low": 0, "medium": 1, "high": 2, "critical": 3}
 
+// SystemTenantID owns platform alerts. They belong to the platform, not to any
+// customer, so they are never attributed to or charged against a tenant.
+const SystemTenantID = "system"
+
+// knownAlertTypes is the closed set the platform raises.
+//
+// The type arrives inside an event payload, so it is only as trustworthy as
+// whoever can publish to the bus. It ends up in a URL path and as a cache key,
+// which makes an unchecked value both a way to reach a different endpoint and a
+// way to grow the cache without bound.
+var knownAlertTypes = map[string]bool{
+	"new_tenant_signup": true,
+	"system_errors":     true,
+	"billing_alerts":    true,
+	"security_alerts":   true,
+}
+
+// IsKnownAlertType reports whether the platform recognises this alert type.
+func IsKnownAlertType(alertType string) bool {
+	return knownAlertTypes[alertType]
+}
+
 // DispatchAlertUseCase turns a raised alert into messages to platform staff.
 //
 // The raiser knows what happened and nothing about who should hear it. This
@@ -58,8 +80,19 @@ func (u *DispatchAlertUseCase) Handle(ctx context.Context, envelope eventbus.Eve
 	subject, _ := envelope.Data["subject"].(string)
 	body, _ := envelope.Data["body"].(string)
 
-	if alertType == "" || subject == "" {
-		u.log.Warn("alert_invalid", "alert_type", alertType)
+	if subject == "" || !IsKnownAlertType(alertType) {
+		// Not retried: an unrecognised type can never become valid, and the
+		// value is not echoed back into a log field that might be read as one.
+		u.log.Warn("alert_invalid", "known_type", IsKnownAlertType(alertType))
+		return nil
+	}
+
+	// The subject this consumer listens on is platform-scoped, but the tenant
+	// in the payload is just a field. Trusting it would let a publisher have a
+	// platform alert attributed to a customer, and charged to them on any
+	// billable channel.
+	if envelope.TenantID != SystemTenantID {
+		u.log.Warn("alert_wrong_tenant", "alert_type", alertType)
 		return nil
 	}
 
@@ -86,7 +119,9 @@ func (u *DispatchAlertUseCase) Handle(ctx context.Context, envelope eventbus.Eve
 	for _, recipient := range setting.Recipients {
 		for _, channel := range setting.Channels {
 			if _, sendErr := u.send.Execute(ctx, SendMessageCommand{
-				TenantID:         envelope.TenantID,
+				// Literal, not taken from the envelope: a platform alert is the
+				// platform's own cost whatever the payload claims.
+				TenantID:         SystemTenantID,
 				Channel:          channel,
 				Recipient:        recipient,
 				Content:          content,

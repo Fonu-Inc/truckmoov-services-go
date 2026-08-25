@@ -181,3 +181,90 @@ func TestMalformedAlertIsIgnoredNotRetried(t *testing.T) {
 		t.Fatalf("sent a malformed alert")
 	}
 }
+
+// The alert type reaches a URL path in the settings reader. An unchecked value
+// would reach a different auth endpoint carrying a platform-admin token.
+func TestUnknownAlertTypeIsRefused(t *testing.T) {
+	for _, alertType := range []string{
+		"../../../auth/internal/storage",
+		"security_alerts/../charge",
+		"",
+		"SECURITY_ALERTS",
+		"security alerts",
+	} {
+		if IsKnownAlertType(alertType) {
+			t.Fatalf("%q was accepted as an alert type", alertType)
+		}
+	}
+}
+
+func TestKnownAlertTypesAreAccepted(t *testing.T) {
+	for _, alertType := range []string{
+		"new_tenant_signup", "system_errors", "billing_alerts", "security_alerts",
+	} {
+		if !IsKnownAlertType(alertType) {
+			t.Fatalf("%q should be a known alert type", alertType)
+		}
+	}
+}
+
+func TestTraversingAlertTypeIsNotDispatched(t *testing.T) {
+	useCase, provider, _ := alertHarness(enabled(), nil)
+
+	err := useCase.Handle(context.Background(), eventbus.EventEnvelope{
+		TenantID: "system",
+		Data: map[string]any{
+			"alert_type": "../../../auth/internal/usage/charge",
+			"severity":   "critical",
+			"subject":    "forged",
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("an unknown type should not be retried for ever: %v", err)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("dispatched an alert with a traversing type")
+	}
+}
+
+// The subject is platform-scoped but the tenant in the payload is just a field.
+// Trusting it would attribute a platform alert to a customer, and charge them
+// on any billable channel.
+func TestAlertClaimingAnotherTenantIsRefused(t *testing.T) {
+	useCase, provider, _ := alertHarness(enabled(), nil)
+
+	err := useCase.Handle(context.Background(), eventbus.EventEnvelope{
+		TenantID: "victim-tenant",
+		Data: map[string]any{
+			"alert_type": "security_alerts",
+			"severity":   "critical",
+			"subject":    "forged",
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("a wrong-tenant alert should not be retried: %v", err)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("dispatched an alert claiming another tenant")
+	}
+}
+
+func TestAlertIsAlwaysSentAsTheSystemTenant(t *testing.T) {
+	setting := enabled()
+	setting.Channels = []string{"sms"}
+	useCase, _, charger := alertHarness(setting, nil)
+
+	if err := useCase.Handle(context.Background(), alertEvent("critical")); err != nil {
+		t.Fatalf("dispatch failed: %v", err)
+	}
+
+	// SMS is billable, so the tenant on the charge is the one that pays.
+	if len(charger.charges) != 1 {
+		t.Fatalf("expected one charge, got %d", len(charger.charges))
+	}
+	if charger.charges[0].TenantID != SystemTenantID {
+		t.Fatalf("alert charged to %q instead of the platform", charger.charges[0].TenantID)
+	}
+}

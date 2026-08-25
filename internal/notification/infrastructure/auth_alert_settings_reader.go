@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +69,14 @@ func (r *AuthAlertSettingsReader) ForAlertType(
 	ctx context.Context,
 	alertType string,
 ) (*application.AlertSetting, error) {
+	// Checked here, not only at the call site. The value reaches a URL path and
+	// a cache key, and a future caller must not be able to bypass the check by
+	// calling this directly. An unchecked "../.." would reach a different auth
+	// endpoint carrying a platform-admin service token.
+	if !application.IsKnownAlertType(alertType) {
+		return nil, fmt.Errorf("unknown alert type")
+	}
+
 	if r.baseURL == "" || r.jwtSecret == "" {
 		// Not configured to reach auth. Reported as an error rather than as
 		// "nothing configured", so the alert is retried instead of dropped.
@@ -79,7 +88,9 @@ func (r *AuthAlertSettingsReader) ForAlertType(
 	}
 
 	req, err := http.NewRequestWithContext(
-		ctx, http.MethodGet, r.baseURL+"/auth/internal/alert-settings/"+alertType, nil,
+		// Escaped as well as allowlisted. The allowlist is what makes this safe;
+		// the escaping is there so it stays safe if the allowlist ever widens.
+		ctx, http.MethodGet, r.baseURL+"/auth/internal/alert-settings/"+url.PathEscape(alertType), nil,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build alert settings request: %w", err)
@@ -127,7 +138,17 @@ func (r *AuthAlertSettingsReader) fromCache(alertType string) (*application.Aler
 	return cached.setting, true
 }
 
+// store caches one alert type's settings.
+//
+// The map is bounded by the allowlist rather than by an eviction policy: only a
+// known type reaches here, and there are four of them. An unbounded map keyed
+// by a value from an event payload would otherwise grow for as long as someone
+// kept publishing new ones.
 func (r *AuthAlertSettingsReader) store(alertType string, setting *application.AlertSetting) {
+	if !application.IsKnownAlertType(alertType) {
+		return
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.cache[alertType] = cachedAlertSetting{setting: setting, fetchedAt: r.now()}
