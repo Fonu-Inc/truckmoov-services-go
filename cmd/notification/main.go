@@ -148,6 +148,7 @@ func main() {
 	idGenerator := infrastructure.TimeIDGenerator{}
 
 	usageCharger := infrastructure.NewAuthUsageCharger(cfg.AuthServiceURL, cfg.JWTSecret, nil)
+	alertSettingsReader := infrastructure.NewAuthAlertSettingsReader(cfg.AuthServiceURL, cfg.JWTSecret, nil)
 
 	sendMessageUseCase := application.NewSendMessageUseCase(
 		outboxRepository,
@@ -233,6 +234,13 @@ func main() {
 	)
 
 	consumeNotificationUseCase := application.NewConsumeNotificationUseCase(sendMessageUseCase, log)
+	dispatchAlertUseCase := application.NewDispatchAlertUseCase(alertSettingsReader, sendMessageUseCase, log)
+	// Platform alerts ride the system tenant, so they are a separate subject
+	// from a tenant's own notifications and a separate consumer.
+	if _, alertSubErr := bus.Subscribe(ctx, "tm.system.alert.raised", "platform-alerts", dispatchAlertUseCase.Handle); alertSubErr != nil {
+		log.Error("platform_alert_subscribe_failed", "error", alertSubErr)
+	}
+
 	if _, subErr := bus.Subscribe(ctx, "tm.*.notification.send", "notification-send", consumeNotificationUseCase.Handle); subErr != nil {
 		log.Warn("notification_subscribe_failed", "error", subErr.Error())
 	}
