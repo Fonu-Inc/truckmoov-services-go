@@ -267,6 +267,7 @@ func main() {
 		activityPublisher,
 		clock,
 		cfg.WhatsAppWebhookVerifyToken,
+		cfg.WhatsAppAppSecret,
 	)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)

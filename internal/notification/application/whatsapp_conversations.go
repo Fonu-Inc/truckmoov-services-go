@@ -1164,7 +1164,11 @@ func resolveWebhookConversation(ctx context.Context, repository WhatsAppConversa
 			return repository.FindMostRecentConversationByTenantAndDriverPhone(ctx, account.TenantID, normalizeConversationPhone(message.From))
 		}
 	}
-	return repository.FindMostRecentConversationByDriverPhone(ctx, normalizeConversationPhone(message.From))
+	// Deliberately no cross-tenant fallback. Looking the driver's number up
+	// across every tenant attributed an inbound message to whoever spoke to that
+	// driver last, and drivers work for more than one carrier — so one tenant
+	// read another's replies. A message we cannot tie to a tenant is dropped.
+	return domain.WhatsAppConversation{}, false, nil
 }
 
 func extractWebhookMessageDetails(message whatsAppWebhookMessage) (preview, messageType, mediaType, mediaID, mediaLink, caption string, payload map[string]any) {

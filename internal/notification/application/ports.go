@@ -65,7 +65,6 @@ type WhatsAppConversationRepository interface {
 	EnsureSchema(ctx context.Context) error
 	FindConversationByTenantAndID(ctx context.Context, tenantID, id string) (domain.WhatsAppConversation, bool, error)
 	FindConversationByTenantAndDriverPhone(ctx context.Context, tenantID, driverPhone string) (domain.WhatsAppConversation, bool, error)
-	FindMostRecentConversationByDriverPhone(ctx context.Context, driverPhone string) (domain.WhatsAppConversation, bool, error)
 	FindMostRecentConversationByTenantAndDriverPhone(ctx context.Context, tenantID, driverPhone string) (domain.WhatsAppConversation, bool, error)
 	ListConversationsByTenant(ctx context.Context, tenantID string) ([]domain.WhatsAppConversation, error)
 	SaveConversation(ctx context.Context, conversation domain.WhatsAppConversation) (domain.WhatsAppConversation, error)

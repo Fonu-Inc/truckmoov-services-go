@@ -2,6 +2,9 @@ package notificationhttp
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -169,6 +172,7 @@ type Handler struct {
 	activityPublisher                       activityPublisher
 	clock                                   application.Clock
 	whatsAppWebhookVerifyToken              string
+	whatsAppAppSecret                       string
 }
 
 func NewHandler(
@@ -191,6 +195,7 @@ func NewHandler(
 	activityPublisher activityPublisher,
 	clock application.Clock,
 	whatsAppWebhookVerifyToken string,
+	whatsAppAppSecret string,
 ) *Handler {
 	return &Handler{
 		sendMessageUseCase:                      sendMessageUseCase,
@@ -212,6 +217,7 @@ func NewHandler(
 		activityPublisher:                       activityPublisher,
 		clock:                                   clock,
 		whatsAppWebhookVerifyToken:              strings.TrimSpace(whatsAppWebhookVerifyToken),
+		whatsAppAppSecret:                       strings.TrimSpace(whatsAppAppSecret),
 	}
 }
 
@@ -799,10 +805,46 @@ func (h *Handler) verifyWhatsAppWebhook(w http.ResponseWriter, r *http.Request) 
 	_, _ = w.Write([]byte(challenge))
 }
 
+const whatsAppSignatureHeader = "X-Hub-Signature-256"
+
+// whatsAppSignatureValid reports whether Meta signed this request body.
+//
+// The verify token on the GET handshake only proves we own the callback URL at
+// subscription time. It says nothing about the POSTs that follow, and this
+// endpoint has to stay publicly reachable for Meta to call it. Without this
+// check anyone who learns the URL can inject inbound messages into a tenant's
+// conversation and forge delivery receipts on real ones.
+func (h *Handler) whatsAppSignatureValid(header string, body []byte) bool {
+	// An unset secret refuses every delivery rather than accepting every one.
+	// A misconfigured deployment must not read as an open door.
+	if h.whatsAppAppSecret == "" {
+		return false
+	}
+
+	const prefix = "sha256="
+	if !strings.HasPrefix(header, prefix) {
+		return false
+	}
+	provided, err := hex.DecodeString(strings.TrimPrefix(header, prefix))
+	if err != nil {
+		return false
+	}
+
+	mac := hmac.New(sha256.New, []byte(h.whatsAppAppSecret))
+	mac.Write(body)
+	return hmac.Equal(provided, mac.Sum(nil))
+}
+
 func (h *Handler) handleWhatsAppWebhook(w http.ResponseWriter, r *http.Request) {
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
 		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		return
+	}
+	// Before the body is parsed, not after. The signature covers these exact
+	// bytes, so any decode and re-encode would change what is being checked.
+	if !h.whatsAppSignatureValid(r.Header.Get(whatsAppSignatureHeader), payload) {
+		respondEnvelope(w, http.StatusUnauthorized, "invalid webhook signature", nil)
 		return
 	}
 	if !json.Valid(payload) {

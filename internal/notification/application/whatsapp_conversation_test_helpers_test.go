@@ -50,26 +50,6 @@ func (r *fakeWhatsAppConversationRepository) FindConversationByTenantAndDriverPh
 	return cloneTestConversation(conversation), true, nil
 }
 
-func (r *fakeWhatsAppConversationRepository) FindMostRecentConversationByDriverPhone(_ context.Context, driverPhone string) (domain.WhatsAppConversation, bool, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	var latest domain.WhatsAppConversation
-	found := false
-	for _, conversation := range r.conversations {
-		if conversation.DriverPhone != strings.TrimSpace(driverPhone) {
-			continue
-		}
-		if !found || conversation.UpdatedAt.After(latest.UpdatedAt) {
-			latest = conversation
-			found = true
-		}
-	}
-	if !found {
-		return domain.WhatsAppConversation{}, false, nil
-	}
-	return cloneTestConversation(latest), true, nil
-}
-
 func (r *fakeWhatsAppConversationRepository) FindMostRecentConversationByTenantAndDriverPhone(_ context.Context, tenantID, driverPhone string) (domain.WhatsAppConversation, bool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

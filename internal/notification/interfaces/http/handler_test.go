@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,6 +21,16 @@ import (
 	"github.com/truckmoov/services-go/pkg/activitylog"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
+
+const testWhatsAppAppSecret = "test-whatsapp-app-secret"
+
+// signWhatsAppPayload produces the header Meta sends, so webhook tests exercise
+// the same path a real delivery takes.
+func signWhatsAppPayload(body []byte) string {
+	mac := hmac.New(sha256.New, []byte(testWhatsAppAppSecret))
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
 
 type fakeNotificationProvider struct {
 	status               string
@@ -291,6 +302,7 @@ func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvi
 		activityPublisher,
 		clock,
 		"verify-token",
+		testWhatsAppAppSecret,
 	)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
@@ -570,6 +582,7 @@ func TestWhatsAppWebhookReplyOpensConversationAndAllowsTextAndMediaSend(t *testi
 	)
 	webhookReq := httptest.NewRequest(http.MethodPost, "/notify/whatsapp/webhook", strings.NewReader(webhookPayload))
 	webhookReq.Header.Set("Content-Type", "application/json")
+	webhookReq.Header.Set("X-Hub-Signature-256", signWhatsAppPayload([]byte(webhookPayload)))
 	webhookRes := httptest.NewRecorder()
 	handler.ServeHTTP(webhookRes, webhookReq)
 	if webhookRes.Code != http.StatusOK {
@@ -692,6 +705,7 @@ func TestWhatsAppWebhookKeywordReplyCreatesDriverStatusRequest(t *testing.T) {
 	)
 	webhookReq := httptest.NewRequest(http.MethodPost, "/notify/whatsapp/webhook", strings.NewReader(webhookPayload))
 	webhookReq.Header.Set("Content-Type", "application/json")
+	webhookReq.Header.Set("X-Hub-Signature-256", signWhatsAppPayload([]byte(webhookPayload)))
 	webhookRes := httptest.NewRecorder()
 	handler.ServeHTTP(webhookRes, webhookReq)
 	if webhookRes.Code != http.StatusOK {
@@ -772,6 +786,7 @@ func TestWhatsAppWebhookDeliveredStatusUpdatesOutboxAndConversationMessage(t *te
 
 	webhookReq := httptest.NewRequest(http.MethodPost, "/notify/whatsapp/webhook", strings.NewReader(webhookPayload))
 	webhookReq.Header.Set("Content-Type", "application/json")
+	webhookReq.Header.Set("X-Hub-Signature-256", signWhatsAppPayload([]byte(webhookPayload)))
 	webhookRes := httptest.NewRecorder()
 	handler.ServeHTTP(webhookRes, webhookReq)
 	if webhookRes.Code != http.StatusOK {
@@ -834,6 +849,7 @@ func TestWhatsAppWebhookFailedStatusUpdatesOutboxAndConversationMessage(t *testi
 
 	webhookReq := httptest.NewRequest(http.MethodPost, "/notify/whatsapp/webhook", strings.NewReader(webhookPayload))
 	webhookReq.Header.Set("Content-Type", "application/json")
+	webhookReq.Header.Set("X-Hub-Signature-256", signWhatsAppPayload([]byte(webhookPayload)))
 	webhookRes := httptest.NewRecorder()
 	handler.ServeHTTP(webhookRes, webhookReq)
 	if webhookRes.Code != http.StatusOK {
@@ -915,6 +931,7 @@ func TestWhatsAppWebhookFailedStatusDoesNotDuplicateSMSFallback(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		webhookReq := httptest.NewRequest(http.MethodPost, "/notify/whatsapp/webhook", strings.NewReader(webhookPayload))
 		webhookReq.Header.Set("Content-Type", "application/json")
+		webhookReq.Header.Set("X-Hub-Signature-256", signWhatsAppPayload([]byte(webhookPayload)))
 		webhookRes := httptest.NewRecorder()
 		handler.ServeHTTP(webhookRes, webhookReq)
 		if webhookRes.Code != http.StatusOK {
@@ -967,5 +984,60 @@ func TestNotificationDocsOpenAPIIncludesConversationEndpoints(t *testing.T) {
 		if !strings.Contains(body, fragment) {
 			t.Fatalf("expected openapi to contain %s", fragment)
 		}
+	}
+}
+
+func TestWhatsAppWebhookRejectsUnsignedAndTamperedPayloads(t *testing.T) {
+	handler, _, _, _, _, _, _ := notificationHandlerForTests(t)
+
+	payload := `{"object":"whatsapp_business_account","entry":[]}`
+
+	cases := []struct {
+		name      string
+		signature string
+	}{
+		// The public route is how Meta reaches us, so an unsigned POST is the
+		// exact shape an attacker sends.
+		{name: "no signature", signature: ""},
+		{name: "not hex", signature: "sha256=not-hex"},
+		{name: "missing prefix", signature: signWhatsAppPayload([]byte(payload))[len("sha256="):]},
+		{name: "signed with the wrong secret", signature: "sha256=" + hex.EncodeToString(func() []byte {
+			mac := hmac.New(sha256.New, []byte("wrong-secret"))
+			mac.Write([]byte(payload))
+			return mac.Sum(nil)
+		}())},
+		// Signature valid for different bytes than the ones delivered.
+		{name: "signature for another body", signature: signWhatsAppPayload([]byte(`{"object":"other"}`))},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/notify/whatsapp/webhook", strings.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			if testCase.signature != "" {
+				req.Header.Set("X-Hub-Signature-256", testCase.signature)
+			}
+			res := httptest.NewRecorder()
+			handler.ServeHTTP(res, req)
+
+			if res.Code != http.StatusUnauthorized {
+				t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, res.Code, res.Body.String())
+			}
+		})
+	}
+}
+
+func TestWhatsAppWebhookAcceptsCorrectlySignedPayload(t *testing.T) {
+	handler, _, _, _, _, _, _ := notificationHandlerForTests(t)
+
+	payload := `{"object":"whatsapp_business_account","entry":[]}`
+	req := httptest.NewRequest(http.MethodPost, "/notify/whatsapp/webhook", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hub-Signature-256", signWhatsAppPayload([]byte(payload)))
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, res.Code, res.Body.String())
 	}
 }
