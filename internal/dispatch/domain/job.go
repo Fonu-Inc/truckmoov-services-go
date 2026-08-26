@@ -662,6 +662,49 @@ func (j Job) MarkDriverInstructionSent(channel string, now time.Time, timelineID
 	return updated
 }
 
+// TransferToCarrier hands operational ownership of the job to another tenant.
+//
+// This is what "accepting an offer assigns the job" means concretely: the job
+// becomes the carrier's to dispatch. It does not pick a driver or vehicle —
+// the carrier has neither yet, and choosing one is their own dispatcher's job
+// afterwards through the ordinary Assign flow. Conflating the two would need a
+// driver selected before the carrier has even seen the job.
+func (j Job) TransferToCarrier(carrierTenantID string, now time.Time, timelineID string) (Job, error) {
+	carrierTenantID = strings.TrimSpace(carrierTenantID)
+	if carrierTenantID == "" {
+		return Job{}, errors.New("carrier tenant id is required")
+	}
+	if j.Status == StatusCancelled || j.Status == StatusDelivered {
+		return Job{}, errors.New("cannot transfer a completed/cancelled job")
+	}
+	if j.TenantID == carrierTenantID {
+		return Job{}, errors.New("job already belongs to this tenant")
+	}
+
+	updated := j
+	previousTenant := updated.TenantID
+	updated.TenantID = carrierTenantID
+	updated.UpdatedAt = now.UTC()
+	updated.appendTimeline(JobTimelineEntry{
+		ID:         strings.TrimSpace(timelineID),
+		Type:       "job_offer_accepted",
+		Summary:    "Job accepted via offer and handed to the carrier",
+		OccurredAt: now.UTC(),
+		Metadata: map[string]string{
+			"previous_tenant_id": previousTenant,
+			"carrier_tenant_id":  carrierTenantID,
+		},
+	})
+	return updated, nil
+}
+
+// IsActive reports whether the job still needs work done on it. Delivered and
+// cancelled jobs are the only terminal states; everything else counts against
+// a carrier's active-job cap.
+func (j Job) IsActive() bool {
+	return j.Status != StatusDelivered && j.Status != StatusCancelled
+}
+
 func (j *Job) appendTimeline(entry JobTimelineEntry) {
 	if entry.ID == "" {
 		entry.ID = fmt.Sprintf("timeline-%d", time.Now().UnixNano())

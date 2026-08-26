@@ -228,6 +228,31 @@ type Handler struct {
 	sendJobInstructionUseCase *application.SendJobInstructionUseCase
 	activityPublisher         *activitylog.Publisher
 	fleetClient               *infrastructure.FleetClient
+	createJobOfferUseCase     *application.CreateJobOfferUseCase
+	acceptJobOfferUseCase     *application.AcceptJobOfferUseCase
+	declineJobOfferUseCase    *application.DeclineJobOfferUseCase
+	listJobOffersUseCase      *application.ListJobOffersUseCase
+	activeJobCapacityUseCase  *application.ActiveJobCapacityUseCase
+}
+
+// WithJobOffers attaches the job offer use cases.
+//
+// A builder rather than more constructor arguments, matching the notification
+// service's WithCampaigns: the offer routes report unconfigured when this is
+// never called, so a deployment can start without it.
+func (h *Handler) WithJobOffers(
+	create *application.CreateJobOfferUseCase,
+	accept *application.AcceptJobOfferUseCase,
+	decline *application.DeclineJobOfferUseCase,
+	list *application.ListJobOffersUseCase,
+	capacity *application.ActiveJobCapacityUseCase,
+) *Handler {
+	h.createJobOfferUseCase = create
+	h.acceptJobOfferUseCase = accept
+	h.declineJobOfferUseCase = decline
+	h.listJobOffersUseCase = list
+	h.activeJobCapacityUseCase = capacity
+	return h
 }
 
 func NewHandler(
@@ -303,6 +328,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/dispatch/routes/optimize", h.optimizeRoute)
 	// Legacy contract kept for existing integrations that publish status events directly.
 	mux.HandleFunc("/dispatch/jobs/status", h.updateStatus)
+	mux.HandleFunc("/dispatch/job-offers", h.jobOffers)
+	mux.HandleFunc("/dispatch/job-offers/", h.jobOfferByPath)
+	mux.HandleFunc("/dispatch/job-offers/capacity", h.jobOfferCapacity)
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {

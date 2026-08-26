@@ -156,6 +156,53 @@ func main() {
 
 	fleetClient := infrastructure.NewFleetClient(cfg.FleetServiceURL, cfg.JWTSecret, nil)
 
+	jobOfferRepository := infrastructure.NewPostgresJobOfferRepository(postgresDB)
+	if err := jobOfferRepository.EnsureSchema(ctx); err != nil {
+		log.Error("job_offer_schema_failed", "error", err)
+	}
+	entitlementsReader := infrastructure.NewAuthEntitlementsReader(cfg.AuthServiceURL, cfg.JWTSecret, nil)
+	jobOfferPublisher := infrastructure.NewJobOfferEventPublisher(bus)
+	activeJobCounter := func(_ context.Context, tenantID string) (int, error) {
+		count := 0
+		for _, job := range jobRepository.FindByTenant(tenantID) {
+			if job.IsActive() {
+				count++
+			}
+		}
+		return count, nil
+	}
+
+	createJobOfferUseCase := application.NewCreateJobOfferUseCase(
+		jobOfferRepository, jobRepository, jobOfferPublisher,
+		infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{},
+	)
+	acceptJobOfferUseCase := application.NewAcceptJobOfferUseCase(
+		jobOfferRepository, entitlementsReader, activeJobCounter, jobOfferPublisher, infrastructure.SystemClock{},
+	)
+	declineJobOfferUseCase := application.NewDeclineJobOfferUseCase(
+		jobOfferRepository, jobOfferPublisher, infrastructure.SystemClock{},
+	)
+	listJobOffersUseCase := application.NewListJobOffersUseCase(jobOfferRepository)
+	activeJobCapacityUseCase := application.NewActiveJobCapacityUseCase(entitlementsReader, activeJobCounter)
+
+	expireJobOffersUseCase := application.NewExpireJobOffersUseCase(jobOfferRepository, infrastructure.SystemClock{})
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if expired, err := expireJobOffersUseCase.Execute(ctx); err != nil {
+					log.Error("job_offer_expiry_failed", "error", err)
+				} else if expired > 0 {
+					log.Warn("job_offers_expired", "count", expired)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	handler := dispatchhttp.NewHandler(
 		publishJobStatusUseCase,
 		jobLifecycleUseCase,
@@ -163,6 +210,13 @@ func main() {
 		sendJobInstructionUseCase,
 		activitylog.NewPublisher(bus),
 		fleetClient,
+	)
+	handler = handler.WithJobOffers(
+		createJobOfferUseCase,
+		acceptJobOfferUseCase,
+		declineJobOfferUseCase,
+		listJobOffersUseCase,
+		activeJobCapacityUseCase,
 	)
 
 	mux := http.NewServeMux()
