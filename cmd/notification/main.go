@@ -247,6 +247,42 @@ func main() {
 
 	listDeliveryLogUseCase := application.NewListDeliveryLogUseCase(deliveryLogRepository)
 
+	campaignRepository := infrastructure.NewPostgresCampaignRepository(postgresDB)
+	if err := campaignRepository.EnsureSchema(ctx); err != nil {
+		log.Error("campaign_schema_failed", "error", err)
+	}
+	suppressionRepository := infrastructure.NewPostgresSuppressionRepository(postgresDB)
+	if err := suppressionRepository.EnsureSchema(ctx); err != nil {
+		log.Error("campaign_suppression_schema_failed", "error", err)
+	}
+
+	createCampaignUseCase := application.NewCreateCampaignUseCase(
+		campaignRepository,
+		suppressionRepository,
+		clock,
+		idGenerator,
+	)
+	sendCampaignUseCase := application.NewSendCampaignUseCase(
+		campaignRepository,
+		suppressionRepository,
+		messageProvider,
+		// WhatsApp goes out as a template, which is the only path that returns
+		// a provider message id for later receipts to match on.
+		whatsAppMessageProvider,
+		cfg.WhatsAppTemplateLanguage,
+		usageCharger,
+		clock,
+	)
+	listCampaignsUseCase := application.NewListCampaignsUseCase(campaignRepository)
+	suppressRecipientUseCase := application.NewSuppressRecipientUseCase(suppressionRepository)
+
+	// Delivery and read receipts already arrive on the WhatsApp webhook, so
+	// campaign recipients are updated from the same place rather than a second
+	// stream of the same events.
+	handleWhatsAppWebhookUseCase = handleWhatsAppWebhookUseCase.WithCampaignReceipts(
+		application.NewApplyCampaignReceiptUseCase(campaignRepository, clock),
+	)
+
 	handler := notificationhttp.NewHandler(
 		sendMessageUseCase,
 		retryMessageUseCase,
@@ -269,6 +305,14 @@ func main() {
 		cfg.WhatsAppWebhookVerifyToken,
 		cfg.WhatsAppAppSecret,
 	)
+	handler = handler.WithCampaigns(
+		campaignRepository,
+		createCampaignUseCase,
+		sendCampaignUseCase,
+		listCampaignsUseCase,
+		suppressRecipientUseCase,
+	)
+
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 

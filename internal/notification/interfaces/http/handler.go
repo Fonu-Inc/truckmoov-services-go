@@ -173,6 +173,31 @@ type Handler struct {
 	clock                                   application.Clock
 	whatsAppWebhookVerifyToken              string
 	whatsAppAppSecret                       string
+	campaignRepository                      application.CampaignRepository
+	createCampaignUseCase                   *application.CreateCampaignUseCase
+	sendCampaignUseCase                     *application.SendCampaignUseCase
+	listCampaignsUseCase                    *application.ListCampaignsUseCase
+	suppressRecipientUseCase                *application.SuppressRecipientUseCase
+}
+
+// WithCampaigns attaches the campaign use cases.
+//
+// A builder rather than more constructor arguments: the campaign routes report
+// that they are unconfigured when it is never called, so a deployment without
+// campaigns still starts.
+func (h *Handler) WithCampaigns(
+	repository application.CampaignRepository,
+	create *application.CreateCampaignUseCase,
+	send *application.SendCampaignUseCase,
+	list *application.ListCampaignsUseCase,
+	suppress *application.SuppressRecipientUseCase,
+) *Handler {
+	h.campaignRepository = repository
+	h.createCampaignUseCase = create
+	h.sendCampaignUseCase = send
+	h.listCampaignsUseCase = list
+	h.suppressRecipientUseCase = suppress
+	return h
 }
 
 func NewHandler(
@@ -240,6 +265,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/notify/whatsapp/conversations", h.listWhatsAppConversations)
 	mux.HandleFunc("/notify/whatsapp/conversations/", h.whatsAppConversationByPath)
 	mux.HandleFunc("/notify/delivery-log", h.listDeliveryLog)
+	mux.HandleFunc("/notify/campaigns", h.campaigns)
+	mux.HandleFunc("/notify/campaigns/", h.campaignByPath)
+	mux.HandleFunc("/notify/campaigns/suppressions", h.campaignSuppressions)
 	mux.HandleFunc("/notify/whatsapp/webhook", h.whatsAppWebhook)
 	mux.HandleFunc("/health", h.health)
 }

@@ -111,6 +111,36 @@ type HandleWhatsAppWebhookUseCase struct {
 	activityPublisher         ActivityPublisher
 	clock                     Clock
 	idGenerator               IDGenerator
+	// Optional. Campaign recipients are updated from the same receipts, so a
+	// deployment without campaigns wired up simply skips it.
+	campaignReceipts *ApplyCampaignReceiptUseCase
+}
+
+// WithCampaignReceipts routes delivery and read receipts to campaign
+// recipients as well as to conversations and the outbox.
+func (u *HandleWhatsAppWebhookUseCase) WithCampaignReceipts(receipts *ApplyCampaignReceiptUseCase) *HandleWhatsAppWebhookUseCase {
+	u.campaignReceipts = receipts
+	return u
+}
+
+// campaignRecipientState maps a raw provider status onto a recipient state.
+//
+// Deliberately not normalizeWebhookDeliveryStatus, which folds read into
+// delivered. A campaign reports delivered and read as separate figures, so
+// collapsing them would leave the read count permanently at zero.
+func campaignRecipientState(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "read":
+		return domain.RecipientStateRead
+	case "delivered":
+		return domain.RecipientStateDelivered
+	case "sent":
+		return domain.RecipientStateSent
+	case "failed", "undelivered":
+		return domain.RecipientStateFailed
+	default:
+		return ""
+	}
 }
 
 func NewSendWhatsAppTextMessageUseCase(repository OutboxRepository, conversationRepository WhatsAppConversationRepository, provider WhatsAppConversationMessageProvider, eventPublisher DeliveryEventPublisher, clock Clock, idGenerator IDGenerator, defaultTenant string) *SendWhatsAppTextMessageUseCase {
@@ -524,6 +554,18 @@ func (u *HandleWhatsAppWebhookUseCase) applyWebhookStatus(ctx context.Context, s
 	handled := false
 	receivedAt := parseWebhookTimestamp(status.Timestamp, u.clock.Now())
 	normalizedStatus := normalizeWebhookDeliveryStatus(status.Status)
+
+	if u.campaignReceipts != nil {
+		if state := campaignRecipientState(status.Status); state != "" {
+			matched, err := u.campaignReceipts.Execute(ctx, providerMessageID, state, status.Status)
+			if err != nil {
+				return 0, err
+			}
+			if matched {
+				handled = true
+			}
+		}
+	}
 	statusPayload := buildWebhookStatusPayload(status)
 
 	var conversationMessage *domain.WhatsAppConversationMessage

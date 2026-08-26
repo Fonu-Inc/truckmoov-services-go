@@ -47,20 +47,23 @@ type Config struct {
 	// CORSEnabled is false in every deployed environment: Kong answers CORS
 	// there, and two layers both setting Access-Control-Allow-Origin makes a
 	// browser reject the response for carrying two values.
-	CORSEnabled                  bool
-	MaxAccuracyM                 float64
-	MaxSpeedKPH                  float64
-	HistoryTTLSeconds            int
-	LatestTTLSeconds             int
-	IMEIIdentityTTLSeconds       int
-	SIMTTLSeconds                int
-	StatusTimeoutSeconds         int
-	GPSAPIKey                    string
-	RateLimitRPS                 int
-	RateLimitBurst               int
-	WhatsAppAPIBaseURL           string
-	WhatsAppAppID                string
-	WhatsAppAppSecret            string
+	CORSEnabled            bool
+	MaxAccuracyM           float64
+	MaxSpeedKPH            float64
+	HistoryTTLSeconds      int
+	LatestTTLSeconds       int
+	IMEIIdentityTTLSeconds int
+	SIMTTLSeconds          int
+	StatusTimeoutSeconds   int
+	GPSAPIKey              string
+	RateLimitRPS           int
+	RateLimitBurst         int
+	WhatsAppAPIBaseURL     string
+	WhatsAppAppID          string
+	WhatsAppAppSecret      string
+	// Language a campaign template is sent in. Meta resolves a template by name
+	// and language together, so the wrong one is a template that does not exist.
+	WhatsAppTemplateLanguage     string
 	WhatsAppAccountEncryptionKey string
 	NotificationServiceURL       string
 	DispatchServiceURL           string
@@ -129,6 +132,7 @@ func Load(serviceName, defaultPort string) Config {
 		WhatsAppAPIBaseURL:           getEnv("WHATSAPP_API_BASE_URL", "https://graph.facebook.com/v18.0"),
 		WhatsAppAppID:                getEnv("WHATSAPP_APP_ID", ""),
 		WhatsAppAppSecret:            getEnv("WHATSAPP_APP_SECRET", ""),
+		WhatsAppTemplateLanguage:     getEnv("WHATSAPP_TEMPLATE_LANGUAGE", "en"),
 		WhatsAppAccountEncryptionKey: getEnv("WHATSAPP_ACCOUNT_ENCRYPTION_KEY", ""),
 		NotificationServiceURL:       getEnv("NOTIFICATION_SERVICE_URL", "http://localhost:3003"),
 		DispatchServiceURL:           getEnv("DISPATCH_SERVICE_URL", "http://localhost:3005"),
