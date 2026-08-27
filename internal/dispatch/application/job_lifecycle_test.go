@@ -47,6 +47,15 @@ func (r *lifecycleRepository) FindByTenant(tenantID string) []domain.Job {
 	return results
 }
 
+func (r *lifecycleRepository) FindByID(id string) (domain.Job, bool) {
+	for _, job := range r.data {
+		if job.ID == id {
+			return job, true
+		}
+	}
+	return domain.Job{}, false
+}
+
 type lifecycleEmitter struct {
 	commands []PublishJobStatusChangedCommand
 }

@@ -233,6 +233,54 @@ type Handler struct {
 	declineJobOfferUseCase    *application.DeclineJobOfferUseCase
 	listJobOffersUseCase      *application.ListJobOffersUseCase
 	activeJobCapacityUseCase  *application.ActiveJobCapacityUseCase
+
+	summaryFiguresUseCase         *application.SummaryFiguresUseCase
+	listLinkedOperatorsUseCase    *application.ListLinkedOperatorsUseCase
+	addOperatorUseCase            *application.AddOperatorUseCase
+	removeOperatorUseCase         *application.RemoveOperatorUseCase
+	acceptAggregatorInviteUseCase *application.AcceptAggregatorInviteUseCase
+	subDispatchQueueUseCase       *application.SubDispatchQueueUseCase
+	assignSubDispatchJobUseCase   *application.AssignSubDispatchJobUseCase
+	operatorPerformanceUseCase    *application.OperatorPerformanceUseCase
+	topPerformingOperatorsUseCase *application.TopPerformingOperatorsUseCase
+	rateOperatorUseCase           *application.RateOperatorUseCase
+	listSettlementsUseCase        *application.ListSettlementsUseCase
+	paySettlementUseCase          *application.PaySettlementUseCase
+	listAggregatorActivityUseCase *application.ListAggregatorActivityUseCase
+}
+
+// WithAggregator attaches the aggregator network overview use cases. A
+// builder, matching WithJobOffers: the aggregator routes report unconfigured
+// when this is never called.
+func (h *Handler) WithAggregator(
+	summary *application.SummaryFiguresUseCase,
+	listOperators *application.ListLinkedOperatorsUseCase,
+	addOperator *application.AddOperatorUseCase,
+	removeOperator *application.RemoveOperatorUseCase,
+	acceptInvite *application.AcceptAggregatorInviteUseCase,
+	subDispatchQueue *application.SubDispatchQueueUseCase,
+	assignSubDispatchJob *application.AssignSubDispatchJobUseCase,
+	operatorPerformance *application.OperatorPerformanceUseCase,
+	topOperators *application.TopPerformingOperatorsUseCase,
+	rateOperator *application.RateOperatorUseCase,
+	listSettlements *application.ListSettlementsUseCase,
+	paySettlement *application.PaySettlementUseCase,
+	listActivity *application.ListAggregatorActivityUseCase,
+) *Handler {
+	h.summaryFiguresUseCase = summary
+	h.listLinkedOperatorsUseCase = listOperators
+	h.addOperatorUseCase = addOperator
+	h.removeOperatorUseCase = removeOperator
+	h.acceptAggregatorInviteUseCase = acceptInvite
+	h.subDispatchQueueUseCase = subDispatchQueue
+	h.assignSubDispatchJobUseCase = assignSubDispatchJob
+	h.operatorPerformanceUseCase = operatorPerformance
+	h.topPerformingOperatorsUseCase = topOperators
+	h.rateOperatorUseCase = rateOperator
+	h.listSettlementsUseCase = listSettlements
+	h.paySettlementUseCase = paySettlement
+	h.listAggregatorActivityUseCase = listActivity
+	return h
 }
 
 // WithJobOffers attaches the job offer use cases.
@@ -331,6 +379,18 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/dispatch/job-offers", h.jobOffers)
 	mux.HandleFunc("/dispatch/job-offers/", h.jobOfferByPath)
 	mux.HandleFunc("/dispatch/job-offers/capacity", h.jobOfferCapacity)
+	mux.HandleFunc("/dispatch/aggregator/summary", h.aggregatorSummary)
+	mux.HandleFunc("/dispatch/aggregator/operators", h.aggregatorOperators)
+	mux.HandleFunc("/dispatch/aggregator/operators/", h.aggregatorOperatorByPath)
+	mux.HandleFunc("/dispatch/aggregator/invites/", h.aggregatorInviteByPath)
+	mux.HandleFunc("/dispatch/aggregator/sub-dispatch", h.aggregatorSubDispatchQueue)
+	mux.HandleFunc("/dispatch/aggregator/sub-dispatch/", h.aggregatorSubDispatchByPath)
+	mux.HandleFunc("/dispatch/aggregator/performance", h.aggregatorPerformance)
+	mux.HandleFunc("/dispatch/aggregator/top-operators", h.aggregatorTopOperators)
+	mux.HandleFunc("/dispatch/aggregator/ratings", h.aggregatorRatings)
+	mux.HandleFunc("/dispatch/aggregator/settlements", h.aggregatorSettlements)
+	mux.HandleFunc("/dispatch/aggregator/settlements/", h.aggregatorSettlementByPath)
+	mux.HandleFunc("/dispatch/aggregator/activity", h.aggregatorActivity)
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {

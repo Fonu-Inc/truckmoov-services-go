@@ -159,6 +159,29 @@ func (r *PostgresJobOfferRepository) CountPending(ctx context.Context, targetTen
 	return count, err
 }
 
+func (r *PostgresJobOfferRepository) ListAccepted(ctx context.Context, offeringTenantID, targetTenantID string) ([]domain.JobOffer, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+jobOfferColumns+` FROM job_offers
+         WHERE offering_tenant_id = $1 AND target_tenant_id = $2 AND status = $3
+         ORDER BY responded_at DESC`,
+		offeringTenantID, targetTenantID, domain.OfferStatusAccepted,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	offers := []domain.JobOffer{}
+	for rows.Next() {
+		offer, err := scanJobOffer(rows)
+		if err != nil {
+			return nil, err
+		}
+		offers = append(offers, offer)
+	}
+	return offers, rows.Err()
+}
+
 func (r *PostgresJobOfferRepository) FindExpiring(ctx context.Context, before time.Time, limit int) ([]domain.JobOffer, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT `+jobOfferColumns+` FROM job_offers

@@ -57,6 +57,16 @@ func (r *fakeOfferRepository) CountPending(_ context.Context, targetTenantID str
 	return count, nil
 }
 
+func (r *fakeOfferRepository) ListAccepted(_ context.Context, offeringTenantID, targetTenantID string) ([]domain.JobOffer, error) {
+	matched := []domain.JobOffer{}
+	for _, offer := range r.offers {
+		if offer.OfferingTenantID == offeringTenantID && offer.TargetTenantID == targetTenantID && offer.Status == domain.OfferStatusAccepted {
+			matched = append(matched, offer)
+		}
+	}
+	return matched, nil
+}
+
 func (r *fakeOfferRepository) FindExpiring(_ context.Context, before time.Time, limit int) ([]domain.JobOffer, error) {
 	due := []domain.JobOffer{}
 	for _, offer := range r.offers {

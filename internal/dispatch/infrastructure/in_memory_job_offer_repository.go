@@ -91,6 +91,19 @@ func (r *InMemoryJobOfferRepository) CountPending(_ context.Context, targetTenan
 	return count, nil
 }
 
+func (r *InMemoryJobOfferRepository) ListAccepted(_ context.Context, offeringTenantID, targetTenantID string) ([]domain.JobOffer, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	matched := []domain.JobOffer{}
+	for _, offer := range r.offers {
+		if offer.OfferingTenantID == offeringTenantID && offer.TargetTenantID == targetTenantID && offer.Status == domain.OfferStatusAccepted {
+			matched = append(matched, offer)
+		}
+	}
+	sort.Slice(matched, func(i, j int) bool { return matched[i].CreatedAt.After(matched[j].CreatedAt) })
+	return matched, nil
+}
+
 func (r *InMemoryJobOfferRepository) FindExpiring(_ context.Context, before time.Time, limit int) ([]domain.JobOffer, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

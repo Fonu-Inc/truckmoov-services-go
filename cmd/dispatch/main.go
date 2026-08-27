@@ -203,6 +203,59 @@ func main() {
 		}
 	}()
 
+	aggregatorRelationshipRepository := infrastructure.NewPostgresAggregatorRelationshipRepository(postgresDB)
+	if err := aggregatorRelationshipRepository.EnsureSchema(ctx); err != nil {
+		log.Error("aggregator_relationship_schema_failed", "error", err)
+	}
+	operatorRatingRepository := infrastructure.NewPostgresOperatorRatingRepository(postgresDB)
+	if err := operatorRatingRepository.EnsureSchema(ctx); err != nil {
+		log.Error("operator_rating_schema_failed", "error", err)
+	}
+	settlementRepository := infrastructure.NewPostgresSettlementRepository(postgresDB)
+	if err := settlementRepository.EnsureSchema(ctx); err != nil {
+		log.Error("settlement_schema_failed", "error", err)
+	}
+	aggregatorActivityRepository := infrastructure.NewPostgresAggregatorActivityRepository(postgresDB)
+	if err := aggregatorActivityRepository.EnsureSchema(ctx); err != nil {
+		log.Error("aggregator_activity_schema_failed", "error", err)
+	}
+	fleetCountsReader := infrastructure.NewFleetCountsReader(cfg.FleetServiceURL, cfg.JWTSecret, nil)
+
+	summaryFiguresUseCase := application.NewSummaryFiguresUseCase(aggregatorRelationshipRepository, jobRepository, fleetCountsReader, operatorRatingRepository)
+	listLinkedOperatorsUseCase := application.NewListLinkedOperatorsUseCase(aggregatorRelationshipRepository, jobRepository, fleetCountsReader, operatorRatingRepository)
+	addOperatorUseCase := application.NewAddOperatorUseCase(aggregatorRelationshipRepository, aggregatorActivityRepository, infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{})
+	removeOperatorUseCase := application.NewRemoveOperatorUseCase(aggregatorRelationshipRepository, jobOfferRepository, jobRepository, infrastructure.SystemClock{})
+	acceptAggregatorInviteUseCase := application.NewAcceptAggregatorInviteUseCase(aggregatorRelationshipRepository, aggregatorActivityRepository, infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{})
+	subDispatchQueueUseCase := application.NewSubDispatchQueueUseCase(jobOfferRepository, jobRepository)
+	assignSubDispatchJobUseCase := application.NewAssignSubDispatchJobUseCase(aggregatorRelationshipRepository, createJobOfferUseCase, aggregatorActivityRepository, infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{})
+	operatorPerformanceUseCase := application.NewOperatorPerformanceUseCase(aggregatorRelationshipRepository, jobOfferRepository, jobRepository, operatorRatingRepository, infrastructure.SystemClock{})
+	topPerformingOperatorsUseCase := application.NewTopPerformingOperatorsUseCase(aggregatorRelationshipRepository, jobOfferRepository, jobRepository, operatorRatingRepository)
+	rateOperatorUseCase := application.NewRateOperatorUseCase(jobOfferRepository, jobRepository, operatorRatingRepository, infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{})
+	listSettlementsUseCase := application.NewListSettlementsUseCase(settlementRepository)
+	paySettlementUseCase := application.NewPaySettlementUseCase(settlementRepository, aggregatorActivityRepository, infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{})
+	listAggregatorActivityUseCase := application.NewListAggregatorActivityUseCase(aggregatorActivityRepository)
+
+	weeklySettlementCloseUseCase := application.NewWeeklySettlementCloseUseCase(
+		aggregatorRelationshipRepository, jobOfferRepository, jobRepository, settlementRepository,
+		infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{},
+	)
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if closed, err := weeklySettlementCloseUseCase.Execute(ctx); err != nil {
+					log.Error("settlement_close_failed", "error", err)
+				} else if closed > 0 {
+					log.Info("settlements_closed", "count", closed)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	handler := dispatchhttp.NewHandler(
 		publishJobStatusUseCase,
 		jobLifecycleUseCase,
@@ -217,6 +270,21 @@ func main() {
 		declineJobOfferUseCase,
 		listJobOffersUseCase,
 		activeJobCapacityUseCase,
+	)
+	handler = handler.WithAggregator(
+		summaryFiguresUseCase,
+		listLinkedOperatorsUseCase,
+		addOperatorUseCase,
+		removeOperatorUseCase,
+		acceptAggregatorInviteUseCase,
+		subDispatchQueueUseCase,
+		assignSubDispatchJobUseCase,
+		operatorPerformanceUseCase,
+		topPerformingOperatorsUseCase,
+		rateOperatorUseCase,
+		listSettlementsUseCase,
+		paySettlementUseCase,
+		listAggregatorActivityUseCase,
 	)
 
 	mux := http.NewServeMux()

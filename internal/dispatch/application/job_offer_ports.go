@@ -15,6 +15,11 @@ type JobOfferRepository interface {
 	// selected by role. Neither side may see an offer made to someone else.
 	List(ctx context.Context, query JobOfferQuery) ([]domain.JobOffer, int, error)
 	CountPending(ctx context.Context, targetTenantID string) (int, error)
+	// ListAccepted returns every accepted offer between one specific pair of
+	// tenants, regardless of when — used by the aggregator screen to find a
+	// linked operator's sub-dispatched jobs and by settlement close to total
+	// a week's earnings for that pair.
+	ListAccepted(ctx context.Context, offeringTenantID, targetTenantID string) ([]domain.JobOffer, error)
 	// FindExpiring returns pending offers whose window has passed, for the
 	// sweep that moves them to Past without anyone acting.
 	FindExpiring(ctx context.Context, before time.Time, limit int) ([]domain.JobOffer, error)

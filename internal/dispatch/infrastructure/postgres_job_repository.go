@@ -199,6 +199,27 @@ func (r *PostgresJobRepository) FindByTenantAndID(tenantID, id string) (domain.J
 	return job, true
 }
 
+// FindByID looks a job up by id alone, with no tenant filter. Needed once a
+// job may have moved to a different tenant than the one asking — an
+// aggregator looking up a job it sub-dispatched, now owned by the operator.
+func (r *PostgresJobRepository) FindByID(id string) (domain.Job, bool) {
+	var payload []byte
+	err := r.db.QueryRowContext(
+		context.Background(),
+		`SELECT payload FROM dispatch_jobs WHERE id = $1`,
+		strings.TrimSpace(id),
+	).Scan(&payload)
+	if err != nil {
+		return domain.Job{}, false
+	}
+
+	job, err := decodeStoredJob(payload)
+	if err != nil {
+		return domain.Job{}, false
+	}
+	return job, true
+}
+
 func (r *PostgresJobRepository) FindByTenant(tenantID string) []domain.Job {
 	rows, err := r.db.QueryContext(
 		context.Background(),

@@ -36,6 +36,19 @@ func (r *InMemoryJobRepository) FindByTenantAndID(tenantID, id string) (domain.J
 	return job, ok
 }
 
+// FindByID looks a job up by id alone. See PostgresJobRepository.FindByID.
+func (r *InMemoryJobRepository) FindByID(id string) (domain.Job, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	normalizedID := strings.TrimSpace(id)
+	for _, job := range r.jobs {
+		if job.ID == normalizedID {
+			return job, true
+		}
+	}
+	return domain.Job{}, false
+}
+
 func (r *InMemoryJobRepository) FindByTenant(tenantID string) []domain.Job {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
