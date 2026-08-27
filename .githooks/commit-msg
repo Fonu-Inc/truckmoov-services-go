@@ -1,0 +1,24 @@
+#!/bin/sh
+# Enforces Conventional Commits (https://www.conventionalcommits.org) on the
+# first line: type(optional-scope): subject.
+#
+# Deliberately a plain regex, not a call to commitlint — this repo has no
+# Node dependency, and a contributor should not need one installed just to
+# commit. CI runs the same rule set through commitlint for the definitive
+# check, since this hook can be skipped with --no-verify or never installed.
+
+msg_file="$1"
+first_line=$(head -n1 "$msg_file")
+
+pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([a-z0-9./-]+\))?!?: .{1,}'
+
+if ! echo "$first_line" | grep -qE "$pattern"; then
+  echo "Commit message does not follow Conventional Commits:"
+  echo "  $first_line"
+  echo
+  echo "Expected: type(scope): subject, e.g."
+  echo "  fix(dispatch): stop double-crediting a retried job offer"
+  echo
+  echo "Allowed types: build chore ci docs feat fix perf refactor revert style test"
+  exit 1
+fi

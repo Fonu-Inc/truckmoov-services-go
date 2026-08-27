@@ -5,9 +5,15 @@ IMAGE_TAG ?= local
 LOCAL_PLATFORM ?= linux/amd64
 PUSH_PLATFORMS ?= linux/amd64,linux/arm64
 
-.PHONY: dev run-notification run-tracking run-dispatch fmt vet proto \
+.PHONY: dev run-notification run-tracking run-dispatch fmt vet proto hooks \
 	docker-build-local docker-build-dispatch docker-build-notification docker-build-tracking \
 	docker-buildx-push docker-buildx-push-dispatch docker-buildx-push-notification docker-buildx-push-tracking
+
+hooks:
+	@# Hooks under .git/hooks are not version-controlled, so this points git at
+	@# the tracked .githooks directory instead. Run once per clone.
+	git config core.hooksPath .githooks
+	@echo "commit-msg hook installed: commits must follow Conventional Commits"
 
 dev:
 	@# Keep the three Go HTTP services available together for local gateway/docs work.
