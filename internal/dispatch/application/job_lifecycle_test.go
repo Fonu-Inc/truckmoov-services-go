@@ -272,9 +272,6 @@ func TestJobLifecycleUseCase_CreateJobMapsUIDetails(t *testing.T) {
 	deadline := time.Date(2026, 2, 11, 16, 30, 0, 0, time.UTC)
 	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
 		Reference:        "JOB-900",
-		VehicleID:        "veh-1",
-		DriverID:         "driver-1",
-		DriverPhone:      "+2348010000001",
 		CargoType:        "Electronics",
 		CargoDescription: "Fragile televisions",
 		InitialNote:      "Handle with care",
@@ -311,20 +308,20 @@ func TestJobLifecycleUseCase_CreateJobMapsUIDetails(t *testing.T) {
 	if job.TimeWindow.DropoffEnd == nil || !job.TimeWindow.DropoffEnd.Equal(deadline) {
 		t.Fatalf("expected deadline to populate dropoff end window")
 	}
-	if job.Status != domain.StatusAssigned {
-		t.Fatalf("expected create with vehicle and driver to assign immediately, got %q", job.Status)
+	if job.Status != domain.StatusCreated {
+		t.Fatalf("expected job creation to never assign, got %q", job.Status)
 	}
-	if job.AssignedVehicleID != "veh-1" || job.AssignedDriverID != "driver-1" || job.AssignedDriverPhone != "+2348010000001" {
-		t.Fatalf("expected assigned vehicle/driver/phone to be stored, got vehicle=%q driver=%q phone=%q", job.AssignedVehicleID, job.AssignedDriverID, job.AssignedDriverPhone)
+	if job.AssignedVehicleID != "" || job.AssignedDriverID != "" || job.AssignedDriverPhone != "" {
+		t.Fatalf("expected no vehicle/driver assigned at creation, got vehicle=%q driver=%q phone=%q", job.AssignedVehicleID, job.AssignedDriverID, job.AssignedDriverPhone)
 	}
 	if len(job.Notes) != 1 || job.Notes[0].Text != "Handle with care" {
 		t.Fatalf("expected initial note to be stored, got %#v", job.Notes)
 	}
-	if len(emitter.commands) != 1 {
-		t.Fatalf("expected one emitted status event, got %d", len(emitter.commands))
+	if len(emitter.commands) != 0 {
+		t.Fatalf("expected no emitted status event at creation, got %d", len(emitter.commands))
 	}
-	if notifier.calls != 1 {
-		t.Fatalf("expected one driver notification, got %d", notifier.calls)
+	if notifier.calls != 0 {
+		t.Fatalf("expected no driver notification at creation, got %d", notifier.calls)
 	}
 }
 
@@ -342,7 +339,6 @@ func TestJobLifecycleUseCase_ListJobsSupportsFilters(t *testing.T) {
 	jobA, err := useCase.CreateJob(context.Background(), CreateJobCommand{
 		JobID:     "job-a",
 		Reference: "TM-2849",
-		VehicleID: "vehicle-1",
 		Pickup:    domain.JobStop{Address: "Oshodi Market"},
 		Dropoff:   domain.JobStop{Address: "Ikorodu"},
 	})
@@ -350,16 +346,21 @@ func TestJobLifecycleUseCase_ListJobsSupportsFilters(t *testing.T) {
 		t.Fatalf("create job A failed: %v", err)
 	}
 
-	_, err = useCase.CreateJob(context.Background(), CreateJobCommand{
+	jobB, err := useCase.CreateJob(context.Background(), CreateJobCommand{
 		JobID:     "job-b",
 		Reference: "TM-2850",
-		VehicleID: "vehicle-2",
-		DriverID:  "driver-2",
 		Pickup:    domain.JobStop{Address: "Apapa Port"},
 		Dropoff:   domain.JobStop{Address: "Victoria Island"},
 	})
 	if err != nil {
 		t.Fatalf("create job B failed: %v", err)
+	}
+	if _, err := useCase.AssignJob(context.Background(), AssignJobCommand{
+		JobID:     jobB.ID,
+		VehicleID: "vehicle-2",
+		DriverID:  "driver-2",
+	}); err != nil {
+		t.Fatalf("assign job B failed: %v", err)
 	}
 
 	list, err := useCase.ListJobs(context.Background(), "", ListJobsFilter{
@@ -451,15 +452,21 @@ func TestJobLifecycleUseCase_CreateAndConfirmDriverStatusRequest(t *testing.T) {
 	)
 
 	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
-		JobID:       "job-driver-status-1",
-		VehicleID:   "vehicle-1",
-		DriverID:    "driver-1",
-		DriverPhone: "+2348010000001",
-		Pickup:      domain.JobStop{Address: "Apapa Port"},
-		Dropoff:     domain.JobStop{Address: "Lekki Free Zone"},
+		JobID:   "job-driver-status-1",
+		Pickup:  domain.JobStop{Address: "Apapa Port"},
+		Dropoff: domain.JobStop{Address: "Lekki Free Zone"},
 	})
 	if err != nil {
 		t.Fatalf("create job failed: %v", err)
+	}
+	job, err = useCase.AssignJob(context.Background(), AssignJobCommand{
+		JobID:       job.ID,
+		VehicleID:   "vehicle-1",
+		DriverID:    "driver-1",
+		DriverPhone: "+2348010000001",
+	})
+	if err != nil {
+		t.Fatalf("assign job failed: %v", err)
 	}
 
 	updatedJob, request, err := useCase.CreateDriverStatusRequest(context.Background(), CreateDriverStatusRequestCommand{
@@ -515,15 +522,21 @@ func TestJobLifecycleUseCase_RejectsDuplicatePendingDriverStatusRequest(t *testi
 	)
 
 	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
-		JobID:       "job-driver-status-2",
-		VehicleID:   "vehicle-1",
-		DriverID:    "driver-1",
-		DriverPhone: "+2348010000001",
-		Pickup:      domain.JobStop{Address: "Apapa Port"},
-		Dropoff:     domain.JobStop{Address: "Lekki Free Zone"},
+		JobID:   "job-driver-status-2",
+		Pickup:  domain.JobStop{Address: "Apapa Port"},
+		Dropoff: domain.JobStop{Address: "Lekki Free Zone"},
 	})
 	if err != nil {
 		t.Fatalf("create job failed: %v", err)
+	}
+	job, err = useCase.AssignJob(context.Background(), AssignJobCommand{
+		JobID:       job.ID,
+		VehicleID:   "vehicle-1",
+		DriverID:    "driver-1",
+		DriverPhone: "+2348010000001",
+	})
+	if err != nil {
+		t.Fatalf("assign job failed: %v", err)
 	}
 
 	_, _, err = useCase.CreateDriverStatusRequest(context.Background(), CreateDriverStatusRequestCommand{

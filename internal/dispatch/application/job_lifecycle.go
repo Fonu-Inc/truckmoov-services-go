@@ -35,9 +35,6 @@ type CreateJobCommand struct {
 	TenantID                string
 	JobID                   string
 	Reference               string
-	VehicleID               string
-	DriverID                string
-	DriverPhone             string
 	Pickup                  domain.JobStop
 	Dropoff                 domain.JobStop
 	Stops                   []domain.JobStop
@@ -207,13 +204,6 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		timeWindow.DropoffEnd = &deadlineUTC
 	}
 
-	assignedVehicleID := strings.TrimSpace(command.VehicleID)
-	assignedDriverID := strings.TrimSpace(command.DriverID)
-	assignedDriverPhone := strings.TrimSpace(command.DriverPhone)
-	if assignedDriverID != "" && assignedVehicleID == "" {
-		return domain.Job{}, errors.New("vehicle id is required when driver id is provided")
-	}
-
 	status := domain.StatusCreated
 	timeline := []domain.JobTimelineEntry{
 		{
@@ -243,21 +233,6 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		})
 	}
 
-	if assignedVehicleID != "" && assignedDriverID != "" {
-		status = domain.StatusAssigned
-		timeline = append(timeline, domain.JobTimelineEntry{
-			ID:         u.idGenerator.New(),
-			Type:       "job_assigned",
-			Summary:    "Job assigned to driver/vehicle",
-			OccurredAt: now,
-			Metadata: map[string]string{
-				"driver_id":    assignedDriverID,
-				"driver_phone": assignedDriverPhone,
-				"vehicle_id":   assignedVehicleID,
-			},
-		})
-	}
-
 	job, err := domain.NewJob(domain.Job{
 		ID:                      jobID,
 		Reference:               reference,
@@ -276,9 +251,6 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		Priority:                priority,
 		TimeWindow:              timeWindow,
 		Status:                  status,
-		AssignedDriverID:        assignedDriverID,
-		AssignedDriverPhone:     assignedDriverPhone,
-		AssignedVehicleID:       assignedVehicleID,
 		CreatedAt:               now,
 		UpdatedAt:               now,
 		Timeline:                timeline,
@@ -293,30 +265,6 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		return domain.Job{}, fmt.Errorf("save job: %w", err)
 	}
 
-	// The original modal is a create-and-dispatch flow, so when both selections are supplied
-	// we emit the same side effects that the explicit assign endpoint would have triggered.
-	if assignedVehicleID != "" && assignedDriverID != "" {
-		u.emitStatusChanged(ctx, PublishJobStatusChangedCommand{
-			TenantID:          job.TenantID,
-			JobID:             job.ID,
-			PreviousStatus:    string(domain.StatusCreated),
-			NewStatus:         string(job.Status),
-			AssignedDriverID:  job.AssignedDriverID,
-			AssignedVehicleID: job.AssignedVehicleID,
-		})
-
-		message := buildDriverInstructionMessage(job)
-		if notifyErr := u.notifyDriverInstruction(
-			ctx,
-			job.TenantID,
-			job.ID,
-			job.AssignedDriverID,
-			message,
-		); notifyErr == nil {
-			job = job.MarkDriverInstructionSent("whatsapp", u.clock.Now(), u.idGenerator.New())
-			_ = u.repository.Save(job)
-		}
-	}
 
 	return job, nil
 }

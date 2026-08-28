@@ -209,15 +209,12 @@ func TestHandler_ListJobsContract(t *testing.T) {
 	for _, body := range []string{
 		`{
 			"reference":"TM-2849",
-			"vehicleId":"vehicle-1",
 			"pickupLocation":"Oshodi Market",
 			"deliveryLocation":"Ikorodu",
 			"priority":"low"
 		}`,
 		`{
 			"reference":"TM-2850",
-			"vehicleId":"vehicle-2",
-			"driverId":"driver-2",
 			"pickupLocation":"Apapa Port",
 			"deliveryLocation":"Victoria Island",
 			"priority":"normal"
@@ -227,6 +224,30 @@ func TestHandler_ListJobsContract(t *testing.T) {
 		if res.Code != http.StatusCreated {
 			t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, res.Code, res.Body.String())
 		}
+	}
+
+	listRes := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs?query=TM-2850", "")
+	if listRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, listRes.Code, listRes.Body.String())
+	}
+	var listPayload struct {
+		Data []domain.Job `json:"data"`
+	}
+	if err := json.Unmarshal(listRes.Body.Bytes(), &listPayload); err != nil {
+		t.Fatalf("decode jobs list: %v", err)
+	}
+	if len(listPayload.Data) != 1 {
+		t.Fatalf("expected one TM-2850 job, got %d", len(listPayload.Data))
+	}
+	assignRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+listPayload.Data[0].ID+"/assign",
+		`{"vehicle_id":"vehicle-2","driver_id":"driver-2"}`,
+	)
+	if assignRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, assignRes.Code, assignRes.Body.String())
 	}
 
 	res := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs?status=in_progress&query=victoria&vehicle_id=vehicle-2&driver_id=driver-2", "")
@@ -265,9 +286,6 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 		"/dispatch/jobs",
 		`{
 			"reference":"TM-2847",
-			"vehicleId":"vehicle-100",
-			"driverId":"driver-100",
-			"driverPhone":"+2348010000100",
 			"pickupLocation":"Apapa Port",
 			"deliveryLocation":"Lekki Free Zone",
 			"cargoDescription":"High-value electronics cargo",
@@ -289,23 +307,29 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 	if createdJob.Priority != domain.PriorityNormal {
 		t.Fatalf("expected normal to normalize to %q, got %q", domain.PriorityNormal, createdJob.Priority)
 	}
-	if createdJob.Status != domain.StatusAssigned {
-		t.Fatalf("expected immediate-dispatch modal to assign the job, got %q", createdJob.Status)
-	}
-	if createdJob.AssignedVehicleID != "vehicle-100" {
-		t.Fatalf("expected assigned vehicle vehicle-100, got %q", createdJob.AssignedVehicleID)
-	}
-	if createdJob.AssignedDriverID != "driver-100" {
-		t.Fatalf("expected assigned driver driver-100, got %q", createdJob.AssignedDriverID)
-	}
-	if createdJob.AssignedDriverPhone != "+2348010000100" {
-		t.Fatalf("expected assigned driver phone to be stored, got %q", createdJob.AssignedDriverPhone)
+	if createdJob.Status != domain.StatusCreated {
+		t.Fatalf("expected job creation to never assign, got %q", createdJob.Status)
 	}
 	if len(createdJob.Notes) != 1 || createdJob.Notes[0].Text != "Gate pass already approved" {
 		t.Fatalf("expected initial note to be stored, got %#v", createdJob.Notes)
 	}
 
 	jobID := createdJob.ID
+
+	initialAssignRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+jobID+"/assign",
+		`{"vehicle_id":"vehicle-100","driver_id":"driver-100","driver_phone":"+2348010000100"}`,
+	)
+	if initialAssignRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, initialAssignRes.Code)
+	}
+	assignedJob := decodeJobBody(t, initialAssignRes.Body.Bytes())
+	if assignedJob.AssignedVehicleID != "vehicle-100" || assignedJob.AssignedDriverID != "driver-100" || assignedJob.AssignedDriverPhone != "+2348010000100" {
+		t.Fatalf("expected assigned vehicle/driver/phone to be stored, got %#v", assignedJob)
+	}
 
 	reassignRes := dispatchRequest(
 		t,
@@ -423,9 +447,6 @@ func TestHandler_SendWhatsAppInstructionContract(t *testing.T) {
 		"/dispatch/jobs",
 		`{
 			"reference":"TM-2849",
-			"vehicleId":"vehicle-1",
-			"driverId":"driver-100",
-			"driverPhone":"+2348012345678",
 			"pickupLocation":"Oshodi Market",
 			"deliveryLocation":"Ikorodu",
 			"cargoDescription":"Food products",
@@ -437,6 +458,17 @@ func TestHandler_SendWhatsAppInstructionContract(t *testing.T) {
 	}
 
 	createdJob := decodeJobBody(t, createRes.Body.Bytes())
+
+	assignRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/assign",
+		`{"vehicle_id":"vehicle-1","driver_id":"driver-100","driver_phone":"+2348012345678"}`,
+	)
+	if assignRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, assignRes.Code, assignRes.Body.String())
+	}
 
 	sendRes := dispatchRequest(
 		t,
@@ -506,9 +538,6 @@ func TestHandler_SendJobInstructionRejectsMismatchedDriver(t *testing.T) {
 		http.MethodPost,
 		"/dispatch/jobs",
 		`{
-			"vehicleId":"vehicle-100",
-			"driverId":"driver-100",
-			"driverPhone":"+2348012345678",
 			"pickupLocation":"Oshodi Market",
 			"deliveryLocation":"Ikorodu",
 			"cargoDescription":"Food products",
@@ -520,6 +549,17 @@ func TestHandler_SendJobInstructionRejectsMismatchedDriver(t *testing.T) {
 	}
 
 	createdJob := decodeJobBody(t, createRes.Body.Bytes())
+
+	assignRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/assign",
+		`{"vehicle_id":"vehicle-100","driver_id":"driver-100","driver_phone":"+2348012345678"}`,
+	)
+	if assignRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, assignRes.Code, assignRes.Body.String())
+	}
 
 	sendRes := dispatchRequest(
 		t,
@@ -549,9 +589,6 @@ func TestHandler_SendJobInstructionRejectsJobPastAssigned(t *testing.T) {
 		http.MethodPost,
 		"/dispatch/jobs",
 		`{
-			"vehicleId":"vehicle-100",
-			"driverId":"driver-100",
-			"driverPhone":"+2348012345678",
 			"pickupLocation":"Oshodi Market",
 			"deliveryLocation":"Ikorodu",
 			"cargoDescription":"Food products",
@@ -563,6 +600,17 @@ func TestHandler_SendJobInstructionRejectsJobPastAssigned(t *testing.T) {
 	}
 
 	createdJob := decodeJobBody(t, createRes.Body.Bytes())
+
+	assignRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/assign",
+		`{"vehicle_id":"vehicle-100","driver_id":"driver-100","driver_phone":"+2348012345678"}`,
+	)
+	if assignRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, assignRes.Code, assignRes.Body.String())
+	}
 
 	statusRes := dispatchRequest(
 		t,
@@ -606,9 +654,6 @@ func TestHandler_SendJobInstructionRejectsMismatchedStoredPhone(t *testing.T) {
 		http.MethodPost,
 		"/dispatch/jobs",
 		`{
-			"vehicleId":"vehicle-100",
-			"driverId":"driver-100",
-			"driverPhone":"+2348012345678",
 			"pickupLocation":"Oshodi Market",
 			"deliveryLocation":"Ikorodu",
 			"cargoDescription":"Food products",
@@ -620,6 +665,17 @@ func TestHandler_SendJobInstructionRejectsMismatchedStoredPhone(t *testing.T) {
 	}
 
 	createdJob := decodeJobBody(t, createRes.Body.Bytes())
+
+	assignRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/assign",
+		`{"vehicle_id":"vehicle-100","driver_id":"driver-100","driver_phone":"+2348012345678"}`,
+	)
+	if assignRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, assignRes.Code, assignRes.Body.String())
+	}
 
 	sendRes := dispatchRequest(
 		t,
@@ -649,9 +705,6 @@ func TestHandler_DriverStatusRequestWorkflow(t *testing.T) {
 		http.MethodPost,
 		"/dispatch/jobs",
 		`{
-			"vehicleId":"vehicle-100",
-			"driverId":"driver-100",
-			"driverPhone":"+2348012345678",
 			"pickupLocation":"Oshodi Market",
 			"deliveryLocation":"Ikorodu",
 			"cargoDescription":"Food products",
@@ -663,6 +716,17 @@ func TestHandler_DriverStatusRequestWorkflow(t *testing.T) {
 	}
 
 	createdJob := decodeJobBody(t, createRes.Body.Bytes())
+
+	assignRes := dispatchRequest(
+		t,
+		mux,
+		http.MethodPost,
+		"/dispatch/jobs/"+createdJob.ID+"/assign",
+		`{"vehicle_id":"vehicle-100","driver_id":"driver-100","driver_phone":"+2348012345678"}`,
+	)
+	if assignRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, assignRes.Code, assignRes.Body.String())
+	}
 
 	requestRes := dispatchRequest(
 		t,
@@ -741,9 +805,6 @@ func TestHandler_UpdateJobStatusRequiresDispatcherRole(t *testing.T) {
 		http.MethodPost,
 		"/dispatch/jobs",
 		`{
-			"vehicleId":"vehicle-100",
-			"driverId":"driver-100",
-			"driverPhone":"+2348012345678",
 			"pickupLocation":"Oshodi Market",
 			"deliveryLocation":"Ikorodu",
 			"cargoDescription":"Food products",
@@ -768,65 +829,6 @@ func TestHandler_UpdateJobStatusRequiresDispatcherRole(t *testing.T) {
 	)
 	if res.Code != http.StatusForbidden {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusForbidden, res.Code, res.Body.String())
-	}
-}
-
-func TestHandler_CreateJobOriginalModalVehicleOnlyStillPersistsSelection(t *testing.T) {
-	handler := buildDispatchTestHandler()
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	createRes := dispatchRequest(
-		t,
-		mux,
-		http.MethodPost,
-		"/dispatch/jobs",
-		`{
-			"vehicleId":"vehicle-200",
-			"pickupLocation":"Oshodi Market",
-			"deliveryLocation":"Ikorodu",
-			"priority":"urgent"
-		}`,
-	)
-	if createRes.Code != http.StatusCreated {
-		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
-	}
-
-	createdJob := decodeJobBody(t, createRes.Body.Bytes())
-	if createdJob.Status != domain.StatusCreated {
-		t.Fatalf("expected vehicle-only create to remain created, got %q", createdJob.Status)
-	}
-	if createdJob.AssignedVehicleID != "vehicle-200" {
-		t.Fatalf("expected selected vehicle to be preserved, got %q", createdJob.AssignedVehicleID)
-	}
-	if createdJob.AssignedDriverID != "" {
-		t.Fatalf("expected no assigned driver, got %q", createdJob.AssignedDriverID)
-	}
-	if createdJob.Priority != domain.PriorityUrgent {
-		t.Fatalf("expected urgent to normalize to %q, got %q", domain.PriorityUrgent, createdJob.Priority)
-	}
-}
-
-func TestHandler_CreateJobOriginalModalRequiresVehicle(t *testing.T) {
-	handler := buildDispatchTestHandler()
-	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
-
-	createRes := dispatchRequest(
-		t,
-		mux,
-		http.MethodPost,
-		"/dispatch/jobs",
-		`{
-			"pickupLocation":"Apapa Port",
-			"deliveryLocation":"Lekki Free Zone"
-		}`,
-	)
-	if createRes.Code != http.StatusBadRequest {
-		t.Fatalf("expected status %d, got %d body=%s", http.StatusBadRequest, createRes.Code, createRes.Body.String())
-	}
-	if !strings.Contains(createRes.Body.String(), "vehicleId is required") {
-		t.Fatalf("expected missing vehicle validation, got %s", createRes.Body.String())
 	}
 }
 
@@ -969,7 +971,7 @@ func TestHandler_JobsSummaryCountsByStatus(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
-	body := `{"vehicleId":"veh-1","pickupLocation":"A","deliveryLocation":"B"}`
+	body := `{"pickupLocation":"A","deliveryLocation":"B"}`
 	if res := dispatchRequest(t, mux, http.MethodPost, "/dispatch/jobs", body); res.Code != http.StatusCreated {
 		t.Fatalf("create job expected 201, got %d body=%s", res.Code, res.Body.String())
 	}
@@ -1186,7 +1188,6 @@ func TestHandler_CreateAndListJobsUseTokenTenant(t *testing.T) {
 		"/dispatch/jobs",
 		`{
 			"reference":"TM-3002",
-			"vehicleId":"vehicle-2",
 			"pickupLocation":"Apapa Port",
 			"deliveryLocation":"Lekki Free Zone",
 			"priority":"normal"
@@ -1249,7 +1250,7 @@ func TestHandler_UpdateJobDetailsContract(t *testing.T) {
 		mux,
 		http.MethodPost,
 		"/dispatch/jobs",
-		`{"vehicleId":"veh-1","pickupLocation":"Old Pickup","deliveryLocation":"Old Dropoff"}`,
+		`{"pickupLocation":"Old Pickup","deliveryLocation":"Old Dropoff"}`,
 	)
 	if createRes.Code != http.StatusCreated {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
@@ -1322,7 +1323,7 @@ func TestHandler_DeleteJobContract(t *testing.T) {
 		mux,
 		http.MethodPost,
 		"/dispatch/jobs",
-		`{"vehicleId":"veh-1","pickupLocation":"A","deliveryLocation":"B"}`,
+		`{"pickupLocation":"A","deliveryLocation":"B"}`,
 	)
 	if createRes.Code != http.StatusCreated {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
@@ -1357,8 +1358,8 @@ func TestHandler_JobsSummaryIncludesTotalValueNgn(t *testing.T) {
 	handler.RegisterRoutes(mux)
 
 	for _, body := range []string{
-		`{"vehicleId":"veh-1","pickupLocation":"A","deliveryLocation":"B","amount":100000}`,
-		`{"vehicleId":"veh-2","pickupLocation":"C","deliveryLocation":"D","amount":250000}`,
+		`{"pickupLocation":"A","deliveryLocation":"B","amount":100000}`,
+		`{"pickupLocation":"C","deliveryLocation":"D","amount":250000}`,
 	} {
 		res := dispatchRequest(t, mux, http.MethodPost, "/dispatch/jobs", body)
 		if res.Code != http.StatusCreated {
@@ -1399,7 +1400,6 @@ func TestHandler_CreateJobWithStopsIncludedInResponse(t *testing.T) {
 		http.MethodPost,
 		"/dispatch/jobs",
 		`{
-			"vehicleId":"veh-1",
 			"pickupLocation":"A",
 			"deliveryLocation":"B",
 			"stops":[
@@ -1434,7 +1434,7 @@ func TestHandler_JobResourceBarePathGetAndMethodNotAllowed(t *testing.T) {
 		mux,
 		http.MethodPost,
 		"/dispatch/jobs",
-		`{"vehicleId":"veh-1","pickupLocation":"A","deliveryLocation":"B"}`,
+		`{"pickupLocation":"A","deliveryLocation":"B"}`,
 	)
 	if createRes.Code != http.StatusCreated {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, createRes.Code, createRes.Body.String())
