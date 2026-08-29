@@ -265,7 +265,6 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		return domain.Job{}, fmt.Errorf("save job: %w", err)
 	}
 
-
 	return job, nil
 }
 
