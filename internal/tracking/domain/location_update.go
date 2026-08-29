@@ -23,6 +23,9 @@ type LocationUpdate struct {
 	Heading    *float64
 	AccuracyM  *float64
 	FixTimeRFC string
+	// Protocol the vendor adapter observed the device speaking, e.g. "teltonika"
+	// or "queclink". Empty when the adapter did not report one.
+	Protocol string
 }
 
 func NewLocationUpdate(params LocationUpdate) (LocationUpdate, error) {
@@ -58,6 +61,7 @@ func NewLocationUpdate(params LocationUpdate) (LocationUpdate, error) {
 		Heading:    params.Heading,
 		AccuracyM:  params.AccuracyM,
 		FixTimeRFC: strings.TrimSpace(params.FixTimeRFC),
+		Protocol:   strings.TrimSpace(params.Protocol),
 	}, nil
 }
 

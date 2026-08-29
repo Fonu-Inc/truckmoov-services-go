@@ -32,6 +32,7 @@ func (p *EventPublisher) PublishLocationUpdate(ctx context.Context, event domain
 			"heading":    event.Heading,
 			"accuracy_m": event.AccuracyM,
 			"fix_time":   event.FixTimeRFC,
+			"protocol":   event.Protocol,
 		},
 	})
 }

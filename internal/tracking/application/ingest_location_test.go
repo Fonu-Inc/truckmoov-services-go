@@ -104,6 +104,38 @@ func TestIngestLocationUseCase_Execute(t *testing.T) {
 	}
 }
 
+func TestIngestLocationUseCase_Execute_CarriesProtocolToPublishedEvent(t *testing.T) {
+	publisher := &fakeTrackingPublisher{}
+	repository := &fakeLatestLocationRepository{}
+	historyRepo := &fakeLocationHistoryRepository{}
+	useCase := NewIngestLocationUseCase(
+		publisher,
+		repository,
+		fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)},
+		fixedTrackingIDGenerator{value: "evt-123"},
+		"default",
+		historyRepo,
+		TelemetryConfig{},
+		nil,
+		nil,
+	)
+
+	_, err := useCase.Execute(context.Background(), IngestLocationCommand{
+		VehicleID: "vehicle-1",
+		DeviceID:  "device-1",
+		Latitude:  6.5,
+		Longitude: 3.4,
+		Protocol:  "teltonika",
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if publisher.location.Protocol != "teltonika" {
+		t.Fatalf("expected published event to carry protocol, got %q", publisher.location.Protocol)
+	}
+}
+
 func TestIngestLocationUseCase_Execute_SkipsDuplicateVendorPosition(t *testing.T) {
 	publisher := &fakeTrackingPublisher{}
 	repository := &fakeLatestLocationRepository{}
