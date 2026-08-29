@@ -237,6 +237,7 @@ type Handler struct {
 	assignSubDispatchJobUseCase   *application.AssignSubDispatchJobUseCase
 	operatorPerformanceUseCase    *application.OperatorPerformanceUseCase
 	topPerformingOperatorsUseCase *application.TopPerformingOperatorsUseCase
+	complianceSnapshotUseCase     *application.ComplianceSnapshotUseCase
 	rateOperatorUseCase           *application.RateOperatorUseCase
 	listSettlementsUseCase        *application.ListSettlementsUseCase
 	paySettlementUseCase          *application.PaySettlementUseCase
@@ -260,6 +261,7 @@ func (h *Handler) WithAggregator(
 	listSettlements *application.ListSettlementsUseCase,
 	paySettlement *application.PaySettlementUseCase,
 	listActivity *application.ListAggregatorActivityUseCase,
+	complianceSnapshot *application.ComplianceSnapshotUseCase,
 ) *Handler {
 	h.summaryFiguresUseCase = summary
 	h.listLinkedOperatorsUseCase = listOperators
@@ -274,6 +276,7 @@ func (h *Handler) WithAggregator(
 	h.listSettlementsUseCase = listSettlements
 	h.paySettlementUseCase = paySettlement
 	h.listAggregatorActivityUseCase = listActivity
+	h.complianceSnapshotUseCase = complianceSnapshot
 	return h
 }
 
@@ -385,6 +388,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/dispatch/aggregator/settlements", h.aggregatorSettlements)
 	mux.HandleFunc("/dispatch/aggregator/settlements/", h.aggregatorSettlementByPath)
 	mux.HandleFunc("/dispatch/aggregator/activity", h.aggregatorActivity)
+	mux.HandleFunc("/dispatch/aggregator/compliance-snapshot", h.aggregatorComplianceSnapshot)
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {

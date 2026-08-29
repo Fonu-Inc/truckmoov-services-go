@@ -68,6 +68,25 @@ type FleetCountsReader interface {
 	TenantCounts(ctx context.Context, tenantID string) (vehicles, drivers int, err error)
 }
 
+// ComplianceStatusReader asks fleet for a tenant's compliance-document
+// standing (insurance, roadworthiness). Fleet's data, asked for rather than
+// duplicated — the same pattern as FleetCountsReader. KYC is deliberately not
+// included: nothing in the platform recomputes a tenant's overall KYC status
+// today (see TRU-25), so this reader has no honest answer to give for it yet.
+type ComplianceStatusReader interface {
+	Snapshot(ctx context.Context, tenantID string) (ComplianceSnapshot, error)
+}
+
+// ComplianceSnapshot mirrors fleet's compliance-documents summary: counts by
+// standing plus a derived rate, not broken out per document type.
+type ComplianceSnapshot struct {
+	Total                 int
+	Valid                 int
+	ExpiringSoon          int
+	Expired               int
+	ComplianceRatePercent int
+}
+
 // JobByIDLookup finds a job by its ID alone, with no tenant scoping needed —
 // useful once a job may have moved to a different tenant than the one asking
 // (an aggregator looking up a job it sub-dispatched, now owned by the

@@ -8,6 +8,42 @@ import (
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
 )
 
+func TestComplianceSnapshotUseCase_RollsUpEachActiveLinkedOperator(t *testing.T) {
+	relationships := newFakeRelationshipRepository()
+	now := time.Now()
+
+	active, _ := domain.NewAggregatorRelationship(domain.AggregatorRelationship{
+		ID: "rel-1", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1",
+		Types: []domain.RelationshipType{domain.RelationshipOwnerOperator}, CreatedAt: now, UpdatedAt: now,
+	})
+	_, _ = relationships.Create(context.Background(), active)
+
+	pending, _ := domain.NewAggregatorRelationship(domain.AggregatorRelationship{
+		ID: "rel-2", AggregatorTenantID: "aggregator-1", InvitedEmail: "invited@example.com",
+		Types: []domain.RelationshipType{domain.RelationshipOwnerOperator}, CreatedAt: now, UpdatedAt: now,
+	})
+	_, _ = relationships.Create(context.Background(), pending)
+
+	compliance := newFakeComplianceStatusReader()
+	compliance.byTenant["operator-1"] = ComplianceSnapshot{Total: 4, Valid: 3, ExpiringSoon: 1, ComplianceRatePercent: 75}
+
+	useCase := NewComplianceSnapshotUseCase(relationships, compliance)
+	entries, err := useCase.Execute(context.Background(), "aggregator-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(entries) != 1 {
+		t.Fatalf("expected only the active relationship's operator, got %d entries", len(entries))
+	}
+	if entries[0].OperatorTenantID != "operator-1" {
+		t.Fatalf("expected operator-1, got %q", entries[0].OperatorTenantID)
+	}
+	if entries[0].ComplianceRatePercent != 75 || entries[0].Total != 4 || entries[0].Valid != 3 || entries[0].ExpiringSoon != 1 {
+		t.Fatalf("unexpected snapshot on entry: %+v", entries[0])
+	}
+}
+
 func TestAssignSubDispatchJobUseCase_RefusesInactiveRelationship(t *testing.T) {
 	relationships := newFakeRelationshipRepository()
 	jobs := newLifecycleRepository()

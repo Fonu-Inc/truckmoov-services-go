@@ -180,6 +180,18 @@ func (f fakeFleetCounts) TenantCounts(context.Context, string) (int, int, error)
 	return f.vehicles, f.drivers, nil
 }
 
+type fakeComplianceStatusReader struct {
+	byTenant map[string]ComplianceSnapshot
+}
+
+func newFakeComplianceStatusReader() *fakeComplianceStatusReader {
+	return &fakeComplianceStatusReader{byTenant: map[string]ComplianceSnapshot{}}
+}
+
+func (f *fakeComplianceStatusReader) Snapshot(_ context.Context, tenantID string) (ComplianceSnapshot, error) {
+	return f.byTenant[tenantID], nil
+}
+
 type sequentialAggregatorIDs struct{ n int }
 
 func (g *sequentialAggregatorIDs) New() string {

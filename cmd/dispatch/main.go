@@ -220,6 +220,7 @@ func main() {
 		log.Error("aggregator_activity_schema_failed", "error", err)
 	}
 	fleetCountsReader := infrastructure.NewFleetCountsReader(cfg.FleetServiceURL, cfg.JWTSecret, nil)
+	complianceStatusReader := infrastructure.NewComplianceStatusReader(cfg.FleetServiceURL, cfg.JWTSecret, nil)
 
 	summaryFiguresUseCase := application.NewSummaryFiguresUseCase(aggregatorRelationshipRepository, jobRepository, fleetCountsReader, operatorRatingRepository)
 	listLinkedOperatorsUseCase := application.NewListLinkedOperatorsUseCase(aggregatorRelationshipRepository, jobRepository, fleetCountsReader, operatorRatingRepository)
@@ -234,6 +235,7 @@ func main() {
 	listSettlementsUseCase := application.NewListSettlementsUseCase(settlementRepository)
 	paySettlementUseCase := application.NewPaySettlementUseCase(settlementRepository, aggregatorActivityRepository, infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{})
 	listAggregatorActivityUseCase := application.NewListAggregatorActivityUseCase(aggregatorActivityRepository)
+	complianceSnapshotUseCase := application.NewComplianceSnapshotUseCase(aggregatorRelationshipRepository, complianceStatusReader)
 
 	weeklySettlementCloseUseCase := application.NewWeeklySettlementCloseUseCase(
 		aggregatorRelationshipRepository, jobOfferRepository, jobRepository, settlementRepository,
@@ -285,6 +287,7 @@ func main() {
 		listSettlementsUseCase,
 		paySettlementUseCase,
 		listAggregatorActivityUseCase,
+		complianceSnapshotUseCase,
 	)
 
 	mux := http.NewServeMux()

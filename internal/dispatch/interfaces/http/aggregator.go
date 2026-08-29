@@ -270,6 +270,27 @@ func (h *Handler) aggregatorPerformance(w http.ResponseWriter, r *http.Request) 
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": performance})
 }
 
+func (h *Handler) aggregatorComplianceSnapshot(w http.ResponseWriter, r *http.Request) {
+	if !h.aggregatorConfigured() {
+		h.aggregatorUnconfigured(w)
+		return
+	}
+	if r.Method != http.MethodGet {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+	snapshot, err := h.complianceSnapshotUseCase.Execute(r.Context(), tenantID)
+	if err != nil {
+		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": snapshot})
+}
+
 func (h *Handler) aggregatorTopOperators(w http.ResponseWriter, r *http.Request) {
 	if !h.aggregatorConfigured() {
 		h.aggregatorUnconfigured(w)

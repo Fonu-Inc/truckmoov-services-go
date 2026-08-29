@@ -241,6 +241,61 @@ func routeSummary(job domain.Job) string {
 	return pickup + " → " + dropoff
 }
 
+// OperatorComplianceEntry is one linked operator's row on the "Compliance
+// Snapshot" panel. KYC is omitted (see ComplianceStatusReader) — insurance and
+// roadworthiness standing are folded into the same rate/counts fleet already
+// computes for a tenant's own compliance documents screen.
+type OperatorComplianceEntry struct {
+	OperatorTenantID      string `json:"operator_tenant_id"`
+	Total                 int    `json:"total"`
+	Valid                 int    `json:"valid"`
+	ExpiringSoon          int    `json:"expiring_soon"`
+	Expired               int    `json:"expired"`
+	ComplianceRatePercent int    `json:"compliance_rate_percent"`
+}
+
+// ComplianceSnapshotUseCase rolls up each linked operator's compliance
+// standing, for the network overview's Compliance Snapshot panel.
+type ComplianceSnapshotUseCase struct {
+	relationships AggregatorRelationshipRepository
+	compliance    ComplianceStatusReader
+}
+
+func NewComplianceSnapshotUseCase(
+	relationships AggregatorRelationshipRepository,
+	compliance ComplianceStatusReader,
+) *ComplianceSnapshotUseCase {
+	return &ComplianceSnapshotUseCase{relationships: relationships, compliance: compliance}
+}
+
+func (u *ComplianceSnapshotUseCase) Execute(ctx context.Context, aggregatorTenantID string) ([]OperatorComplianceEntry, error) {
+	relationships, err := u.relationships.ListByAggregator(ctx, aggregatorTenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]OperatorComplianceEntry, 0, len(relationships))
+	for _, relationship := range relationships {
+		if !relationship.IsActive() {
+			continue
+		}
+
+		entry := OperatorComplianceEntry{OperatorTenantID: relationship.OperatorTenantID}
+		if u.compliance != nil {
+			if snapshot, err := u.compliance.Snapshot(ctx, relationship.OperatorTenantID); err == nil {
+				entry.Total = snapshot.Total
+				entry.Valid = snapshot.Valid
+				entry.ExpiringSoon = snapshot.ExpiringSoon
+				entry.Expired = snapshot.Expired
+				entry.ComplianceRatePercent = snapshot.ComplianceRatePercent
+			}
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
+}
+
 var (
 	ErrSubDispatchRelationshipNotActive = errors.New("this operator is not an active member of your network")
 	ErrSubDispatchJobNotFound           = errors.New("job not found")
