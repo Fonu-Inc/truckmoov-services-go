@@ -283,6 +283,16 @@ func main() {
 		application.NewApplyCampaignReceiptUseCase(campaignRepository, clock),
 	)
 
+	// An inbound photo that is not a driver-status reply becomes a waybill in
+	// fleet. Reuses the same provider that already downloads/sends WhatsApp
+	// media, and the same internal-service-token pattern dispatch uses to call
+	// fleet.
+	fleetWaybillClient := infrastructure.NewFleetWaybillClient(cfg.FleetServiceURL, cfg.JWTSecret, nil)
+	handleWhatsAppWebhookUseCase = handleWhatsAppWebhookUseCase.WithWaybillCapture(
+		whatsAppMessageProvider,
+		fleetWaybillClient,
+	)
+
 	handler := notificationhttp.NewHandler(
 		sendMessageUseCase,
 		retryMessageUseCase,

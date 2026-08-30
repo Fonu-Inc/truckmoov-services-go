@@ -114,12 +114,24 @@ type HandleWhatsAppWebhookUseCase struct {
 	// Optional. Campaign recipients are updated from the same receipts, so a
 	// deployment without campaigns wired up simply skips it.
 	campaignReceipts *ApplyCampaignReceiptUseCase
+	// Optional. Without both set, an inbound photo is logged as a message like
+	// any other and never becomes a waybill.
+	mediaDownloader WhatsAppMediaDownloader
+	waybillClient   WaybillCaptureClient
 }
 
 // WithCampaignReceipts routes delivery and read receipts to campaign
 // recipients as well as to conversations and the outbox.
 func (u *HandleWhatsAppWebhookUseCase) WithCampaignReceipts(receipts *ApplyCampaignReceiptUseCase) *HandleWhatsAppWebhookUseCase {
 	u.campaignReceipts = receipts
+	return u
+}
+
+// WithWaybillCapture turns an inbound photo that is not a driver-status reply
+// into a waybill in fleet.
+func (u *HandleWhatsAppWebhookUseCase) WithWaybillCapture(downloader WhatsAppMediaDownloader, client WaybillCaptureClient) *HandleWhatsAppWebhookUseCase {
+	u.mediaDownloader = downloader
+	u.waybillClient = client
 	return u
 }
 
@@ -486,6 +498,8 @@ func (u *HandleWhatsAppWebhookUseCase) Execute(ctx context.Context, command Hand
 					if handleErr == nil {
 						messageRecord = updatedMessage
 					}
+				} else if strings.EqualFold(mediaType, "image") && strings.TrimSpace(mediaID) != "" {
+					u.captureWaybillFromMessage(ctx, savedConversation.TenantID, mediaID, fromPhone, receivedAt)
 				}
 				u.publishActivity(ctx, activitylog.PublishCommand{
 					TenantID:   savedConversation.TenantID,
@@ -543,6 +557,73 @@ func (u *HandleWhatsAppWebhookUseCase) publishActivity(ctx context.Context, comm
 		command.OccurredAt = u.clock.Now()
 	}
 	_ = u.activityPublisher.Publish(ctx, command)
+}
+
+// captureWaybillFromMessage turns an inbound photo into a waybill in fleet.
+//
+// Best-effort by design: a download or fleet outage must not fail the whole
+// webhook delivery, which Meta would then retry — the conversation and
+// message are already saved by the time this runs. Fleet resolves the sender
+// phone to a driver itself, so nothing here needs to know who that is.
+func (u *HandleWhatsAppWebhookUseCase) captureWaybillFromMessage(ctx context.Context, tenantID, mediaID, senderPhone string, receivedAt time.Time) {
+	if u.mediaDownloader == nil || u.waybillClient == nil {
+		return
+	}
+
+	image, contentType, err := u.mediaDownloader.DownloadMedia(ctx, tenantID, mediaID)
+	if err != nil {
+		u.publishActivity(ctx, activitylog.PublishCommand{
+			TenantID:   tenantID,
+			Service:    "notification",
+			Action:     "whatsapp.waybill_capture_failed",
+			EntityType: "message",
+			EntityID:   mediaID,
+			Summary:    "Could not download a WhatsApp photo for waybill capture",
+			ActorID:    senderPhone,
+			ActorRole:  "driver",
+			OccurredAt: receivedAt,
+			Metadata:   map[string]any{"stage": "download", "error": err.Error()},
+		})
+		return
+	}
+
+	filename := mediaID + imageExtensionFor(contentType)
+	if err := u.waybillClient.CaptureWaybillFromWhatsApp(ctx, tenantID, image, filename, contentType, senderPhone); err != nil {
+		u.publishActivity(ctx, activitylog.PublishCommand{
+			TenantID:   tenantID,
+			Service:    "notification",
+			Action:     "whatsapp.waybill_capture_failed",
+			EntityType: "message",
+			EntityID:   mediaID,
+			Summary:    "Could not hand a WhatsApp photo to fleet as a waybill",
+			ActorID:    senderPhone,
+			ActorRole:  "driver",
+			OccurredAt: receivedAt,
+			Metadata:   map[string]any{"stage": "capture", "error": err.Error()},
+		})
+		return
+	}
+
+	u.publishActivity(ctx, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "notification",
+		Action:     "whatsapp.waybill_captured",
+		EntityType: "message",
+		EntityID:   mediaID,
+		Summary:    "Captured a waybill from a WhatsApp photo",
+		ActorID:    senderPhone,
+		ActorRole:  "driver",
+		OccurredAt: receivedAt,
+	})
+}
+
+func imageExtensionFor(contentType string) string {
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
+	case "image/png":
+		return ".png"
+	default:
+		return ".jpg"
+	}
 }
 
 func (u *HandleWhatsAppWebhookUseCase) applyWebhookStatus(ctx context.Context, status whatsAppWebhookStatus) (int, error) {

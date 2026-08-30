@@ -289,6 +289,87 @@ func (p *MetaWhatsAppMessageProvider) SendMedia(ctx context.Context, request dom
 	return p.send(ctx, phoneNumberID, accessToken, payload)
 }
 
+// DownloadMedia fetches an inbound media attachment by its Meta media id.
+//
+// Two calls, as the Graph API requires: the id resolves to a short-lived,
+// signed URL (GET /{media-id}), and only that URL serves the bytes. Both
+// calls carry the same bearer token — the second one is not a public CDN
+// link despite looking like one.
+func (p *MetaWhatsAppMessageProvider) DownloadMedia(ctx context.Context, tenantID, mediaID string) ([]byte, string, error) {
+	trimmedMediaID := strings.TrimSpace(mediaID)
+	if trimmedMediaID == "" {
+		return nil, "", errors.New("media id is required")
+	}
+	_, accessToken, err := p.resolveCredentials(ctx, tenantID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	var meta struct {
+		URL         string `json:"url"`
+		MimeType    string `json:"mime_type"`
+		FileSize    int64  `json:"file_size"`
+		ContentType string `json:"content_type"`
+	}
+	if err := p.getJSON(ctx, fmt.Sprintf("%s/%s", p.baseURL, trimmedMediaID), accessToken, &meta); err != nil {
+		return nil, "", fmt.Errorf("resolve whatsapp media url: %w", err)
+	}
+	if strings.TrimSpace(meta.URL) == "" {
+		return nil, "", errors.New("whatsapp media has no download url")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, meta.URL, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("build whatsapp media request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("download whatsapp media: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
+		return nil, "", fmt.Errorf("whatsapp media download returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 25*1024*1024))
+	if err != nil {
+		return nil, "", fmt.Errorf("read whatsapp media: %w", err)
+	}
+
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = meta.MimeType
+	}
+	return data, contentType, nil
+}
+
+func (p *MetaWhatsAppMessageProvider) getJSON(ctx context.Context, url, accessToken string, dest any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build whatsapp request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("call whatsapp api: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read whatsapp response: %w", err)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return buildWhatsAppAPIError(resp.StatusCode, body)
+	}
+	return json.Unmarshal(body, dest)
+}
+
 func (p *MetaWhatsAppMessageProvider) resolveCredentials(ctx context.Context, tenantID string) (string, string, error) {
 	trimmedTenantID := strings.TrimSpace(tenantID)
 	if trimmedTenantID != "" && p.accountRepository != nil {

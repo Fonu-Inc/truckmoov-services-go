@@ -77,6 +77,20 @@ type DeliveryEventPublisher interface {
 	PublishDeliveryUpdated(ctx context.Context, event domain.MessageDeliveryUpdated) error
 }
 
+// WhatsAppMediaDownloader fetches the bytes behind an inbound media message.
+// The webhook only ever carries Meta's media id — the message itself never
+// includes the image.
+type WhatsAppMediaDownloader interface {
+	DownloadMedia(ctx context.Context, tenantID, mediaID string) (data []byte, contentType string, err error)
+}
+
+// WaybillCaptureClient hands a downloaded WhatsApp image to fleet as a
+// waybill. Fleet resolves the sender to a driver itself, so this only carries
+// the phone number, not a driver id.
+type WaybillCaptureClient interface {
+	CaptureWaybillFromWhatsApp(ctx context.Context, tenantID string, image []byte, filename, contentType, senderPhone string) error
+}
+
 type CreateDriverStatusRequestFromWhatsAppCommand struct {
 	TenantID        string
 	JobID           string
