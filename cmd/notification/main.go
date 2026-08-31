@@ -234,6 +234,7 @@ func main() {
 	)
 
 	consumeNotificationUseCase := application.NewConsumeNotificationUseCase(sendMessageUseCase, log)
+	consumeJobOfferNotificationUseCase := application.NewConsumeJobOfferNotificationUseCase(sendMessageUseCase, log)
 	dispatchAlertUseCase := application.NewDispatchAlertUseCase(alertSettingsReader, sendMessageUseCase, log)
 	// Platform alerts ride the system tenant, so they are a separate subject
 	// from a tenant's own notifications and a separate consumer.
@@ -243,6 +244,12 @@ func main() {
 
 	if _, subErr := bus.Subscribe(ctx, "tm.*.notification.send", "notification-send", consumeNotificationUseCase.Handle); subErr != nil {
 		log.Warn("notification_subscribe_failed", "error", subErr.Error())
+	}
+	if _, subErr := bus.Subscribe(ctx, "tm.*.job.offer.created", "job-offer-created-notifications", consumeJobOfferNotificationUseCase.Handle); subErr != nil {
+		log.Error("job_offer_created_subscribe_failed", "error", subErr.Error())
+	}
+	if _, subErr := bus.Subscribe(ctx, "tm.*.job.offer.responded", "job-offer-responded-notifications", consumeJobOfferNotificationUseCase.Handle); subErr != nil {
+		log.Error("job_offer_responded_subscribe_failed", "error", subErr.Error())
 	}
 
 	listDeliveryLogUseCase := application.NewListDeliveryLogUseCase(deliveryLogRepository)
