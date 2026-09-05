@@ -242,6 +242,7 @@ type Handler struct {
 	listSettlementsUseCase        *application.ListSettlementsUseCase
 	paySettlementUseCase          *application.PaySettlementUseCase
 	listAggregatorActivityUseCase *application.ListAggregatorActivityUseCase
+	activeJobsMapUseCase          *application.ActiveJobsMapUseCase
 }
 
 // WithAggregator attaches the aggregator network overview use cases. A
@@ -285,6 +286,11 @@ func (h *Handler) WithAggregator(
 // A builder rather than more constructor arguments, matching the notification
 // service's WithCampaigns: the offer routes report unconfigured when this is
 // never called, so a deployment can start without it.
+func (h *Handler) WithActiveJobsMap(useCase *application.ActiveJobsMapUseCase) *Handler {
+	h.activeJobsMapUseCase = useCase
+	return h
+}
+
 func (h *Handler) WithJobOffers(
 	create *application.CreateJobOfferUseCase,
 	accept *application.AcceptJobOfferUseCase,
@@ -369,6 +375,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/docs/dispatch/openapi.json", h.docsOpenAPI)
 	mux.HandleFunc("/dispatch/jobs", h.jobsCollection)
 	mux.HandleFunc("/dispatch/jobs/summary", h.jobsSummary)
+	mux.HandleFunc("/dispatch/jobs/map", h.activeJobsMap)
 	mux.HandleFunc("/dispatch/jobs/", h.jobResource)
 	mux.HandleFunc("/dispatch/routes/optimize", h.optimizeRoute)
 	// Legacy contract kept for existing integrations that publish status events directly.
@@ -596,6 +603,35 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": h.enrichJobs(r.Context(), tenantID, jobs)})
+}
+
+// activeJobsMap serves the live delivery map: active jobs, their stops in
+// order, and the route geometry between them.
+func (h *Handler) activeJobsMap(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if h.activeJobsMapUseCase == nil {
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "active jobs map is not configured"})
+		return
+	}
+
+	tenantID, ok := h.requireTenantID(w, r)
+	if !ok {
+		return
+	}
+	if rejectClientTenantQuery(w, r) {
+		return
+	}
+
+	result, err := h.activeJobsMapUseCase.Execute(r.Context(), tenantID)
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": result})
 }
 
 // parseOptionalFloat returns a pointer to the parsed value, or nil when the

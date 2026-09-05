@@ -277,6 +277,111 @@ func (v *ValhallaClient) GetTurnByTurnDirections(ctx context.Context, payload []
 	return &output, nil
 }
 
+// RouteShape returns the encoded polyline for a drive through the given points
+// in the order supplied. Unlike OptimizeRoute it neither reorders stops nor
+// consults the solver: the overview map draws the route a driver was already
+// given, so ordering is an input, not a question.
+func (v *ValhallaClient) RouteShape(ctx context.Context, points []ValhallaLocStruct) (string, string, error) {
+	if len(points) < 2 {
+		return "", "", fmt.Errorf("valhalla route requires at least two points")
+	}
+
+	input := OptimizeRouteInput{
+		Locations:      points,
+		Costing:        "truck",
+		Units:          "kilometers",
+		DirectionsType: "none",
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		return "", "", fmt.Errorf("marshal valhalla shape request: %w", err)
+	}
+
+	endpoint := v.baseUrl + "/route?json=" + url.QueryEscape(string(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("create valhalla shape request: %w", err)
+	}
+
+	resp, err := v.httpClient.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("call valhalla shape service: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("valhalla shape returned status %s", resp.Status)
+	}
+
+	var output ValhallaRouteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&output); err != nil {
+		return "", "", fmt.Errorf("decode valhalla shape response: %w", err)
+	}
+	if output.Error != "" {
+		return "", "", fmt.Errorf("valhalla shape error: %s", output.Error)
+	}
+
+	// One encoded polyline per leg. They are returned separately rather than
+	// concatenated: joining two encoded strings does not produce a valid
+	// polyline, and the client draws legs individually anyway.
+	shapes := make([]string, 0, len(output.Trip.Legs))
+	for _, leg := range output.Trip.Legs {
+		if leg.Shape != "" {
+			shapes = append(shapes, leg.Shape)
+		}
+	}
+	if len(shapes) == 0 {
+		return "", "", fmt.Errorf("valhalla shape response carried no geometry")
+	}
+
+	return strings.Join(shapes, ";"), "polyline6", nil
+}
+
+// RouteEstimate returns the routed duration in seconds and distance in
+// kilometres for the given ordered points.
+func (v *ValhallaClient) RouteEstimate(ctx context.Context, points []ValhallaLocStruct) (int64, float64, error) {
+	if len(points) < 2 {
+		return 0, 0, fmt.Errorf("valhalla estimate requires at least two points")
+	}
+
+	input := OptimizeRouteInput{
+		Locations:      points,
+		Costing:        "truck",
+		Units:          "kilometers",
+		DirectionsType: "none",
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		return 0, 0, fmt.Errorf("marshal valhalla estimate request: %w", err)
+	}
+
+	endpoint := v.baseUrl + "/route?json=" + url.QueryEscape(string(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("create valhalla estimate request: %w", err)
+	}
+
+	resp, err := v.httpClient.Do(req)
+	if err != nil {
+		return 0, 0, fmt.Errorf("call valhalla estimate service: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, 0, fmt.Errorf("valhalla estimate returned status %s", resp.Status)
+	}
+
+	var output ValhallaRouteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&output); err != nil {
+		return 0, 0, fmt.Errorf("decode valhalla estimate response: %w", err)
+	}
+	if output.Error != "" {
+		return 0, 0, fmt.Errorf("valhalla estimate error: %s", output.Error)
+	}
+
+	return int64(math.Round(output.Trip.Summary.Time)), output.Trip.Summary.Length, nil
+}
+
 func (v *ValhallaClient) GetLegAlternates(ctx context.Context, from, to SolverNodeRef, alternates int) ([]ValhallaRouteLeg, error) {
 	if alternates <= 0 {
 		return nil, nil

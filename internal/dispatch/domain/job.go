@@ -40,6 +40,17 @@ type JobStop struct {
 	Notes        string   `json:"notes,omitempty"`
 }
 
+// JobPunctuality records how a delivered job met its deadline. Stored at
+// completion rather than recomputed later: the traffic that made a driver late
+// is not observable after the fact.
+type JobPunctuality struct {
+	Deadline                time.Time `json:"deadline"`
+	CompletedAt             time.Time `json:"completed_at"`
+	TrafficAllowanceSeconds int64     `json:"traffic_allowance_seconds"`
+	LatenessSeconds         int64     `json:"lateness_seconds"`
+	OnTime                  bool      `json:"on_time"`
+}
+
 type JobTimeWindow struct {
 	PickupStart  *time.Time `json:"pickup_start,omitempty"`
 	PickupEnd    *time.Time `json:"pickup_end,omitempty"`
@@ -119,6 +130,7 @@ type Job struct {
 	PODAttachments          []JobPODAttachment    `json:"pod_attachments"`
 	DriverStatusRequests    []DriverStatusRequest `json:"driver_status_requests"`
 	Timeline                []JobTimelineEntry    `json:"timeline"`
+	Punctuality             *JobPunctuality       `json:"punctuality,omitempty"`
 	CreatedAt               time.Time             `json:"created_at"`
 	UpdatedAt               time.Time             `json:"updated_at"`
 }

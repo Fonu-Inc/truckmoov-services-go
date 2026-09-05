@@ -161,6 +161,15 @@ type JobLifecycleUseCase struct {
 	clock         Clock
 	idGenerator   IDGenerator
 	defaultTenant string
+	estimator     RouteEstimator
+}
+
+// WithRouteEstimator enables punctuality capture on delivery. Optional: without
+// it a delivered job still records deadline adherence, just with no traffic
+// allowance.
+func (u *JobLifecycleUseCase) WithRouteEstimator(estimator RouteEstimator) *JobLifecycleUseCase {
+	u.estimator = estimator
+	return u
 }
 
 func NewJobLifecycleUseCase(
@@ -425,9 +434,13 @@ func (u *JobLifecycleUseCase) UpdateJobStatus(ctx context.Context, command Updat
 	}
 
 	previousStatus := job.Status
-	updatedJob, err := job.UpdateStatus(status, u.clock.Now(), u.idGenerator.New())
+	completedAt := u.clock.Now()
+	updatedJob, err := job.UpdateStatus(status, completedAt, u.idGenerator.New())
 	if err != nil {
 		return domain.Job{}, err
+	}
+	if updatedJob.Status == domain.StatusDelivered && updatedJob.Punctuality == nil {
+		updatedJob.Punctuality = BuildJobPunctuality(ctx, updatedJob, completedAt, u.estimator)
 	}
 	if err := u.repository.Save(updatedJob); err != nil {
 		return domain.Job{}, fmt.Errorf("save job status: %w", err)

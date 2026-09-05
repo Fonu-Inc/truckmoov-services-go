@@ -125,6 +125,31 @@ func main() {
 		cfg.DefaultTenant,
 		routeOptimizer,
 	)
+
+	// The overview map only needs geometry through stops a driver already has,
+	// so it talks to Valhalla directly rather than through the solver.
+	var routeShaper application.RouteShaper
+	if cfg.ValhallaURL != "" {
+		routeShaper = infrastructure.NewValhallaRouteShaper(infrastructure.NewValhallaClient(cfg.ValhallaURL))
+	} else {
+		log.Warn("active_jobs_map_geometry_disabled", "detail", "VALHALLA_URL is empty; the overview map returns stops without route lines")
+	}
+	if routeShaper != nil {
+		// Punctuality is measured once, at delivery, against a traffic-aware
+		// estimate. Doing it later would score a driver against traffic that
+		// was not there when they drove.
+		if shaper, ok := routeShaper.(application.RouteEstimator); ok {
+			jobLifecycleUseCase = jobLifecycleUseCase.WithRouteEstimator(shaper)
+		}
+	}
+
+	activeJobsMapUseCase := application.NewActiveJobsMapUseCase(
+		jobRepository,
+		infrastructure.SystemClock{},
+		cfg.DefaultTenant,
+		time.Duration(cfg.ActiveJobsMapCacheSeconds)*time.Second,
+		routeShaper,
+	)
 	jobInstructionSender := infrastructure.NewNotificationJobInstructionSender(cfg.NotificationServiceURL, cfg.JWTSecret, nil)
 	sendJobInstructionUseCase := application.NewSendJobInstructionUseCase(
 		jobRepository,
@@ -266,6 +291,7 @@ func main() {
 		activitylog.NewPublisher(bus),
 		fleetClient,
 	)
+	handler = handler.WithActiveJobsMap(activeJobsMapUseCase)
 	handler = handler.WithJobOffers(
 		createJobOfferUseCase,
 		acceptJobOfferUseCase,

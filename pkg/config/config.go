@@ -90,9 +90,12 @@ type Config struct {
 	// enforcement is safe to turn on.
 	RouteSolverAuthToken string
 	ValhallaURL          string
-	NtfyErrorTopicURL    string
-	NtfyErrorAuthToken   string
-	FleetServiceURL      string
+	// How long a computed overview-map route line is reused before Valhalla is
+	// asked again. Stops rarely change mid-job, so this is a cache, not a limit.
+	ActiveJobsMapCacheSeconds int
+	NtfyErrorTopicURL         string
+	NtfyErrorAuthToken        string
+	FleetServiceURL           string
 }
 
 func Load(serviceName, defaultPort string) Config {
@@ -153,15 +156,16 @@ func Load(serviceName, defaultPort string) Config {
 		SMTPPassword:               getEnv("SMTP_PASSWORD", ""),
 		// MAIL_FROM is what the auth service's mailer already reads, so both
 		// services send from one configured address.
-		SMTPFromAddress:      getFirstEnv([]string{"MAIL_FROM", "SMTP_FROM_ADDRESS"}, ""),
-		SMTPFromName:         getEnv("SMTP_FROM_NAME", "TruckMoov"),
-		RouteSolverAddr:      getEnv("ROUTE_SOLVER_ADDR", ""),
-		RouteSolverAuthToken: getEnv("ROUTE_SOLVER_AUTH_TOKEN", ""),
-		ValhallaURL:          getEnv("VALHALLA_URL", "http://valhalla:8002"),
-		NtfyErrorTopicURL:    getEnv("NTFY_ERROR_TOPIC_URL", ""),
-		NtfyErrorAuthToken:   getEnv("NTFY_ERROR_AUTH_TOKEN", ""),
-		FleetServiceURL:      getEnv("FLEET_SERVICE_URL", "http://fleet-service:3002"),
-		CORSEnabled:          getEnvBoolStrict("SERVICE_CORS_ENABLED", false),
+		SMTPFromAddress:           getFirstEnv([]string{"MAIL_FROM", "SMTP_FROM_ADDRESS"}, ""),
+		SMTPFromName:              getEnv("SMTP_FROM_NAME", "TruckMoov"),
+		RouteSolverAddr:           getEnv("ROUTE_SOLVER_ADDR", ""),
+		RouteSolverAuthToken:      getEnv("ROUTE_SOLVER_AUTH_TOKEN", ""),
+		ValhallaURL:               getEnv("VALHALLA_URL", "http://valhalla:8002"),
+		ActiveJobsMapCacheSeconds: getEnvInt("ACTIVE_JOBS_MAP_CACHE_SECONDS", 300),
+		NtfyErrorTopicURL:         getEnv("NTFY_ERROR_TOPIC_URL", ""),
+		NtfyErrorAuthToken:        getEnv("NTFY_ERROR_AUTH_TOKEN", ""),
+		FleetServiceURL:           getEnv("FLEET_SERVICE_URL", "http://fleet-service:3002"),
+		CORSEnabled:               getEnvBoolStrict("SERVICE_CORS_ENABLED", false),
 		CORSOrigins: parseCSVEnv(
 			"CORS_ALLOWED_ORIGINS",
 			"http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000",
