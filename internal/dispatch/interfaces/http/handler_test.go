@@ -185,7 +185,7 @@ func TestHandler_UpdateStatusContract(t *testing.T) {
 	)
 
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	res := dispatchRequest(t, mux, http.MethodPost, "/dispatch/jobs/status", `{"job_id":"job-1","new_status":"assigned"}`)
 
@@ -205,7 +205,7 @@ func TestHandler_UpdateStatusContract(t *testing.T) {
 func TestHandler_ListJobsContract(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	for _, body := range []string{
 		`{
@@ -278,7 +278,7 @@ func TestHandler_ListJobsContract(t *testing.T) {
 func TestHandler_JobLifecycleContract(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -439,7 +439,7 @@ func TestHandler_JobLifecycleContract(t *testing.T) {
 func TestHandler_SendWhatsAppInstructionContract(t *testing.T) {
 	handler, sender := buildDispatchTestHandlerWithSender()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -531,7 +531,7 @@ func TestHandler_SendWhatsAppInstructionContract(t *testing.T) {
 func TestHandler_SendJobInstructionRejectsMismatchedDriver(t *testing.T) {
 	handler, _ := buildDispatchTestHandlerWithSender()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -582,7 +582,7 @@ func TestHandler_SendJobInstructionRejectsMismatchedDriver(t *testing.T) {
 func TestHandler_SendJobInstructionRejectsJobPastAssigned(t *testing.T) {
 	handler, sender := buildDispatchTestHandlerWithSender()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -647,7 +647,7 @@ func TestHandler_SendJobInstructionRejectsJobPastAssigned(t *testing.T) {
 func TestHandler_SendJobInstructionRejectsMismatchedStoredPhone(t *testing.T) {
 	handler, _ := buildDispatchTestHandlerWithSender()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -698,7 +698,7 @@ func TestHandler_SendJobInstructionRejectsMismatchedStoredPhone(t *testing.T) {
 func TestHandler_DriverStatusRequestWorkflow(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -798,7 +798,7 @@ func TestHandler_DriverStatusRequestWorkflow(t *testing.T) {
 func TestHandler_UpdateJobStatusRequiresDispatcherRole(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -836,7 +836,7 @@ func TestHandler_UpdateJobStatusRequiresDispatcherRole(t *testing.T) {
 func TestHandler_CreateJobAlternateFlatPayloadStillAccepted(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -881,7 +881,7 @@ func TestHandler_CreateJobAlternateFlatPayloadStillAccepted(t *testing.T) {
 func TestHandler_CreateJobLegacyPayloadStillAccepted(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -911,7 +911,7 @@ func TestHandler_CreateJobLegacyPayloadStillAccepted(t *testing.T) {
 func TestHandler_AddPODBeforeDeliveryRejected(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -939,7 +939,7 @@ func TestHandler_AddPODBeforeDeliveryRejected(t *testing.T) {
 func TestHandler_DocsContract(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	for _, path := range []string{"/dispatch/docs", "/docs/dispatch"} {
 		res := dispatchRequest(t, mux, http.MethodGet, path, "")
@@ -970,7 +970,7 @@ func TestHandler_DocsContract(t *testing.T) {
 func TestHandler_JobsSummaryCountsByStatus(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	body := `{"pickupLocation":"A","deliveryLocation":"B"}`
 	if res := dispatchRequest(t, mux, http.MethodPost, "/dispatch/jobs", body); res.Code != http.StatusCreated {
@@ -1004,7 +1004,7 @@ func TestHandler_JobsSummaryCountsByStatus(t *testing.T) {
 func TestHandler_OptimizeRouteSingleJobContract(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -1057,7 +1057,7 @@ func TestHandler_OptimizeRouteSingleJobContract(t *testing.T) {
 func TestHandler_OptimizeRouteContract(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	for _, body := range []string{
 		`{"job_id":"job-a","pickup":{"address":"Apapa","latitude":6.4500,"longitude":3.3600},"dropoff":{"address":"Victoria Island","latitude":6.4281,"longitude":3.4219},"priority":"normal"}`,
@@ -1100,7 +1100,7 @@ func TestHandler_OptimizeRouteContract(t *testing.T) {
 func TestHandler_OptimizeRouteConstraintViolationReported(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -1151,7 +1151,7 @@ func TestHandler_OptimizeRouteConstraintViolationReported(t *testing.T) {
 func TestHandler_CreateJobRejectsClientTenantField(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 	authHeader := map[string]string{"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "tenant-from-token", "DISPATCHER")}
 
@@ -1178,7 +1178,7 @@ func TestHandler_CreateJobRejectsClientTenantField(t *testing.T) {
 func TestHandler_CreateAndListJobsUseTokenTenant(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 	authHeader := map[string]string{"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "tenant-from-token", "DISPATCHER")}
 
@@ -1231,7 +1231,7 @@ func TestHandler_CreateAndListJobsUseTokenTenant(t *testing.T) {
 func TestHandler_ListJobsRejectsTenantQuery(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 	authHeader := map[string]string{"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "tenant-from-token", "DISPATCHER")}
 
@@ -1244,7 +1244,7 @@ func TestHandler_ListJobsRejectsTenantQuery(t *testing.T) {
 func TestHandler_UpdateJobDetailsContract(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -1300,7 +1300,7 @@ func TestHandler_UpdateJobDetailsContract(t *testing.T) {
 func TestHandler_UpdateJobDetailsNotFound(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	patchRes := dispatchRequest(
 		t,
@@ -1317,7 +1317,7 @@ func TestHandler_UpdateJobDetailsNotFound(t *testing.T) {
 func TestHandler_DeleteJobContract(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -1345,7 +1345,7 @@ func TestHandler_DeleteJobContract(t *testing.T) {
 func TestHandler_DeleteJobNotFound(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	deleteRes := dispatchRequest(t, mux, http.MethodDelete, "/dispatch/jobs/does-not-exist", "")
 	if deleteRes.Code != http.StatusNotFound {
@@ -1356,7 +1356,7 @@ func TestHandler_DeleteJobNotFound(t *testing.T) {
 func TestHandler_JobsSummaryIncludesTotalValueNgn(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	for _, body := range []string{
 		`{"pickupLocation":"A","deliveryLocation":"B","amount":100000}`,
@@ -1393,7 +1393,7 @@ func TestHandler_JobsSummaryIncludesTotalValueNgn(t *testing.T) {
 func TestHandler_CreateJobWithStopsIncludedInResponse(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,
@@ -1428,7 +1428,7 @@ func TestHandler_CreateJobWithStopsIncludedInResponse(t *testing.T) {
 func TestHandler_JobResourceBarePathGetAndMethodNotAllowed(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	createRes := dispatchRequest(
 		t,

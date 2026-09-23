@@ -34,7 +34,7 @@ func (b *Bridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	claims, ok := httpx.ParseToken(token, b.userTokens)
 	if !ok || claims.TenantID != identity.SystemTenantID || (claims.Role != "SUPER_ADMIN" && claims.Role != "SYSTEM_ADMIN") {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		http.NotFound(w, r)
 		return
 	}
 

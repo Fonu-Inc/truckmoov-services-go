@@ -69,20 +69,20 @@ func NewHandler(
 	}
 }
 
-func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/tracking/health", h.health)
-	mux.HandleFunc("/tracking/docs", h.docsUI)
-	mux.HandleFunc("/tracking/docs/openapi.json", h.docsOpenAPI)
-	mux.HandleFunc("/docs/tracking", h.docsUI)
-	mux.HandleFunc("/docs/tracking/openapi.json", h.docsOpenAPI)
-	mux.Handle("/tracking/ingest", h.withAPIKey(http.HandlerFunc(h.ingest)))
-	mux.Handle("/tracking/ingest/vendor/", h.withAPIKey(http.HandlerFunc(h.ingestVendor)))
-	mux.HandleFunc("/tracking/alerts", h.alert)
-	mux.HandleFunc("/tracking/vehicles", h.listVehicles)
-	mux.HandleFunc("/tracking/vehicles/", h.vehiclesResource)
-	mux.HandleFunc("/tracking/devices/", h.deviceResource)
-	mux.HandleFunc("/tracking/ws", h.wsBridge.ServeHTTP)
-	mux.HandleFunc("/health", h.health)
+func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
+	routes.HandleFunc("/tracking/health", []httpx.Audience{httpx.Public}, h.health)
+	routes.HandleFunc("/tracking/docs", []httpx.Audience{httpx.Public}, h.docsUI)
+	routes.HandleFunc("/tracking/docs/openapi.json", []httpx.Audience{httpx.Public}, h.docsOpenAPI)
+	routes.HandleFunc("/docs/tracking", []httpx.Audience{httpx.Public}, h.docsUI)
+	routes.HandleFunc("/docs/tracking/openapi.json", []httpx.Audience{httpx.Public}, h.docsOpenAPI)
+	routes.Handle("/tracking/ingest", []httpx.Audience{httpx.Public}, h.withAPIKey(http.HandlerFunc(h.ingest)))
+	routes.Handle("/tracking/ingest/vendor/", []httpx.Audience{httpx.Public}, h.withAPIKey(http.HandlerFunc(h.ingestVendor)))
+	routes.HandleFunc("/tracking/alerts", []httpx.Audience{httpx.Tenant}, h.alert)
+	routes.HandleFunc("/tracking/vehicles", []httpx.Audience{httpx.Tenant, httpx.Service}, h.listVehicles)
+	routes.HandleFunc("/tracking/vehicles/", []httpx.Audience{httpx.Tenant}, h.vehiclesResource)
+	routes.HandleFunc("/tracking/devices/", []httpx.Audience{httpx.Tenant}, h.deviceResource)
+	routes.HandleFunc("/tracking/ws", []httpx.Audience{httpx.Admin}, h.wsBridge.ServeHTTP)
+	routes.HandleFunc("/health", []httpx.Audience{httpx.Public}, h.health)
 }
 
 func (h *Handler) withAPIKey(next http.Handler) http.Handler {

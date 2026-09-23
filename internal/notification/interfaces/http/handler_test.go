@@ -306,7 +306,7 @@ func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvi
 		testWhatsAppAppSecret,
 	)
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 	return httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me")), templateProvider, provider, clock, outboxRepository, driverStatusRequestSender, activityPublisher
 }
 

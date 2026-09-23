@@ -97,7 +97,7 @@ func TestHandler_IngestContract(t *testing.T) {
 	handler, _ := buildTrackingTestHandler()
 
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	body := bytes.NewBufferString(`{"vehicle_id":"vehicle-1","device_id":"device-1","lat":6.5,"lng":3.4}`)
 	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", body)
@@ -123,22 +123,23 @@ func TestHandler_WebsocketPlaceholderContract(t *testing.T) {
 	handler, _ := buildTrackingTestHandler()
 
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/tracking/ws", nil)
 	res := httptest.NewRecorder()
 
 	mux.ServeHTTP(res, req)
 
-	if res.Code != http.StatusForbidden {
-		t.Fatalf("expected status %d, got %d", http.StatusForbidden, res.Code)
+	// Refused exactly as a path that does not exist.
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, res.Code)
 	}
 }
 
 func TestHandler_ListVehiclesContract(t *testing.T) {
 	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
 	body := bytes.NewBufferString(`{"tenant_id":"tenant-1","vehicle_id":"vehicle-1","device_id":"device-1","lat":6.5,"lng":3.4}`)
@@ -174,7 +175,7 @@ func TestHandler_ListVehiclesContract(t *testing.T) {
 func TestHandler_VehicleHistoryContract(t *testing.T) {
 	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
 	lines := []string{
@@ -220,7 +221,7 @@ func TestHandler_VehicleHistoryContract(t *testing.T) {
 func TestHandler_ListVehiclesRejectsTenantQuery(t *testing.T) {
 	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
 	body := bytes.NewBufferString(`{"tenant_id":"tenant-1","vehicle_id":"vehicle-1","device_id":"device-1","lat":6.5,"lng":3.4}`)
@@ -244,7 +245,7 @@ func TestHandler_ListVehiclesRejectsTenantQuery(t *testing.T) {
 func TestHandler_AlertPublishesActivity(t *testing.T) {
 	handler, activityPublisher := buildTrackingTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
 	body := bytes.NewBufferString(`{"tenant_id":"tenant-7","alert_type":"geofence_breach","severity":"high","vehicle_id":"vehicle-7","job_id":"job-7"}`)
@@ -279,7 +280,7 @@ func TestHandler_AlertPublishesActivity(t *testing.T) {
 func TestAlert_RequiresAuth(t *testing.T) {
 	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
 	body := bytes.NewBufferString(`{"tenant_id":"tenant-7","alert_type":"geofence_breach","severity":"high","vehicle_id":"vehicle-7","job_id":"job-7"}`)
@@ -297,7 +298,7 @@ func TestAlert_RequiresAuth(t *testing.T) {
 func TestHandler_DocsContract(t *testing.T) {
 	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
 	for _, path := range []string{"/tracking/docs", "/docs/tracking"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
