@@ -111,3 +111,19 @@ func TestARouteWithNoAudienceCannotBeRegistered(t *testing.T) {
 	}()
 	NewRoutes(http.NewServeMux(), true, nil, nil).HandleFunc("/x", nil, ok)
 }
+
+// The portals refresh a token on 401; answering an expired one with 404
+// would log users out instead.
+func TestAnExpiredTokenIsToldToRefresh(t *testing.T) {
+	routes, mux, _ := buildRoutes(true)
+	req := httptest.NewRequest(http.MethodGet, "/t", nil)
+	req.Header.Set("Authorization", "Bearer expired")
+	res := httptest.NewRecorder()
+
+	mux.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", res.Code)
+	}
+	_ = routes
+}

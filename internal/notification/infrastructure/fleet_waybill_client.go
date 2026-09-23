@@ -57,7 +57,7 @@ func (c *FleetWaybillClient) CaptureWaybillFromWhatsApp(ctx context.Context, ten
 		return fmt.Errorf("close waybill form: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/waybills/upload?source=whatsapp", &body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/fleet/waybills/upload?source=whatsapp", &body)
 	if err != nil {
 		return fmt.Errorf("build waybill request: %w", err)
 	}

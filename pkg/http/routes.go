@@ -81,6 +81,12 @@ func (r *Routes) guard(audiences []Audience, next http.Handler) http.Handler {
 			next.ServeHTTP(r.hidingForbidden(w, req, caller), req)
 			return
 		}
+		// A token was presented and did not verify, most often because it
+		// expired. 401 is what tells the portal to refresh it.
+		if r.enforce && caller == Public && presentsCredentials(req) {
+			writeUnauthorized(w, "missing or invalid authorization")
+			return
+		}
 		r.refused(req, caller)
 		if !r.enforce {
 			next.ServeHTTP(w, req)
@@ -107,6 +113,10 @@ func (r *Routes) refused(req *http.Request, caller Audience) {
 	if r.report != nil {
 		r.report(refusal)
 	}
+}
+
+func presentsCredentials(req *http.Request) bool {
+	return req.Header.Get("Authorization") != "" || req.Header.Get(identity.ServiceTokenHeader) != ""
 }
 
 func admits(audiences []Audience, caller Audience) bool {
