@@ -17,6 +17,7 @@ import (
 	"github.com/truckmoov/services-go/pkg/config"
 	"github.com/truckmoov/services-go/pkg/eventbus"
 	httpx "github.com/truckmoov/services-go/pkg/http"
+	"github.com/truckmoov/services-go/pkg/identity"
 	"github.com/truckmoov/services-go/pkg/logger"
 	"github.com/truckmoov/services-go/pkg/otel"
 	redisstore "github.com/truckmoov/services-go/pkg/redis"
@@ -37,6 +38,7 @@ func main() {
 	if cfg.UsingDefaultJWTSecret() {
 		log.Warn("jwt_secret_default", "detail", "JWT_SECRET is unset or the default placeholder; set it before running in production")
 	}
+	serviceCaller := cfg.ServiceCaller()
 	userTokens, err := cfg.UserTokenVerifier()
 	if err != nil {
 		log.Error("user_token_keys_invalid", "error", err.Error())
@@ -145,6 +147,17 @@ func main() {
 	}
 
 	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, deviceTelemetryQueryUseCase, cfg.GPSAPIKey, userTokens, activityPublisher)
+	accessClient := identity.NewAccessClient(cfg.AuthServiceURL, serviceCaller)
+	if broadcaster, ok := bus.(eventbus.Broadcaster); ok {
+		if _, subErr := broadcaster.SubscribeEveryInstance(identity.AccessChangedSubject, func(_ context.Context, e eventbus.EventEnvelope) error {
+			if userID, ok := e.Data["userId"].(string); ok {
+				accessClient.Forget(userID)
+			}
+			return nil
+		}); subErr != nil {
+			log.Warn("access_changed_subscribe_failed", "error", subErr.Error())
+		}
+	}
 	mux := http.NewServeMux()
 	routes := httpx.NewRoutes(mux, cfg.PortalEnforced, log, httpx.RefusalPublisher(bus, "tracking"))
 	handler.RegisterRoutes(routes)
@@ -166,7 +179,7 @@ func main() {
 		handlerWithCORS = httpx.WithCORS(handlerWithCORS, cfg.CORSOrigins)
 	}
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
-	handlerWithCORS = httpx.WithAuthContext(httpx.WithServiceCallers(handlerWithCORS, cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
+	handlerWithCORS = httpx.WithAuthContext(httpx.WithServiceCallers(httpx.WithCurrentAccess(handlerWithCORS, accessClient), cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
 		"fleet": "FLEET_ADMIN",
 	}), userTokens)
 	handlerWithCORS = httpx.WithErrorAlerts(handlerWithCORS, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)

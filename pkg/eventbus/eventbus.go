@@ -198,6 +198,29 @@ func (b *natsEventBus) Ping(ctx context.Context) error {
 	return b.nc.FlushTimeout(timeout)
 }
 
+// Broadcaster delivers every message to every running instance and keeps
+// nothing for one that was down: for dropping in-memory caches, not for work
+// that must happen once.
+type Broadcaster interface {
+	SubscribeEveryInstance(subject string, handler Handler) (Subscription, error)
+}
+
+func (b *natsEventBus) SubscribeEveryInstance(subject string, handler Handler) (Subscription, error) {
+	sub, err := b.nc.Subscribe(subject, func(msg *nats.Msg) {
+		var envelope EventEnvelope
+		if json.Unmarshal(msg.Data, &envelope) != nil {
+			return
+		}
+		if handleErr := handler(context.Background(), envelope); handleErr != nil {
+			b.log.Warn("event_handler_failed", "error", handleErr.Error(), "subject", subject)
+		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("subscribe to %s: %w", subject, err)
+	}
+	return sub, nil
+}
+
 func (b *natsEventBus) Close() error {
 	if b.nc == nil {
 		return nil

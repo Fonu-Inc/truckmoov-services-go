@@ -19,6 +19,7 @@ import (
 	"github.com/truckmoov/services-go/pkg/config"
 	"github.com/truckmoov/services-go/pkg/eventbus"
 	httpx "github.com/truckmoov/services-go/pkg/http"
+	"github.com/truckmoov/services-go/pkg/identity"
 	"github.com/truckmoov/services-go/pkg/logger"
 	"github.com/truckmoov/services-go/pkg/otel"
 	"google.golang.org/grpc"
@@ -322,6 +323,17 @@ func main() {
 		complianceSnapshotUseCase,
 	)
 
+	accessClient := identity.NewAccessClient(cfg.AuthServiceURL, serviceCaller)
+	if broadcaster, ok := bus.(eventbus.Broadcaster); ok {
+		if _, subErr := broadcaster.SubscribeEveryInstance(identity.AccessChangedSubject, func(_ context.Context, e eventbus.EventEnvelope) error {
+			if userID, ok := e.Data["userId"].(string); ok {
+				accessClient.Forget(userID)
+			}
+			return nil
+		}); subErr != nil {
+			log.Warn("access_changed_subscribe_failed", "error", subErr.Error())
+		}
+	}
 	mux := http.NewServeMux()
 	routes := httpx.NewRoutes(mux, cfg.PortalEnforced, log, httpx.RefusalPublisher(bus, "dispatch"))
 	handler.RegisterRoutes(routes)
@@ -343,7 +355,7 @@ func main() {
 		handlerWithCORS = httpx.WithCORS(handlerWithCORS, cfg.CORSOrigins)
 	}
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
-	handlerWithCORS = httpx.WithAuthContext(httpx.WithServiceCallers(handlerWithCORS, cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
+	handlerWithCORS = httpx.WithAuthContext(httpx.WithServiceCallers(httpx.WithCurrentAccess(handlerWithCORS, accessClient), cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
 		"fleet":        "DISPATCHER",
 		"notification": "DISPATCHER",
 	}), userTokens)

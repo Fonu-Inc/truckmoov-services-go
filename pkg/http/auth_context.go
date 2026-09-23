@@ -20,6 +20,9 @@ type AuthClaims struct {
 	Expires  time.Time
 	// Service names the calling service when the request is a service call.
 	Service string
+	// Permissions is what the user may do right now, from auth; nil when
+	// auth could not be asked.
+	Permissions []string
 }
 
 // WithAuthContext attaches the caller's claims when the request carries a
@@ -73,7 +76,10 @@ func ClaimsFromRequest(r *http.Request) (*AuthClaims, bool) {
 		return nil, false
 	}
 	claims, ok := r.Context().Value(authClaimsContextKey{}).(*AuthClaims)
-	return claims, ok
+	if !ok || claims == nil {
+		return nil, false
+	}
+	return claims, true
 }
 
 func TenantIDFromRequest(r *http.Request) string {

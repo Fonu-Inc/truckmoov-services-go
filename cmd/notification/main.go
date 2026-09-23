@@ -18,6 +18,7 @@ import (
 	"github.com/truckmoov/services-go/pkg/config"
 	"github.com/truckmoov/services-go/pkg/eventbus"
 	httpx "github.com/truckmoov/services-go/pkg/http"
+	"github.com/truckmoov/services-go/pkg/identity"
 	"github.com/truckmoov/services-go/pkg/logger"
 	"github.com/truckmoov/services-go/pkg/otel"
 	redisstore "github.com/truckmoov/services-go/pkg/redis"
@@ -336,6 +337,17 @@ func main() {
 		suppressRecipientUseCase,
 	)
 
+	accessClient := identity.NewAccessClient(cfg.AuthServiceURL, serviceCaller)
+	if broadcaster, ok := bus.(eventbus.Broadcaster); ok {
+		if _, subErr := broadcaster.SubscribeEveryInstance(identity.AccessChangedSubject, func(_ context.Context, e eventbus.EventEnvelope) error {
+			if userID, ok := e.Data["userId"].(string); ok {
+				accessClient.Forget(userID)
+			}
+			return nil
+		}); subErr != nil {
+			log.Warn("access_changed_subscribe_failed", "error", subErr.Error())
+		}
+	}
 	mux := http.NewServeMux()
 	routes := httpx.NewRoutes(mux, cfg.PortalEnforced, log, httpx.RefusalPublisher(bus, "notification"))
 	handler.RegisterRoutes(routes)
@@ -351,7 +363,7 @@ func main() {
 	routes.Handle("/ready", []httpx.Audience{httpx.Public}, readiness)
 	routes.Handle("/notify/ready", []httpx.Audience{httpx.Public}, readiness)
 
-	handlerWithAuth := httpx.WithAuthContext(httpx.WithServiceCallers(metrics.Middleware(mux), cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
+	handlerWithAuth := httpx.WithAuthContext(httpx.WithServiceCallers(httpx.WithCurrentAccess(metrics.Middleware(mux), accessClient), cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
 		"auth":     "DISPATCHER",
 		"fleet":    "DISPATCHER",
 		"dispatch": "DISPATCHER",
