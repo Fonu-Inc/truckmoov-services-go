@@ -17,9 +17,10 @@ const (
 )
 
 var systemRoles = map[string]bool{
-	"SUPER_ADMIN":    true,
-	"SYSTEM_ADMIN":   true,
-	"PLATFORM_ADMIN": true,
+	"SUPER_ADMIN":        true,
+	"SYSTEM_ADMIN":       true,
+	"PLATFORM_ADMIN":     true,
+	"GOVERNANCE_OFFICER": true,
 }
 
 // IsSystemRole reports whether role governs the platform itself.

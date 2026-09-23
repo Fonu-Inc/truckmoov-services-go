@@ -6,7 +6,7 @@ import (
 )
 
 func TestEveryRoleHasABundleInItsOwnPortal(t *testing.T) {
-	for _, role := range []string{"SUPER_ADMIN", "SYSTEM_ADMIN", "PLATFORM_ADMIN", "ENTERPRISE_ADMIN", "FLEET_ADMIN",
+	for _, role := range []string{"SUPER_ADMIN", "SYSTEM_ADMIN", "PLATFORM_ADMIN", "GOVERNANCE_OFFICER", "ENTERPRISE_ADMIN", "FLEET_ADMIN",
 		"AGGREGATOR_ADMIN", "OWNER_OPERATOR", "OPERATIONS_MANAGER", "DISPATCHER", "FINANCE_VIEWER"} {
 		if _, ok := predefinedRoles[role]; !ok {
 			t.Fatalf("no bundle for %s", role)
