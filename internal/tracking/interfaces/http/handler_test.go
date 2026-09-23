@@ -18,6 +18,7 @@ import (
 	"github.com/truckmoov/services-go/internal/tracking/infrastructure"
 	"github.com/truckmoov/services-go/pkg/activitylog"
 	httpx "github.com/truckmoov/services-go/pkg/http"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 type fakeTrackingPublisher struct{}
@@ -89,7 +90,7 @@ func buildTrackingTestHandler() (*Handler, *fakeTrackingActivityPublisher) {
 	)
 	deviceQueryUseCase := application.NewDeviceTelemetryQueryUseCase(telemetryRepo, clock, 600, nil)
 
-	return NewHandler(ingestUseCase, alertUseCase, queryUseCase, deviceQueryUseCase, "", "", activityPublisher), activityPublisher
+	return NewHandler(ingestUseCase, alertUseCase, queryUseCase, deviceQueryUseCase, "", nil, activityPublisher), activityPublisher
 }
 
 func TestHandler_IngestContract(t *testing.T) {
@@ -138,7 +139,7 @@ func TestHandler_ListVehiclesContract(t *testing.T) {
 	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	server := httpx.WithAuthContext(mux, "replace-me")
+	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
 	body := bytes.NewBufferString(`{"tenant_id":"tenant-1","vehicle_id":"vehicle-1","device_id":"device-1","lat":6.5,"lng":3.4}`)
 	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", body)
@@ -174,7 +175,7 @@ func TestHandler_VehicleHistoryContract(t *testing.T) {
 	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	server := httpx.WithAuthContext(mux, "replace-me")
+	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
 	lines := []string{
 		`{"tenant_id":"tenant-2","vehicle_id":"vehicle-2","device_id":"device-2","lat":6.6,"lng":3.7,"fix_time":"2026-02-02T11:00:00Z"}`,
@@ -220,7 +221,7 @@ func TestHandler_ListVehiclesRejectsTenantQuery(t *testing.T) {
 	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	server := httpx.WithAuthContext(mux, "replace-me")
+	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
 	body := bytes.NewBufferString(`{"tenant_id":"tenant-1","vehicle_id":"vehicle-1","device_id":"device-1","lat":6.5,"lng":3.4}`)
 	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", body)
@@ -244,7 +245,7 @@ func TestHandler_AlertPublishesActivity(t *testing.T) {
 	handler, activityPublisher := buildTrackingTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	server := httpx.WithAuthContext(mux, "replace-me")
+	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
 	body := bytes.NewBufferString(`{"tenant_id":"tenant-7","alert_type":"geofence_breach","severity":"high","vehicle_id":"vehicle-7","job_id":"job-7"}`)
 	req := httptest.NewRequest(http.MethodPost, "/tracking/alerts", body)
@@ -279,7 +280,7 @@ func TestAlert_RequiresAuth(t *testing.T) {
 	handler, _ := buildTrackingTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	server := httpx.WithAuthContext(mux, "replace-me")
+	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
 	body := bytes.NewBufferString(`{"tenant_id":"tenant-7","alert_type":"geofence_breach","severity":"high","vehicle_id":"vehicle-7","job_id":"job-7"}`)
 	req := httptest.NewRequest(http.MethodPost, "/tracking/alerts", body)

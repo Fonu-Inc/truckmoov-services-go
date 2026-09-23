@@ -9,6 +9,7 @@ import (
 
 	"github.com/truckmoov/services-go/internal/dispatch/application"
 	httpx "github.com/truckmoov/services-go/pkg/http"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 func TestNotificationJobInstructionSenderSendJobInstruction(t *testing.T) {
@@ -43,7 +44,7 @@ func TestNotificationJobInstructionSenderSendJobInstruction(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":true,"message":"success","data":{}}`))
-	}), "secret"))
+	}), identity.SharedSecretVerifier("secret")))
 	defer server.Close()
 
 	sender := NewNotificationJobInstructionSender(server.URL, "secret", server.Client())

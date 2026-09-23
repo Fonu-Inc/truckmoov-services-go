@@ -37,6 +37,11 @@ func main() {
 	if cfg.UsingDefaultJWTSecret() {
 		log.Warn("jwt_secret_default", "detail", "JWT_SECRET is unset or the default placeholder; set it before running in production")
 	}
+	userTokens, err := cfg.UserTokenVerifier()
+	if err != nil {
+		log.Error("user_token_keys_invalid", "error", err.Error())
+		os.Exit(1)
+	}
 
 	shutdownTelemetry, err := otel.Setup(ctx, "tracking", log)
 	if err != nil {
@@ -139,7 +144,7 @@ func main() {
 		)
 	}
 
-	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, deviceTelemetryQueryUseCase, cfg.GPSAPIKey, cfg.JWTSecret, activityPublisher)
+	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, deviceTelemetryQueryUseCase, cfg.GPSAPIKey, userTokens, activityPublisher)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
 
@@ -160,7 +165,7 @@ func main() {
 		handlerWithCORS = httpx.WithCORS(handlerWithCORS, cfg.CORSOrigins)
 	}
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
-	handlerWithCORS = httpx.WithAuthContext(handlerWithCORS, cfg.JWTSecret)
+	handlerWithCORS = httpx.WithAuthContext(handlerWithCORS, userTokens)
 	handlerWithCORS = httpx.WithErrorAlerts(handlerWithCORS, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)
 
 	// cmd/tracking is kept as composition root only: all business rules live in internal/tracking.

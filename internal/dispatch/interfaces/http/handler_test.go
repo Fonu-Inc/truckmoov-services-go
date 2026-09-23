@@ -18,6 +18,7 @@ import (
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
 	"github.com/truckmoov/services-go/internal/dispatch/infrastructure"
 	httpx "github.com/truckmoov/services-go/pkg/http"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 func decodeJobBody(t *testing.T, body []byte) domain.Job {
@@ -141,7 +142,7 @@ func dispatchRequestWithHeaders(
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	handler = httpx.WithAuthContext(handler, "replace-me")
+	handler = httpx.WithAuthContext(handler, identity.SharedSecretVerifier("replace-me"))
 	if headers == nil {
 		headers = map[string]string{}
 	}
@@ -1151,7 +1152,7 @@ func TestHandler_CreateJobRejectsClientTenantField(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	server := httpx.WithAuthContext(mux, "replace-me")
+	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 	authHeader := map[string]string{"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "tenant-from-token", "DISPATCHER")}
 
 	createRes := dispatchRequestWithHeaders(
@@ -1178,7 +1179,7 @@ func TestHandler_CreateAndListJobsUseTokenTenant(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	server := httpx.WithAuthContext(mux, "replace-me")
+	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 	authHeader := map[string]string{"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "tenant-from-token", "DISPATCHER")}
 
 	createRes := dispatchRequestWithHeaders(
@@ -1231,7 +1232,7 @@ func TestHandler_ListJobsRejectsTenantQuery(t *testing.T) {
 	handler := buildDispatchTestHandler()
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	server := httpx.WithAuthContext(mux, "replace-me")
+	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 	authHeader := map[string]string{"Authorization": "Bearer " + makeDispatchBearerToken("replace-me", "tenant-from-token", "DISPATCHER")}
 
 	listRes := dispatchRequestWithHeaders(t, server, http.MethodGet, "/dispatch/jobs?tenant_id=client-tenant", "", authHeader)

@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 // defaultJWTSecret is the placeholder secret used for local/dev runs. It is
@@ -28,6 +30,11 @@ type Config struct {
 	NATSPassword  string
 	DefaultTenant string
 	JWTSecret     string
+	// UserTokenPublicKeys verify user tokens; only auth holds the signing key.
+	// While LegacyTokensAccepted is on, shared-secret tokens signed with
+	// JWTSecret are accepted too, until tokens issued before the switch expire.
+	UserTokenPublicKeys  string
+	LegacyTokensAccepted bool
 	// JWTKeyID is an arbitrary label rotated alongside JWT_SECRET (not
 	// derived from it) — safe to log at startup so two services' logs can
 	// be diffed to confirm they're on the same secret generation, without
@@ -113,6 +120,8 @@ func Load(serviceName, defaultPort string) Config {
 		NATSPassword:                 getEnv("NATS_PASSWORD", ""),
 		DefaultTenant:                getEnv("DEFAULT_TENANT", "default"),
 		JWTSecret:                    getEnv("JWT_SECRET", "replace-me"),
+		UserTokenPublicKeys:          getEnv("USER_TOKEN_PUBLIC_KEYS", ""),
+		LegacyTokensAccepted:         getEnv("LEGACY_TOKENS_ACCEPTED", "true") != "false",
 		JWTKeyID:                     getEnv("JWT_KEY_ID", "unset"),
 		PostgresHost:                 getEnv("POSTGRES_HOST", "localhost"),
 		PostgresPort:                 getEnv("POSTGRES_PORT", "5432"),
@@ -300,4 +309,13 @@ func parseCSVEnv(key, fallback string) []string {
 	}
 
 	return filtered
+}
+
+// UserTokenVerifier checks the user tokens this service is presented with.
+func (c Config) UserTokenVerifier() (*identity.UserTokenVerifier, error) {
+	legacySecret := ""
+	if c.LegacyTokensAccepted {
+		legacySecret = c.JWTSecret
+	}
+	return identity.NewUserTokenVerifier(c.UserTokenPublicKeys, legacySecret)
 }

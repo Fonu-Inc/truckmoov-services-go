@@ -9,32 +9,31 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/truckmoov/services-go/internal/tracking/application"
 	httpx "github.com/truckmoov/services-go/pkg/http"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
-
-const systemTenantID = "system"
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(_ *http.Request) bool { return true },
 }
 
 type Bridge struct {
-	ingest    *application.IngestLocationUseCase
-	alert     *application.PublishAlertUseCase
-	jwtSecret string
+	ingest     *application.IngestLocationUseCase
+	alert      *application.PublishAlertUseCase
+	userTokens *identity.UserTokenVerifier
 }
 
 func NewBridge(
 	ingest *application.IngestLocationUseCase,
 	alert *application.PublishAlertUseCase,
-	jwtSecret string,
+	userTokens *identity.UserTokenVerifier,
 ) *Bridge {
-	return &Bridge{ingest: ingest, alert: alert, jwtSecret: jwtSecret}
+	return &Bridge{ingest: ingest, alert: alert, userTokens: userTokens}
 }
 
 func (b *Bridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
-	claims, ok := httpx.ParseToken(token, b.jwtSecret)
-	if !ok || (claims.Role != "SUPER_ADMIN" && claims.Role != "SYSTEM_ADMIN") {
+	claims, ok := httpx.ParseToken(token, b.userTokens)
+	if !ok || claims.TenantID != identity.SystemTenantID || (claims.Role != "SUPER_ADMIN" && claims.Role != "SYSTEM_ADMIN") {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -96,7 +95,7 @@ func (b *Bridge) dispatch(ctx context.Context, conn *websocket.Conn, pt parsedTo
 		speed := p.Speed
 		heading := p.Heading
 		_, _ = b.ingest.Execute(ctx, application.IngestLocationCommand{
-			TenantID:  systemTenantID,
+			TenantID:  identity.SystemTenantID,
 			VehicleID: pt.imei,
 			DeviceID:  pt.imei,
 			Latitude:  p.Latitude,
@@ -118,7 +117,7 @@ func (b *Bridge) dispatch(ctx context.Context, conn *websocket.Conn, pt parsedTo
 			return
 		}
 		_, _ = b.alert.Execute(ctx, application.PublishAlertCommand{
-			TenantID:  systemTenantID,
+			TenantID:  identity.SystemTenantID,
 			AlertType: p.Type,
 			Severity:  p.Severity,
 			VehicleID: pt.imei,

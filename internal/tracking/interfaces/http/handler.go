@@ -11,6 +11,7 @@ import (
 	trackingws "github.com/truckmoov/services-go/internal/tracking/interfaces/ws"
 	"github.com/truckmoov/services-go/pkg/activitylog"
 	httpx "github.com/truckmoov/services-go/pkg/http"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 type ingestRequest struct {
@@ -54,7 +55,7 @@ func NewHandler(
 	trackingQueryUseCase *application.TrackingQueryUseCase,
 	deviceTelemetryQueryUseCase *application.DeviceTelemetryQueryUseCase,
 	gpsAPIKey string,
-	jwtSecret string,
+	userTokens *identity.UserTokenVerifier,
 	ap activityPublisher,
 ) *Handler {
 	return &Handler{
@@ -64,7 +65,7 @@ func NewHandler(
 		deviceTelemetryQueryUseCase: deviceTelemetryQueryUseCase,
 		gpsAPIKey:                   gpsAPIKey,
 		activityPublisher:           ap,
-		wsBridge:                    trackingws.NewBridge(ingestLocationUseCase, publishAlertUseCase, jwtSecret),
+		wsBridge:                    trackingws.NewBridge(ingestLocationUseCase, publishAlertUseCase, userTokens),
 	}
 }
 

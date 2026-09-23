@@ -7,6 +7,7 @@ import (
 
 	"github.com/truckmoov/services-go/internal/notification/domain"
 	"github.com/truckmoov/services-go/pkg/eventbus"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 // AlertSetting is who the platform tells about one kind of event, and how.
@@ -35,7 +36,7 @@ var severityRank = map[string]int{"low": 0, "medium": 1, "high": 2, "critical": 
 
 // SystemTenantID owns platform alerts. They belong to the platform, not to any
 // customer, so they are never attributed to or charged against a tenant.
-const SystemTenantID = "system"
+const SystemTenantID = identity.SystemTenantID
 
 // knownAlertTypes is the closed set the platform raises.
 //

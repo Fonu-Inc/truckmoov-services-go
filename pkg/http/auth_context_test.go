@@ -1,12 +1,23 @@
 package httpx
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/truckmoov/services-go/pkg/identity"
 )
+
+func signTokenValue(encodedPayload, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(encodedPayload))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
 
 func makeTestBearerToken(secret, tenantID, role string) string {
 	payload := fmt.Sprintf(`{"sub":"user-1","email":"ops@example.com","role":"%s","tenantId":"%s","exp":%d}`,
@@ -57,7 +68,7 @@ func TestWithAuthContextStoresClaimsOnRequestContext(t *testing.T) {
 			t.Fatalf("expected DISPATCHER role, got %q", claims.Role)
 		}
 		w.WriteHeader(http.StatusNoContent)
-	}), secret)
+	}), identity.SharedSecretVerifier(secret))
 
 	req := httptest.NewRequest(http.MethodGet, "/dispatch/jobs", nil)
 	req.Header.Set("Authorization", "Bearer "+makeTestBearerToken(secret, "tenant-42", "DISPATCHER"))
@@ -76,7 +87,7 @@ func TestRequireAuthRejectsMissingHeader(t *testing.T) {
 	wrapped := RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusNoContent)
-	}), secret)
+	}), identity.SharedSecretVerifier(secret))
 
 	req := httptest.NewRequest(http.MethodGet, "/dispatch/jobs", nil)
 	res := httptest.NewRecorder()
@@ -97,7 +108,7 @@ func TestRequireAuthRejectsInvalidSignature(t *testing.T) {
 	wrapped := RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusNoContent)
-	}), secret)
+	}), identity.SharedSecretVerifier(secret))
 
 	req := httptest.NewRequest(http.MethodGet, "/dispatch/jobs", nil)
 	token := makeTestBearerToken(secret, "tenant-42", "DISPATCHER")
@@ -120,7 +131,7 @@ func TestRequireAuthRejectsExpiredToken(t *testing.T) {
 	wrapped := RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusNoContent)
-	}), secret)
+	}), identity.SharedSecretVerifier(secret))
 
 	payload := fmt.Sprintf(`{"sub":"user-1","email":"ops@example.com","role":"DISPATCHER","tenantId":"tenant-42","exp":%d}`,
 		time.Now().Add(-time.Hour).Unix(),

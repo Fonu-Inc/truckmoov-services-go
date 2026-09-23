@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/truckmoov/services-go/internal/notification/application"
+
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 const (
@@ -161,7 +163,7 @@ func (r *AuthAlertSettingsReader) buildServiceToken() string {
 		Subject:  "notification-service",
 		Email:    "notification-service@truckmoov.local",
 		Role:     "PLATFORM_ADMIN",
-		TenantID: "system",
+		TenantID: identity.SystemTenantID,
 		Expiry:   r.now().Add(5 * time.Minute).Unix(),
 	}
 	payloadBytes, err := json.Marshal(payload)

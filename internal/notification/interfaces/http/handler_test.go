@@ -20,6 +20,7 @@ import (
 	"github.com/truckmoov/services-go/internal/notification/infrastructure"
 	"github.com/truckmoov/services-go/pkg/activitylog"
 	httpx "github.com/truckmoov/services-go/pkg/http"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 const testWhatsAppAppSecret = "test-whatsapp-app-secret"
@@ -306,7 +307,7 @@ func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvi
 	)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux)
-	return httpx.WithAuthContext(mux, "replace-me"), templateProvider, provider, clock, outboxRepository, driverStatusRequestSender, activityPublisher
+	return httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me")), templateProvider, provider, clock, outboxRepository, driverStatusRequestSender, activityPublisher
 }
 
 func makeNotificationAuthRequest(method, path string, body []byte, tenantID string) *http.Request {

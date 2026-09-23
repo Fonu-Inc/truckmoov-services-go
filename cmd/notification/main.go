@@ -38,6 +38,11 @@ func main() {
 	if cfg.UsingDefaultJWTSecret() {
 		log.Warn("jwt_secret_default", "detail", "JWT_SECRET is unset or the default placeholder; set it before running in production")
 	}
+	userTokens, err := cfg.UserTokenVerifier()
+	if err != nil {
+		log.Error("user_token_keys_invalid", "error", err.Error())
+		os.Exit(1)
+	}
 
 	shutdownTelemetry, err := otel.Setup(ctx, "notification", log)
 	if err != nil {
@@ -344,7 +349,7 @@ func main() {
 	mux.Handle("/ready", readiness)
 	mux.Handle("/notify/ready", readiness)
 
-	handlerWithAuth := httpx.WithAuthContext(metrics.Middleware(mux), cfg.JWTSecret)
+	handlerWithAuth := httpx.WithAuthContext(metrics.Middleware(mux), userTokens)
 	handlerWithAuth = httpx.WithErrorAlerts(handlerWithAuth, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)
 	// Kong answers CORS in every deployed environment.
 	var handlerWithCORS http.Handler = handlerWithAuth
