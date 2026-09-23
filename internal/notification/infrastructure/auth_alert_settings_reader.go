@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/truckmoov/services-go/internal/notification/application"
-
 	"github.com/truckmoov/services-go/pkg/identity"
 )
 
