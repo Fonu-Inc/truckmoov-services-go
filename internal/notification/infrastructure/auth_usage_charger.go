@@ -3,9 +3,6 @@ package infrastructure
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,17 +10,10 @@ import (
 	"time"
 
 	"github.com/truckmoov/services-go/internal/notification/application"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 const chargeRequestTimeout = 5 * time.Second
-
-type authServiceTokenPayload struct {
-	Subject  string `json:"sub"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	TenantID string `json:"tenantId"`
-	Expiry   int64  `json:"exp"`
-}
 
 // AuthUsageCharger debits a tenant's wallet through the auth service, which
 // owns the wallet and the rates.
@@ -34,18 +24,18 @@ type authServiceTokenPayload struct {
 // not hold a token for.
 type AuthUsageCharger struct {
 	baseURL    string
-	jwtSecret  string
+	caller     *identity.Caller
 	httpClient *http.Client
 	now        func() time.Time
 }
 
-func NewAuthUsageCharger(baseURL, jwtSecret string, httpClient *http.Client) *AuthUsageCharger {
+func NewAuthUsageCharger(baseURL string, caller *identity.Caller, httpClient *http.Client) *AuthUsageCharger {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: chargeRequestTimeout}
 	}
 	return &AuthUsageCharger{
 		baseURL:    strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		jwtSecret:  strings.TrimSpace(jwtSecret),
+		caller:     caller,
 		httpClient: httpClient,
 		now:        time.Now,
 	}
@@ -55,7 +45,7 @@ func (c *AuthUsageCharger) Charge(ctx context.Context, charge application.UsageC
 	// Not configured means charging is off in this deployment. Sends continue
 	// rather than every message failing, which is the safer default for a
 	// misconfiguration that would otherwise stop all traffic.
-	if c.baseURL == "" || c.jwtSecret == "" {
+	if c.baseURL == "" || c.caller == nil {
 		return nil
 	}
 
@@ -77,11 +67,9 @@ func (c *AuthUsageCharger) Charge(ctx context.Context, charge application.UsageC
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	token := c.buildServiceToken(charge.TenantID)
-	if token == "" {
+	if !c.caller.Authorize(req, "auth", identity.ActingFor{TenantID: charge.TenantID, LegacyRole: "DISPATCHER"}) {
 		return nil
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
 
 	response, err := c.httpClient.Do(req)
 	if err != nil {
@@ -102,28 +90,4 @@ func (c *AuthUsageCharger) Charge(ctx context.Context, charge application.UsageC
 	default:
 		return fmt.Errorf("charge wallet: auth returned %d", response.StatusCode)
 	}
-}
-
-func (c *AuthUsageCharger) buildServiceToken(tenantID string) string {
-	if strings.TrimSpace(tenantID) == "" {
-		return ""
-	}
-
-	payload := authServiceTokenPayload{
-		Subject:  "notification-service",
-		Email:    "notification-service@truckmoov.local",
-		Role:     "DISPATCHER",
-		TenantID: strings.TrimSpace(tenantID),
-		// Short-lived: this token only has to survive one request.
-		Expiry: c.now().Add(5 * time.Minute).Unix(),
-	}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-
-	encoded := base64.RawURLEncoding.EncodeToString(payloadBytes)
-	mac := hmac.New(sha256.New, []byte(c.jwtSecret))
-	_, _ = mac.Write([]byte(encoded))
-	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }

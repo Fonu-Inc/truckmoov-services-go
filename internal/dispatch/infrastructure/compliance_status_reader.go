@@ -2,9 +2,6 @@ package infrastructure
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +10,7 @@ import (
 	"time"
 
 	"github.com/truckmoov/services-go/internal/dispatch/application"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 // ComplianceStatusReader asks fleet for a tenant's compliance-document
@@ -20,29 +18,21 @@ import (
 // FleetCountsReader uses for vehicle/driver counts.
 type ComplianceStatusReader struct {
 	baseURL    string
-	jwtSecret  string
+	caller     *identity.Caller
 	httpClient *http.Client
 	now        func() time.Time
 }
 
-func NewComplianceStatusReader(baseURL, jwtSecret string, client *http.Client) *ComplianceStatusReader {
+func NewComplianceStatusReader(baseURL string, caller *identity.Caller, client *http.Client) *ComplianceStatusReader {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
 	}
 	return &ComplianceStatusReader{
 		baseURL:    strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		jwtSecret:  strings.TrimSpace(jwtSecret),
+		caller:     caller,
 		httpClient: client,
 		now:        time.Now,
 	}
-}
-
-type complianceStatusTokenPayload struct {
-	Subject  string `json:"sub"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	TenantID string `json:"tenantId"`
-	Expiry   int64  `json:"exp"`
 }
 
 type complianceStatusResponse struct {
@@ -68,9 +58,7 @@ func (r *ComplianceStatusReader) Snapshot(ctx context.Context, tenantID string) 
 		return application.ComplianceSnapshot{}, fmt.Errorf("build compliance snapshot request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	if token := r.buildServiceToken(tenantID); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
+	r.caller.Authorize(req, "fleet", identity.ActingFor{TenantID: tenantID, LegacyRole: "FLEET_ADMIN"})
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
@@ -95,26 +83,4 @@ func (r *ComplianceStatusReader) Snapshot(ctx context.Context, tenantID string) 
 		Expired:               envelope.Data.Expired,
 		ComplianceRatePercent: envelope.Data.ComplianceRatePercent,
 	}, nil
-}
-
-func (r *ComplianceStatusReader) buildServiceToken(tenantID string) string {
-	if r.jwtSecret == "" {
-		return ""
-	}
-	payload := complianceStatusTokenPayload{
-		Subject:  "dispatch-service",
-		Email:    "dispatch-service@truckmoov.local",
-		Role:     "FLEET_ADMIN",
-		TenantID: strings.TrimSpace(tenantID),
-		Expiry:   r.now().Add(5 * time.Minute).Unix(),
-	}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-
-	encoded := base64.RawURLEncoding.EncodeToString(payloadBytes)
-	mac := hmac.New(sha256.New, []byte(r.jwtSecret))
-	_, _ = mac.Write([]byte(encoded))
-	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }

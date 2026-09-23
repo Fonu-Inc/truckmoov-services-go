@@ -40,6 +40,7 @@ func main() {
 	if cfg.UsingDefaultJWTSecret() {
 		log.Warn("jwt_secret_default", "detail", "JWT_SECRET is unset or the default placeholder; set it before running in production")
 	}
+	serviceCaller := cfg.ServiceCaller()
 	userTokens, err := cfg.UserTokenVerifier()
 	if err != nil {
 		log.Error("user_token_keys_invalid", "error", err.Error())
@@ -155,7 +156,7 @@ func main() {
 		time.Duration(cfg.ActiveJobsMapCacheSeconds)*time.Second,
 		routeShaper,
 	)
-	jobInstructionSender := infrastructure.NewNotificationJobInstructionSender(cfg.NotificationServiceURL, cfg.JWTSecret, nil)
+	jobInstructionSender := infrastructure.NewNotificationJobInstructionSender(cfg.NotificationServiceURL, serviceCaller, nil)
 	sendJobInstructionUseCase := application.NewSendJobInstructionUseCase(
 		jobRepository,
 		jobInstructionSender,
@@ -184,13 +185,13 @@ func main() {
 		}
 	}()
 
-	fleetClient := infrastructure.NewFleetClient(cfg.FleetServiceURL, cfg.JWTSecret, nil)
+	fleetClient := infrastructure.NewFleetClient(cfg.FleetServiceURL, serviceCaller, nil)
 
 	jobOfferRepository := infrastructure.NewPostgresJobOfferRepository(postgresDB)
 	if err := jobOfferRepository.EnsureSchema(ctx); err != nil {
 		log.Error("job_offer_schema_failed", "error", err)
 	}
-	entitlementsReader := infrastructure.NewAuthEntitlementsReader(cfg.AuthServiceURL, cfg.JWTSecret, nil)
+	entitlementsReader := infrastructure.NewAuthEntitlementsReader(cfg.AuthServiceURL, serviceCaller, nil)
 	jobOfferPublisher := infrastructure.NewJobOfferEventPublisher(bus)
 	activeJobCounter := func(_ context.Context, tenantID string) (int, error) {
 		count := 0
@@ -249,8 +250,8 @@ func main() {
 	if err := aggregatorActivityRepository.EnsureSchema(ctx); err != nil {
 		log.Error("aggregator_activity_schema_failed", "error", err)
 	}
-	fleetCountsReader := infrastructure.NewFleetCountsReader(cfg.FleetServiceURL, cfg.JWTSecret, nil)
-	complianceStatusReader := infrastructure.NewComplianceStatusReader(cfg.FleetServiceURL, cfg.JWTSecret, nil)
+	fleetCountsReader := infrastructure.NewFleetCountsReader(cfg.FleetServiceURL, serviceCaller, nil)
+	complianceStatusReader := infrastructure.NewComplianceStatusReader(cfg.FleetServiceURL, serviceCaller, nil)
 
 	summaryFiguresUseCase := application.NewSummaryFiguresUseCase(aggregatorRelationshipRepository, jobRepository, fleetCountsReader, operatorRatingRepository)
 	listLinkedOperatorsUseCase := application.NewListLinkedOperatorsUseCase(aggregatorRelationshipRepository, jobRepository, fleetCountsReader, operatorRatingRepository)
@@ -341,7 +342,10 @@ func main() {
 		handlerWithCORS = httpx.WithCORS(handlerWithCORS, cfg.CORSOrigins)
 	}
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
-	handlerWithCORS = httpx.WithAuthContext(handlerWithCORS, userTokens)
+	handlerWithCORS = httpx.WithAuthContext(httpx.WithServiceCallers(handlerWithCORS, cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
+		"fleet":        "DISPATCHER",
+		"notification": "DISPATCHER",
+	}), userTokens)
 	handlerWithCORS = httpx.WithErrorAlerts(handlerWithCORS, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)
 
 	if runErr := httpx.Run(ctx, ":"+cfg.Port, httpx.WithLogging(handlerWithCORS, log), log); runErr != nil {

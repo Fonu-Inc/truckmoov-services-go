@@ -2,9 +2,6 @@ package infrastructure
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -45,7 +42,7 @@ type alertSettingsPayload struct {
 // the platform two answers, and the one that sends would be the stale one.
 type AuthAlertSettingsReader struct {
 	baseURL    string
-	jwtSecret  string
+	caller     *identity.Caller
 	httpClient *http.Client
 	now        func() time.Time
 
@@ -53,13 +50,13 @@ type AuthAlertSettingsReader struct {
 	cache map[string]cachedAlertSetting
 }
 
-func NewAuthAlertSettingsReader(baseURL, jwtSecret string, httpClient *http.Client) *AuthAlertSettingsReader {
+func NewAuthAlertSettingsReader(baseURL string, caller *identity.Caller, httpClient *http.Client) *AuthAlertSettingsReader {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: alertSettingsTimeout}
 	}
 	return &AuthAlertSettingsReader{
 		baseURL:    strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		jwtSecret:  strings.TrimSpace(jwtSecret),
+		caller:     caller,
 		httpClient: httpClient,
 		now:        time.Now,
 		cache:      map[string]cachedAlertSetting{},
@@ -78,7 +75,7 @@ func (r *AuthAlertSettingsReader) ForAlertType(
 		return nil, fmt.Errorf("unknown alert type")
 	}
 
-	if r.baseURL == "" || r.jwtSecret == "" {
+	if r.baseURL == "" || r.caller == nil {
 		// Not configured to reach auth. Reported as an error rather than as
 		// "nothing configured", so the alert is retried instead of dropped.
 		return nil, fmt.Errorf("alert settings source is not configured")
@@ -96,7 +93,7 @@ func (r *AuthAlertSettingsReader) ForAlertType(
 	if err != nil {
 		return nil, fmt.Errorf("build alert settings request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+r.buildServiceToken())
+	r.caller.Authorize(req, "auth", identity.ActingFor{TenantID: identity.SystemTenantID, LegacyRole: "PLATFORM_ADMIN"})
 
 	response, err := r.httpClient.Do(req)
 	if err != nil {
@@ -153,25 +150,4 @@ func (r *AuthAlertSettingsReader) store(alertType string, setting *application.A
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.cache[alertType] = cachedAlertSetting{setting: setting, fetchedAt: r.now()}
-}
-
-// buildServiceToken names the system tenant: platform alerts belong to no
-// tenant, and the settings they read are platform-wide.
-func (r *AuthAlertSettingsReader) buildServiceToken() string {
-	payload := authServiceTokenPayload{
-		Subject:  "notification-service",
-		Email:    "notification-service@truckmoov.local",
-		Role:     "PLATFORM_ADMIN",
-		TenantID: identity.SystemTenantID,
-		Expiry:   r.now().Add(5 * time.Minute).Unix(),
-	}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-
-	encoded := base64.RawURLEncoding.EncodeToString(payloadBytes)
-	mac := hmac.New(sha256.New, []byte(r.jwtSecret))
-	_, _ = mac.Write([]byte(encoded))
-	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }

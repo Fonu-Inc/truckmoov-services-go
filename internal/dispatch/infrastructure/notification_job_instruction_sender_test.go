@@ -47,7 +47,7 @@ func TestNotificationJobInstructionSenderSendJobInstruction(t *testing.T) {
 	}), identity.SharedSecretVerifier("secret")))
 	defer server.Close()
 
-	sender := NewNotificationJobInstructionSender(server.URL, "secret", server.Client())
+	sender := NewNotificationJobInstructionSender(server.URL, identity.NewCaller("dispatch", nil, "secret"), server.Client())
 
 	err := sender.SendJobInstruction(context.Background(), application.DispatchJobInstructionPayload{
 		TenantID:         "tenant-1",
@@ -85,7 +85,7 @@ func TestNotificationJobInstructionSenderSendJobInstructionError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewNotificationJobInstructionSender(server.URL, "secret", server.Client())
+	sender := NewNotificationJobInstructionSender(server.URL, identity.NewCaller("dispatch", nil, "secret"), server.Client())
 	err := sender.SendJobInstruction(context.Background(), application.DispatchJobInstructionPayload{
 		TenantID:         "tenant-1",
 		Recipient:        "+2348012345678",

@@ -2,15 +2,14 @@ package infrastructure
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 // FleetCountsReader asks fleet how many vehicles and drivers a tenant has —
@@ -18,29 +17,21 @@ import (
 // AuthEntitlementsReader uses to ask auth for plan quotas.
 type FleetCountsReader struct {
 	baseURL    string
-	jwtSecret  string
+	caller     *identity.Caller
 	httpClient *http.Client
 	now        func() time.Time
 }
 
-func NewFleetCountsReader(baseURL, jwtSecret string, client *http.Client) *FleetCountsReader {
+func NewFleetCountsReader(baseURL string, caller *identity.Caller, client *http.Client) *FleetCountsReader {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
 	}
 	return &FleetCountsReader{
 		baseURL:    strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		jwtSecret:  strings.TrimSpace(jwtSecret),
+		caller:     caller,
 		httpClient: client,
 		now:        time.Now,
 	}
-}
-
-type fleetCountsTokenPayload struct {
-	Subject  string `json:"sub"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	TenantID string `json:"tenantId"`
-	Expiry   int64  `json:"exp"`
 }
 
 type fleetCountsResponse struct {
@@ -64,9 +55,7 @@ func (r *FleetCountsReader) TenantCounts(ctx context.Context, tenantID string) (
 		return 0, 0, fmt.Errorf("build tenant counts request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	if token := r.buildServiceToken(tenantID); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
+	r.caller.Authorize(req, "fleet", identity.ActingFor{TenantID: tenantID, LegacyRole: "FLEET_ADMIN"})
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
@@ -84,26 +73,4 @@ func (r *FleetCountsReader) TenantCounts(ctx context.Context, tenantID string) (
 		return 0, 0, nil
 	}
 	return envelope.Data.VehicleCount, envelope.Data.DriverCount, nil
-}
-
-func (r *FleetCountsReader) buildServiceToken(tenantID string) string {
-	if r.jwtSecret == "" {
-		return ""
-	}
-	payload := fleetCountsTokenPayload{
-		Subject:  "dispatch-service",
-		Email:    "dispatch-service@truckmoov.local",
-		Role:     "FLEET_ADMIN",
-		TenantID: strings.TrimSpace(tenantID),
-		Expiry:   r.now().Add(5 * time.Minute).Unix(),
-	}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-
-	encoded := base64.RawURLEncoding.EncodeToString(payloadBytes)
-	mac := hmac.New(sha256.New, []byte(r.jwtSecret))
-	_, _ = mac.Write([]byte(encoded))
-	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }

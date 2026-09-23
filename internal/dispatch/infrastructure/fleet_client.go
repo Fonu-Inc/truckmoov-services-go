@@ -2,22 +2,21 @@ package infrastructure
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 // FleetClient looks up driver and vehicle details from the fleet service so the
 // dispatch service can enrich job responses without owning that data itself.
 type FleetClient struct {
 	baseURL    string
-	jwtSecret  string
+	caller     *identity.Caller
 	httpClient *http.Client
 	now        func() time.Time
 }
@@ -32,21 +31,13 @@ type FleetDriver struct {
 	Name string
 }
 
-type fleetInternalServiceTokenPayload struct {
-	Subject  string `json:"sub"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	TenantID string `json:"tenantId"`
-	Expiry   int64  `json:"exp"`
-}
-
-func NewFleetClient(baseURL, jwtSecret string, client *http.Client) *FleetClient {
+func NewFleetClient(baseURL string, caller *identity.Caller, client *http.Client) *FleetClient {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
 	}
 	return &FleetClient{
 		baseURL:    strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		jwtSecret:  strings.TrimSpace(jwtSecret),
+		caller:     caller,
 		httpClient: client,
 		now:        time.Now,
 	}
@@ -87,9 +78,7 @@ func (c *FleetClient) get(ctx context.Context, tenantID, path string, dest any) 
 		return fmt.Errorf("build fleet request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	if token := c.buildInternalToken(tenantID); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
+	c.caller.Authorize(req, "fleet", identity.ActingFor{TenantID: tenantID, LegacyRole: "DISPATCHER"})
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -105,26 +94,4 @@ func (c *FleetClient) get(ctx context.Context, tenantID, path string, dest any) 
 		return fmt.Errorf("decode fleet response: %w", err)
 	}
 	return nil
-}
-
-func (c *FleetClient) buildInternalToken(tenantID string) string {
-	if strings.TrimSpace(c.jwtSecret) == "" || strings.TrimSpace(tenantID) == "" {
-		return ""
-	}
-	payload := fleetInternalServiceTokenPayload{
-		Subject:  "dispatch-service",
-		Email:    "dispatch-service@truckmoov.local",
-		Role:     "DISPATCHER",
-		TenantID: strings.TrimSpace(tenantID),
-		Expiry:   c.now().Add(5 * time.Minute).Unix(),
-	}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-	encodedPayload := base64.RawURLEncoding.EncodeToString(payloadBytes)
-	mac := hmac.New(sha256.New, []byte(c.jwtSecret))
-	_, _ = mac.Write([]byte(encodedPayload))
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return encodedPayload + "." + signature
 }

@@ -3,9 +3,6 @@ package infrastructure
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,21 +11,14 @@ import (
 	"time"
 
 	"github.com/truckmoov/services-go/internal/dispatch/application"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 type NotificationJobInstructionSender struct {
-	baseURL   string
-	jwtSecret string
-	client    *http.Client
-	now       func() time.Time
-}
-
-type internalServiceTokenPayload struct {
-	Subject  string `json:"sub"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	TenantID string `json:"tenantId"`
-	Expiry   int64  `json:"exp"`
+	baseURL string
+	caller  *identity.Caller
+	client  *http.Client
+	now     func() time.Time
 }
 
 type sendJobInstructionRequest struct {
@@ -61,15 +51,15 @@ type sendJobInstructionButtonParameter struct {
 	Payload string `json:"payload,omitempty"`
 }
 
-func NewNotificationJobInstructionSender(baseURL, jwtSecret string, client *http.Client) *NotificationJobInstructionSender {
+func NewNotificationJobInstructionSender(baseURL string, caller *identity.Caller, client *http.Client) *NotificationJobInstructionSender {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
 	return &NotificationJobInstructionSender{
-		baseURL:   strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		jwtSecret: strings.TrimSpace(jwtSecret),
-		client:    client,
-		now:       time.Now,
+		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		caller:  caller,
+		client:  client,
+		now:     time.Now,
 	}
 }
 
@@ -102,9 +92,7 @@ func (s *NotificationJobInstructionSender) SendJobInstruction(ctx context.Contex
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	if token := s.buildInternalToken(strings.TrimSpace(payload.TenantID)); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
+	s.caller.Authorize(req, "notification", identity.ActingFor{TenantID: payload.TenantID, LegacyRole: "DISPATCHER"})
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -125,28 +113,6 @@ func (s *NotificationJobInstructionSender) SendJobInstruction(ctx context.Contex
 		message = http.StatusText(resp.StatusCode)
 	}
 	return fmt.Errorf("notification service returned %d: %s", resp.StatusCode, message)
-}
-
-func (s *NotificationJobInstructionSender) buildInternalToken(tenantID string) string {
-	if strings.TrimSpace(s.jwtSecret) == "" || strings.TrimSpace(tenantID) == "" {
-		return ""
-	}
-	payload := internalServiceTokenPayload{
-		Subject:  "dispatch-service",
-		Email:    "dispatch-service@truckmoov.local",
-		Role:     "DISPATCHER",
-		TenantID: strings.TrimSpace(tenantID),
-		Expiry:   s.now().Add(5 * time.Minute).Unix(),
-	}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-	encodedPayload := base64.RawURLEncoding.EncodeToString(payloadBytes)
-	mac := hmac.New(sha256.New, []byte(s.jwtSecret))
-	_, _ = mac.Write([]byte(encodedPayload))
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return encodedPayload + "." + signature
 }
 
 func normalizeHeaderMedia(media *application.JobInstructionHeaderMedia) *sendJobInstructionHeaderMediaRequest {

@@ -38,6 +38,7 @@ func main() {
 	if cfg.UsingDefaultJWTSecret() {
 		log.Warn("jwt_secret_default", "detail", "JWT_SECRET is unset or the default placeholder; set it before running in production")
 	}
+	serviceCaller := cfg.ServiceCaller()
 	userTokens, err := cfg.UserTokenVerifier()
 	if err != nil {
 		log.Error("user_token_keys_invalid", "error", err.Error())
@@ -152,8 +153,8 @@ func main() {
 	clock := infrastructure.SystemClock{}
 	idGenerator := infrastructure.TimeIDGenerator{}
 
-	usageCharger := infrastructure.NewAuthUsageCharger(cfg.AuthServiceURL, cfg.JWTSecret, nil)
-	alertSettingsReader := infrastructure.NewAuthAlertSettingsReader(cfg.AuthServiceURL, cfg.JWTSecret, nil)
+	usageCharger := infrastructure.NewAuthUsageCharger(cfg.AuthServiceURL, serviceCaller, nil)
+	alertSettingsReader := infrastructure.NewAuthAlertSettingsReader(cfg.AuthServiceURL, serviceCaller, nil)
 
 	sendMessageUseCase := application.NewSendMessageUseCase(
 		outboxRepository,
@@ -225,7 +226,7 @@ func main() {
 	listWhatsAppConversationsUseCase := application.NewListWhatsAppConversationsUseCase(conversationRepository, clock, cfg.DefaultTenant)
 	getWhatsAppConversationUseCase := application.NewGetWhatsAppConversationUseCase(conversationRepository, cfg.DefaultTenant)
 	listWhatsAppConversationMessagesUseCase := application.NewListWhatsAppConversationMessagesUseCase(conversationRepository, cfg.DefaultTenant)
-	driverStatusRequestSender := infrastructure.NewDispatchDriverStatusRequestSender(cfg.DispatchServiceURL, cfg.JWTSecret, nil)
+	driverStatusRequestSender := infrastructure.NewDispatchDriverStatusRequestSender(cfg.DispatchServiceURL, serviceCaller, nil)
 	handleWhatsAppWebhookUseCase := application.NewHandleWhatsAppWebhookUseCase(
 		conversationRepository,
 		outboxRepository,
@@ -299,7 +300,7 @@ func main() {
 	// fleet. Reuses the same provider that already downloads/sends WhatsApp
 	// media, and the same internal-service-token pattern dispatch uses to call
 	// fleet.
-	fleetWaybillClient := infrastructure.NewFleetWaybillClient(cfg.FleetServiceURL, cfg.JWTSecret, nil)
+	fleetWaybillClient := infrastructure.NewFleetWaybillClient(cfg.FleetServiceURL, serviceCaller, nil)
 	handleWhatsAppWebhookUseCase = handleWhatsAppWebhookUseCase.WithWaybillCapture(
 		whatsAppMessageProvider,
 		fleetWaybillClient,
@@ -349,7 +350,11 @@ func main() {
 	mux.Handle("/ready", readiness)
 	mux.Handle("/notify/ready", readiness)
 
-	handlerWithAuth := httpx.WithAuthContext(metrics.Middleware(mux), userTokens)
+	handlerWithAuth := httpx.WithAuthContext(httpx.WithServiceCallers(metrics.Middleware(mux), cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
+		"auth":     "DISPATCHER",
+		"fleet":    "DISPATCHER",
+		"dispatch": "DISPATCHER",
+	}), userTokens)
 	handlerWithAuth = httpx.WithErrorAlerts(handlerWithAuth, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)
 	// Kong answers CORS in every deployed environment.
 	var handlerWithCORS http.Handler = handlerWithAuth

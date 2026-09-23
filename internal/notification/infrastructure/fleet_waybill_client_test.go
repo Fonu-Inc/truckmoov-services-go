@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 func TestFleetWaybillClient_CaptureWaybillFromWhatsApp_Success(t *testing.T) {
@@ -36,7 +38,7 @@ func TestFleetWaybillClient_CaptureWaybillFromWhatsApp_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewFleetWaybillClient(server.URL, "test-secret", server.Client())
+	client := NewFleetWaybillClient(server.URL, identity.NewCaller("notification", nil, "test-secret"), server.Client())
 
 	err := client.CaptureWaybillFromWhatsApp(context.Background(), "tenant-a", []byte("jpeg-bytes"), "media-1.jpg", "image/jpeg", "2348012345678")
 	if err != nil {
@@ -75,7 +77,7 @@ func TestFleetWaybillClient_CaptureWaybillFromWhatsApp_PropagatesFleetError(t *t
 	}))
 	defer server.Close()
 
-	client := NewFleetWaybillClient(server.URL, "test-secret", server.Client())
+	client := NewFleetWaybillClient(server.URL, identity.NewCaller("notification", nil, "test-secret"), server.Client())
 
 	err := client.CaptureWaybillFromWhatsApp(context.Background(), "tenant-a", []byte("x"), "x.jpg", "image/jpeg", "2348012345678")
 	if err == nil {
@@ -84,7 +86,7 @@ func TestFleetWaybillClient_CaptureWaybillFromWhatsApp_PropagatesFleetError(t *t
 }
 
 func TestFleetWaybillClient_CaptureWaybillFromWhatsApp_RequiresBaseURL(t *testing.T) {
-	client := NewFleetWaybillClient("", "test-secret", nil)
+	client := NewFleetWaybillClient("", identity.NewCaller("notification", nil, "test-secret"), nil)
 
 	err := client.CaptureWaybillFromWhatsApp(context.Background(), "tenant-a", []byte("x"), "x.jpg", "image/jpeg", "2348012345678")
 	if err == nil {

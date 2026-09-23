@@ -2,15 +2,14 @@ package infrastructure
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 // AuthEntitlementsReader reads a tenant's plan entitlements from auth.
@@ -20,29 +19,21 @@ import (
 // driver details instead of reading fleet's tables directly.
 type AuthEntitlementsReader struct {
 	baseURL    string
-	jwtSecret  string
+	caller     *identity.Caller
 	httpClient *http.Client
 	now        func() time.Time
 }
 
-func NewAuthEntitlementsReader(baseURL, jwtSecret string, client *http.Client) *AuthEntitlementsReader {
+func NewAuthEntitlementsReader(baseURL string, caller *identity.Caller, client *http.Client) *AuthEntitlementsReader {
 	if client == nil {
 		client = &http.Client{Timeout: 5 * time.Second}
 	}
 	return &AuthEntitlementsReader{
 		baseURL:    strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		jwtSecret:  strings.TrimSpace(jwtSecret),
+		caller:     caller,
 		httpClient: client,
 		now:        time.Now,
 	}
-}
-
-type entitlementsTokenPayload struct {
-	Subject  string `json:"sub"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	TenantID string `json:"tenantId"`
-	Expiry   int64  `json:"exp"`
 }
 
 // entitlementsResponse mirrors only the one field this reader needs. A quota
@@ -69,9 +60,7 @@ func (r *AuthEntitlementsReader) MaxActiveJobs(ctx context.Context, tenantID str
 		return nil, fmt.Errorf("build entitlements request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	if token := r.buildServiceToken(tenantID); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
+	r.caller.Authorize(req, "auth", identity.ActingFor{TenantID: tenantID, LegacyRole: "FLEET_ADMIN"})
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
@@ -102,26 +91,4 @@ func (r *AuthEntitlementsReader) MaxActiveJobs(ctx context.Context, tenantID str
 		return nil, nil
 	}
 	return &max, nil
-}
-
-func (r *AuthEntitlementsReader) buildServiceToken(tenantID string) string {
-	if r.jwtSecret == "" {
-		return ""
-	}
-	payload := entitlementsTokenPayload{
-		Subject:  "dispatch-service",
-		Email:    "dispatch-service@truckmoov.local",
-		Role:     "FLEET_ADMIN",
-		TenantID: strings.TrimSpace(tenantID),
-		Expiry:   r.now().Add(5 * time.Minute).Unix(),
-	}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-
-	encoded := base64.RawURLEncoding.EncodeToString(payloadBytes)
-	mac := hmac.New(sha256.New, []byte(r.jwtSecret))
-	_, _ = mac.Write([]byte(encoded))
-	return encoded + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }

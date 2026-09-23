@@ -35,6 +35,11 @@ type Config struct {
 	// JWTSecret are accepted too, until tokens issued before the switch expire.
 	UserTokenPublicKeys  string
 	LegacyTokensAccepted bool
+	// ServiceTokenDir holds one Kubernetes service account token per service
+	// this one calls. ServiceAuthDevSecret stands in for them outside the
+	// cluster only.
+	ServiceTokenDir      string
+	ServiceAuthDevSecret string
 	// JWTKeyID is an arbitrary label rotated alongside JWT_SECRET (not
 	// derived from it) — safe to log at startup so two services' logs can
 	// be diffed to confirm they're on the same secret generation, without
@@ -122,6 +127,8 @@ func Load(serviceName, defaultPort string) Config {
 		JWTSecret:                    getEnv("JWT_SECRET", "replace-me"),
 		UserTokenPublicKeys:          getEnv("USER_TOKEN_PUBLIC_KEYS", ""),
 		LegacyTokensAccepted:         getEnv("LEGACY_TOKENS_ACCEPTED", "true") != "false",
+		ServiceTokenDir:              getEnv("SERVICE_TOKEN_DIR", "/var/run/secrets/truckmoov/service-tokens"),
+		ServiceAuthDevSecret:         getEnv("SERVICE_AUTH_DEV_SECRET", ""),
 		JWTKeyID:                     getEnv("JWT_KEY_ID", "unset"),
 		PostgresHost:                 getEnv("POSTGRES_HOST", "localhost"),
 		PostgresPort:                 getEnv("POSTGRES_PORT", "5432"),
@@ -318,4 +325,25 @@ func (c Config) UserTokenVerifier() (*identity.UserTokenVerifier, error) {
 		legacySecret = c.JWTSecret
 	}
 	return identity.NewUserTokenVerifier(c.UserTokenPublicKeys, legacySecret)
+}
+
+// ServiceIdentity is the name other services know this one by: the
+// audience its incoming tokens carry and the account its outgoing ones name.
+func (c Config) ServiceIdentity() string {
+	return strings.ToLower(c.ServiceName)
+}
+
+// ServiceCaller identifies this service on its calls to others.
+func (c Config) ServiceCaller() *identity.Caller {
+	legacySecret := ""
+	if c.LegacyTokensAccepted {
+		legacySecret = c.JWTSecret
+	}
+	tokens := identity.NewServiceTokens(c.ServiceIdentity(), c.ServiceTokenDir, c.ServiceAuthDevSecret)
+	return identity.NewCaller(c.ServiceIdentity(), tokens, legacySecret)
+}
+
+// ServiceTokenVerifier checks the services calling this one.
+func (c Config) ServiceTokenVerifier() *identity.ServiceTokenVerifier {
+	return identity.NewServiceTokenVerifier(c.ServiceIdentity(), c.ServiceAuthDevSecret)
 }

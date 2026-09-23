@@ -165,7 +165,9 @@ func main() {
 		handlerWithCORS = httpx.WithCORS(handlerWithCORS, cfg.CORSOrigins)
 	}
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
-	handlerWithCORS = httpx.WithAuthContext(handlerWithCORS, userTokens)
+	handlerWithCORS = httpx.WithAuthContext(httpx.WithServiceCallers(handlerWithCORS, cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
+		"fleet": "FLEET_ADMIN",
+	}), userTokens)
 	handlerWithCORS = httpx.WithErrorAlerts(handlerWithCORS, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)
 
 	// cmd/tracking is kept as composition root only: all business rules live in internal/tracking.

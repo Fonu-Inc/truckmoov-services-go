@@ -18,6 +18,8 @@ type AuthClaims struct {
 	TenantID string
 	Portal   identity.Portal
 	Expires  time.Time
+	// Service names the calling service when the request is a service call.
+	Service string
 }
 
 // WithAuthContext attaches the caller's claims when the request carries a

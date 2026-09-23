@@ -3,9 +3,6 @@ package infrastructure
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,13 +11,14 @@ import (
 	"time"
 
 	"github.com/truckmoov/services-go/internal/notification/application"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 type DispatchDriverStatusRequestSender struct {
-	baseURL   string
-	jwtSecret string
-	client    *http.Client
-	now       func() time.Time
+	baseURL string
+	caller  *identity.Caller
+	client  *http.Client
+	now     func() time.Time
 }
 
 type createDriverStatusRequestBody struct {
@@ -43,23 +41,15 @@ type createDriverStatusRequestResponseEnvelope struct {
 	} `json:"data"`
 }
 
-type notificationInternalServiceTokenPayload struct {
-	Subject  string `json:"sub"`
-	Email    string `json:"email"`
-	Role     string `json:"role"`
-	TenantID string `json:"tenantId"`
-	Expiry   int64  `json:"exp"`
-}
-
-func NewDispatchDriverStatusRequestSender(baseURL, jwtSecret string, client *http.Client) *DispatchDriverStatusRequestSender {
+func NewDispatchDriverStatusRequestSender(baseURL string, caller *identity.Caller, client *http.Client) *DispatchDriverStatusRequestSender {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
 	return &DispatchDriverStatusRequestSender{
-		baseURL:   strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		jwtSecret: strings.TrimSpace(jwtSecret),
-		client:    client,
-		now:       time.Now,
+		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		caller:  caller,
+		client:  client,
+		now:     time.Now,
 	}
 }
 
@@ -83,9 +73,7 @@ func (s *DispatchDriverStatusRequestSender) CreateDriverStatusRequest(ctx contex
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	if token := s.buildInternalToken(strings.TrimSpace(command.TenantID)); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
+	s.caller.Authorize(req, "dispatch", identity.ActingFor{TenantID: command.TenantID, LegacyRole: "DISPATCHER"})
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -114,28 +102,6 @@ func (s *DispatchDriverStatusRequestSender) CreateDriverStatusRequest(ctx contex
 		RequestID:       strings.TrimSpace(envelope.Data.Request.ID),
 		RequestedStatus: strings.TrimSpace(envelope.Data.Request.RequestedStatus),
 	}, nil
-}
-
-func (s *DispatchDriverStatusRequestSender) buildInternalToken(tenantID string) string {
-	if strings.TrimSpace(s.jwtSecret) == "" || strings.TrimSpace(tenantID) == "" {
-		return ""
-	}
-	payload := notificationInternalServiceTokenPayload{
-		Subject:  "notification-service",
-		Email:    "notification-service@truckmoov.local",
-		Role:     "DISPATCHER",
-		TenantID: strings.TrimSpace(tenantID),
-		Expiry:   s.now().Add(5 * time.Minute).Unix(),
-	}
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-	encodedPayload := base64.RawURLEncoding.EncodeToString(payloadBytes)
-	mac := hmac.New(sha256.New, []byte(s.jwtSecret))
-	_, _ = mac.Write([]byte(encodedPayload))
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return encodedPayload + "." + signature
 }
 
 func extractDispatchErrorMessage(body []byte) string {
