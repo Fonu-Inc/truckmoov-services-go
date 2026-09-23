@@ -59,6 +59,31 @@ func TestTraccarAdapter_MissingPositionIDLeavesVendorPositionIDEmpty(t *testing.
 	}
 }
 
+// Captured from Traccar 6.14's json forwarder. Traccar forwards before the
+// position is stored, so its id is still 0.
+const traccarForwardPayload = `{"position":{"id":0,"attributes":{"batteryLevel":77.0,"distance":0.0,"totalDistance":0.0,"motion":true},"deviceId":1,"protocol":"osmand","serverTime":"2026-09-23T14:33:42.603+00:00","deviceTime":"2026-09-23T14:40:00.000+00:00","fixTime":"2026-09-23T14:40:00.000+00:00","valid":true,"latitude":6.5,"longitude":3.4,"altitude":0.0,"speed":10.0,"course":90.0,"address":null,"accuracy":0.0,"network":null,"geofenceIds":null},"device":{"id":1,"attributes":{},"groupId":0,"calendarId":0,"name":"truck","uniqueId":"359779090012345","status":"online","lastUpdate":"2026-09-23T14:33:42.634+00:00","positionId":1,"phone":null,"model":null,"contact":null,"category":null,"disabled":false,"expirationTime":null}}`
+
+func TestTraccarAdapter_DecodesTraccarForward(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest/vendor/traccar", strings.NewReader(traccarForwardPayload))
+
+	cmd, err := traccarAdapter{}.decode(req)
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if cmd.IMEI != "359779090012345" || cmd.Protocol != "osmand" {
+		t.Fatalf("expected device and protocol from the forward, got %q/%q", cmd.IMEI, cmd.Protocol)
+	}
+	if cmd.BatteryLevel == nil || *cmd.BatteryLevel != 77 {
+		t.Fatalf("expected battery level 77, got %v", cmd.BatteryLevel)
+	}
+	if _, err := time.Parse(time.RFC3339, cmd.FixTime); err != nil {
+		t.Fatalf("expected an RFC3339 fix time, got %q (%v)", cmd.FixTime, err)
+	}
+	if cmd.VendorPositionID != "" {
+		t.Fatalf("expected no vendor position id for an unsaved position, got %q", cmd.VendorPositionID)
+	}
+}
+
 func TestGenericAdapter_SetsProtocol(t *testing.T) {
 	body := `{"vehicle_id":"v1","device_id":"d1","lat":6.5,"lng":3.4}`
 	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", strings.NewReader(body))

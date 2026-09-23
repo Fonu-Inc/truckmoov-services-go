@@ -18,10 +18,14 @@ type Config struct {
 	// Environment is the effective deployment environment (e.g. "production",
 	// "development"), resolved from APP_ENV/ENV/GO_ENV. Drives fail-closed
 	// validation.
-	Environment   string
-	Port          string
-	NATSURL       string
-	NATSStream    string
+	Environment string
+	Port        string
+	NATSURL     string
+	NATSStream  string
+	// NATSUser and NATSPassword identify this service to the event bus, which
+	// limits what each service may publish. Empty connects anonymously.
+	NATSUser      string
+	NATSPassword  string
 	DefaultTenant string
 	JWTSecret     string
 	// JWTKeyID is an arbitrary label rotated alongside JWT_SECRET (not
@@ -105,6 +109,8 @@ func Load(serviceName, defaultPort string) Config {
 		Port:                         getEnv(serviceName+"_PORT", defaultPort),
 		NATSURL:                      getEnv("NATS_URL", "nats://localhost:4222"),
 		NATSStream:                   getEnv("NATS_STREAM", "truckmoov_events"),
+		NATSUser:                     getEnv("NATS_USER", ""),
+		NATSPassword:                 getEnv("NATS_PASSWORD", ""),
 		DefaultTenant:                getEnv("DEFAULT_TENANT", "default"),
 		JWTSecret:                    getEnv("JWT_SECRET", "replace-me"),
 		JWTKeyID:                     getEnv("JWT_KEY_ID", "unset"),

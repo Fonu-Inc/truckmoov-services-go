@@ -84,17 +84,32 @@ func buildStreamConfig(streamName string) *nats.StreamConfig {
 	}
 }
 
+// Credentials is the login a service presents to the event bus. The zero
+// value connects anonymously, which only a bus without authorization accepts.
+type Credentials struct {
+	User     string
+	Password string
+}
+
+func (c Credentials) options() []nats.Option {
+	options := []nats.Option{nats.Name("truckmoov-eventbus")}
+	if c.User != "" {
+		options = append(options, nats.UserInfo(c.User, c.Password))
+	}
+	return options
+}
+
 // New connects to NATS JetStream and ensures the event stream exists with
 // bounded retention. It fails loudly (returns an error) rather than silently
 // dropping events through a no-op bus — callers should treat a nil error as a
 // hard requirement and exit on failure.
-func New(ctx context.Context, natsURL, streamName string, log *slog.Logger) (EventBus, error) {
+func New(ctx context.Context, natsURL, streamName string, creds Credentials, log *slog.Logger) (EventBus, error) {
 	effectiveStreamName := sanitizeJetStreamName(streamName)
 	if effectiveStreamName != streamName {
 		log.Warn("nats_stream_name_sanitized", "configured_stream", streamName, "effective_stream", effectiveStreamName)
 	}
 
-	nc, err := nats.Connect(natsURL, nats.Name("truckmoov-eventbus"))
+	nc, err := nats.Connect(natsURL, creds.options()...)
 	if err != nil {
 		return nil, fmt.Errorf("connect nats %q: %w", natsURL, err)
 	}

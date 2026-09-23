@@ -61,7 +61,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	bus, err := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, log)
+	bus, err := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, eventbus.Credentials{User: cfg.NATSUser, Password: cfg.NATSPassword}, log)
 	if err != nil {
 		log.Error("eventbus_init_failed", "error", err.Error())
 		os.Exit(1)
