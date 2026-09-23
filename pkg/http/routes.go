@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 
 	"github.com/truckmoov/services-go/pkg/identity"
@@ -37,31 +38,63 @@ type RefusalReporter func(Refusal)
 // to register a route without saying so, so nothing is reachable by
 // omission.
 type Routes struct {
-	mux      *http.ServeMux
-	enforce  bool
-	log      *slog.Logger
-	report   RefusalReporter
-	declared map[string][]Audience
+	mux     *http.ServeMux
+	enforce bool
+	// enforcePermissions refuses users lacking a route's permission; off,
+	// such requests are only logged.
+	enforcePermissions bool
+	log                *slog.Logger
+	report             RefusalReporter
+	declared           map[string][]Audience
+	needs              map[string]Requirement
 }
 
 // NewRoutes refuses for real only when enforce is set; otherwise it logs
 // each request it would have refused and lets it through.
 func NewRoutes(mux *http.ServeMux, enforce bool, log *slog.Logger, report RefusalReporter) *Routes {
-	return &Routes{mux: mux, enforce: enforce, log: log, report: report, declared: map[string][]Audience{}}
+	return &Routes{mux: mux, enforce: enforce, log: log, report: report, declared: map[string][]Audience{}, needs: map[string]Requirement{}}
 }
 
-// Handle panics on a route that names no audience: a route nobody may reach
-// is a mistake to catch at start-up, not a refusal to discover in production.
-func (r *Routes) Handle(pattern string, audiences []Audience, handler http.Handler) {
+// EnforcePermissions switches permission refusals on.
+func (r *Routes) EnforcePermissions(on bool) *Routes {
+	r.enforcePermissions = on
+	return r
+}
+
+// Handle panics on a route that names no audience, or a route users reach
+// that names no permission: a route nobody may reach is a mistake to catch
+// at start-up, not a refusal to discover in production.
+func (r *Routes) Handle(pattern string, audiences []Audience, need Requirement, handler http.Handler) {
 	if len(audiences) == 0 {
 		panic("route " + pattern + " declares no audience")
 	}
+	if servesUsers(audiences) && !need.declared() {
+		panic("route " + pattern + " declares no permission")
+	}
 	r.declared[pattern] = audiences
-	r.mux.Handle(pattern, r.guard(audiences, handler))
+	r.needs[pattern] = need
+	r.mux.Handle(pattern, r.guard(audiences, need, handler))
 }
 
-func (r *Routes) HandleFunc(pattern string, audiences []Audience, handler http.HandlerFunc) {
-	r.Handle(pattern, audiences, handler)
+func (r *Routes) HandleFunc(pattern string, audiences []Audience, need Requirement, handler http.HandlerFunc) {
+	r.Handle(pattern, audiences, need, handler)
+}
+
+// Permissions lists every permission any route needs, for the tests that
+// check each one is a real catalog permission some role can hold.
+func (r *Routes) Permissions() []string {
+	var all []string
+	for _, need := range r.needs {
+		for _, method := range []string{http.MethodGet, http.MethodPost} {
+			all = append(all, need.needed(method)...)
+		}
+	}
+	sort.Strings(all)
+	return slices.Compact(all)
+}
+
+func servesUsers(audiences []Audience) bool {
+	return slices.Contains(audiences, Tenant) || slices.Contains(audiences, Admin)
 }
 
 // Declared lists every registered pattern, for the route inventory test.
@@ -74,10 +107,17 @@ func (r *Routes) Declared() []string {
 	return patterns
 }
 
-func (r *Routes) guard(audiences []Audience, next http.Handler) http.Handler {
+func (r *Routes) guard(audiences []Audience, need Requirement, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		caller := CallerAudience(req)
 		if admits(audiences, caller) {
+			if r.lacksPermission(req, caller, audiences, need) {
+				r.refused(req, caller, "missing_permission", r.enforcePermissions)
+				if r.enforcePermissions {
+					http.NotFound(w, req)
+					return
+				}
+			}
 			next.ServeHTTP(r.hidingForbidden(w, req, caller), req)
 			return
 		}
@@ -87,7 +127,7 @@ func (r *Routes) guard(audiences []Audience, next http.Handler) http.Handler {
 			writeUnauthorized(w, "missing or invalid authorization")
 			return
 		}
-		r.refused(req, caller)
+		r.refused(req, caller, "audience_not_served", r.enforce)
 		if !r.enforce {
 			next.ServeHTTP(w, req)
 			return
@@ -98,23 +138,33 @@ func (r *Routes) guard(audiences []Audience, next http.Handler) http.Handler {
 	})
 }
 
-func (r *Routes) refused(req *http.Request, caller Audience) {
+func (r *Routes) refused(req *http.Request, caller Audience, reason string, enforced bool) {
 	refusal := Refusal{
 		Method:   req.Method,
 		Path:     req.URL.Path,
 		IP:       clientIP(req),
 		Audience: string(caller),
-		Reason:   "audience_not_served",
+		Reason:   reason,
 	}
 	if r.log != nil {
 		r.log.Warn("route_refused", "method", refusal.Method, "path", refusal.Path, "ip", refusal.IP,
-			"caller", refusal.Audience, "enforced", r.enforce)
+			"caller", refusal.Audience, "reason", reason, "enforced", enforced)
 	}
 	// Only real refusals count toward IP blocking: while enforcement is off, a
 	// gap in the route table would otherwise block legitimate users.
-	if r.enforce && r.report != nil {
+	if enforced && r.report != nil {
 		r.report(refusal)
 	}
+}
+
+// lacksPermission is true for a user missing what the route needs. Public
+// routes and service calls are outside it.
+func (r *Routes) lacksPermission(req *http.Request, caller Audience, audiences []Audience, need Requirement) bool {
+	if caller == Public || caller == Service || slices.Contains(audiences, Public) {
+		return false
+	}
+	claims, ok := ClaimsFromRequest(req)
+	return !ok || !permitted(claims, need, req.Method)
 }
 
 func presentsCredentials(req *http.Request) bool {
@@ -166,7 +216,7 @@ func (f *forbiddenHider) WriteHeader(status int) {
 		f.ResponseWriter.WriteHeader(status)
 		return
 	}
-	f.routes.refused(f.req, f.caller)
+	f.routes.refused(f.req, f.caller, "forbidden", f.routes.enforce)
 	if !f.routes.enforce {
 		f.ResponseWriter.WriteHeader(status)
 		return

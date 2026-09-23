@@ -349,19 +349,19 @@ func main() {
 		}
 	}
 	mux := http.NewServeMux()
-	routes := httpx.NewRoutes(mux, cfg.PortalEnforced, log, httpx.RefusalPublisher(bus, "notification"))
+	routes := httpx.NewRoutes(mux, cfg.PortalEnforced, log, httpx.RefusalPublisher(bus, "notification")).EnforcePermissions(cfg.PermissionsEnforced)
 	handler.RegisterRoutes(routes)
 
 	metrics := httpx.NewMetrics(cfg.ServiceName)
-	routes.Handle("/metrics", []httpx.Audience{httpx.Public}, metrics.Handler())
+	routes.Handle("/metrics", []httpx.Audience{httpx.Public}, httpx.None(), metrics.Handler())
 
 	readiness := httpx.ReadinessHandler("notification",
 		httpx.ReadinessCheck{Name: "postgres", Probe: postgresDB.PingContext},
 		httpx.ReadinessCheck{Name: "nats", Probe: bus.Ping},
 		httpx.ReadinessCheck{Name: "redis", Probe: func(context.Context) error { return redisClient.Ping() }},
 	)
-	routes.Handle("/ready", []httpx.Audience{httpx.Public}, readiness)
-	routes.Handle("/notify/ready", []httpx.Audience{httpx.Public}, readiness)
+	routes.Handle("/ready", []httpx.Audience{httpx.Public}, httpx.None(), readiness)
+	routes.Handle("/notify/ready", []httpx.Audience{httpx.Public}, httpx.None(), readiness)
 
 	handlerWithAuth := httpx.WithAuthContext(httpx.WithServiceCallers(httpx.WithCurrentAccess(metrics.Middleware(mux), accessClient), cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
 		"auth":     "DISPATCHER",

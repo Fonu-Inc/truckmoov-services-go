@@ -70,19 +70,19 @@ func NewHandler(
 }
 
 func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
-	routes.HandleFunc("/tracking/health", []httpx.Audience{httpx.Public}, h.health)
-	routes.HandleFunc("/tracking/docs", []httpx.Audience{httpx.Public}, h.docsUI)
-	routes.HandleFunc("/tracking/docs/openapi.json", []httpx.Audience{httpx.Public}, h.docsOpenAPI)
-	routes.HandleFunc("/docs/tracking", []httpx.Audience{httpx.Public}, h.docsUI)
-	routes.HandleFunc("/docs/tracking/openapi.json", []httpx.Audience{httpx.Public}, h.docsOpenAPI)
-	routes.Handle("/tracking/ingest", []httpx.Audience{httpx.Public}, h.withAPIKey(http.HandlerFunc(h.ingest)))
-	routes.Handle("/tracking/ingest/vendor/", []httpx.Audience{httpx.Public}, h.withAPIKey(http.HandlerFunc(h.ingestVendor)))
-	routes.HandleFunc("/tracking/alerts", []httpx.Audience{httpx.Tenant}, h.alert)
-	routes.HandleFunc("/tracking/vehicles", []httpx.Audience{httpx.Tenant, httpx.Service}, h.listVehicles)
-	routes.HandleFunc("/tracking/vehicles/", []httpx.Audience{httpx.Tenant}, h.vehiclesResource)
-	routes.HandleFunc("/tracking/devices/", []httpx.Audience{httpx.Tenant}, h.deviceResource)
-	routes.HandleFunc("/tracking/ws", []httpx.Audience{httpx.Admin}, h.wsBridge.ServeHTTP)
-	routes.HandleFunc("/health", []httpx.Audience{httpx.Public}, h.health)
+	routes.HandleFunc("/tracking/health", []httpx.Audience{httpx.Public}, httpx.None(), h.health)
+	routes.HandleFunc("/tracking/docs", []httpx.Audience{httpx.Public}, httpx.None(), h.docsUI)
+	routes.HandleFunc("/tracking/docs/openapi.json", []httpx.Audience{httpx.Public}, httpx.None(), h.docsOpenAPI)
+	routes.HandleFunc("/docs/tracking", []httpx.Audience{httpx.Public}, httpx.None(), h.docsUI)
+	routes.HandleFunc("/docs/tracking/openapi.json", []httpx.Audience{httpx.Public}, httpx.None(), h.docsOpenAPI)
+	routes.Handle("/tracking/ingest", []httpx.Audience{httpx.Public}, httpx.None(), h.withAPIKey(http.HandlerFunc(h.ingest)))
+	routes.Handle("/tracking/ingest/vendor/", []httpx.Audience{httpx.Public}, httpx.None(), h.withAPIKey(http.HandlerFunc(h.ingestVendor)))
+	routes.HandleFunc("/tracking/alerts", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.alerts"), h.alert)
+	routes.HandleFunc("/tracking/vehicles", []httpx.Audience{httpx.Tenant, httpx.Service}, httpx.On("tenant.tracking"), h.listVehicles)
+	routes.HandleFunc("/tracking/vehicles/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.tracking"), h.vehiclesResource)
+	routes.HandleFunc("/tracking/devices/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.devices"), h.deviceResource)
+	routes.HandleFunc("/tracking/ws", []httpx.Audience{httpx.Admin}, httpx.On("admin.devices"), h.wsBridge.ServeHTTP)
+	routes.HandleFunc("/health", []httpx.Audience{httpx.Public}, httpx.None(), h.health)
 }
 
 func (h *Handler) withAPIKey(next http.Handler) http.Handler {

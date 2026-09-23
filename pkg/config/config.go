@@ -43,6 +43,9 @@ type Config struct {
 	// PortalEnforced refuses requests from outside a route's audience; off,
 	// they are only logged, to find any caller the route table missed.
 	PortalEnforced bool
+	// PermissionsEnforced refuses users lacking a route's permission; off,
+	// they are only logged.
+	PermissionsEnforced bool
 	// JWTKeyID is an arbitrary label rotated alongside JWT_SECRET (not
 	// derived from it) — safe to log at startup so two services' logs can
 	// be diffed to confirm they're on the same secret generation, without
@@ -133,6 +136,7 @@ func Load(serviceName, defaultPort string) Config {
 		ServiceTokenDir:              getEnv("SERVICE_TOKEN_DIR", "/var/run/secrets/truckmoov/service-tokens"),
 		ServiceAuthDevSecret:         getEnv("SERVICE_AUTH_DEV_SECRET", ""),
 		PortalEnforced:               getEnv("PORTAL_ENFORCEMENT", "log") == "enforce",
+		PermissionsEnforced:          getEnv("PERMISSION_ENFORCEMENT", "log") == "enforce",
 		JWTKeyID:                     getEnv("JWT_KEY_ID", "unset"),
 		PostgresHost:                 getEnv("POSTGRES_HOST", "localhost"),
 		PostgresPort:                 getEnv("POSTGRES_PORT", "5432"),

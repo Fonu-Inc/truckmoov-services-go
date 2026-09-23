@@ -159,18 +159,18 @@ func main() {
 		}
 	}
 	mux := http.NewServeMux()
-	routes := httpx.NewRoutes(mux, cfg.PortalEnforced, log, httpx.RefusalPublisher(bus, "tracking"))
+	routes := httpx.NewRoutes(mux, cfg.PortalEnforced, log, httpx.RefusalPublisher(bus, "tracking")).EnforcePermissions(cfg.PermissionsEnforced)
 	handler.RegisterRoutes(routes)
 
 	metrics := httpx.NewMetrics(cfg.ServiceName)
-	routes.Handle("/metrics", []httpx.Audience{httpx.Public}, metrics.Handler())
+	routes.Handle("/metrics", []httpx.Audience{httpx.Public}, httpx.None(), metrics.Handler())
 
 	readiness := httpx.ReadinessHandler("tracking",
 		httpx.ReadinessCheck{Name: "nats", Probe: bus.Ping},
 		httpx.ReadinessCheck{Name: "redis", Probe: func(context.Context) error { return redisClient.Ping() }},
 	)
-	routes.Handle("/ready", []httpx.Audience{httpx.Public}, readiness)
-	routes.Handle("/tracking/ready", []httpx.Audience{httpx.Public}, readiness)
+	routes.Handle("/ready", []httpx.Audience{httpx.Public}, httpx.None(), readiness)
+	routes.Handle("/tracking/ready", []httpx.Audience{httpx.Public}, httpx.None(), readiness)
 
 	// Kong answers CORS in every deployed environment. SERVICE_CORS_ENABLED=true
 	// turns it on here instead, which a local run without Kong needs.

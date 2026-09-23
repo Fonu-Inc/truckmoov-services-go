@@ -40,11 +40,11 @@ func buildRoutes(enforce bool) (*Routes, *http.ServeMux, *[]Refusal) {
 	mux := http.NewServeMux()
 	refusals := &[]Refusal{}
 	routes := NewRoutes(mux, enforce, nil, func(r Refusal) { *refusals = append(*refusals, r) })
-	routes.HandleFunc("/t", []Audience{Tenant}, ok)
-	routes.HandleFunc("/ts", []Audience{Tenant, Service}, ok)
-	routes.HandleFunc("/a", []Audience{Admin}, ok)
-	routes.HandleFunc("/p", []Audience{Public}, ok)
-	routes.HandleFunc("/deep", []Audience{Tenant}, forbidden)
+	routes.HandleFunc("/t", []Audience{Tenant}, SignedIn(), ok)
+	routes.HandleFunc("/ts", []Audience{Tenant, Service}, SignedIn(), ok)
+	routes.HandleFunc("/a", []Audience{Admin}, SignedIn(), ok)
+	routes.HandleFunc("/p", []Audience{Public}, None(), ok)
+	routes.HandleFunc("/deep", []Audience{Tenant}, SignedIn(), forbidden)
 	return routes, mux, refusals
 }
 
@@ -112,7 +112,7 @@ func TestARouteWithNoAudienceCannotBeRegistered(t *testing.T) {
 			t.Fatal("expected registration without an audience to panic")
 		}
 	}()
-	NewRoutes(http.NewServeMux(), true, nil, nil).HandleFunc("/x", nil, ok)
+	NewRoutes(http.NewServeMux(), true, nil, nil).HandleFunc("/x", nil, SignedIn(), ok)
 }
 
 // The portals refresh a token on 401; answering an expired one with 404
@@ -129,4 +129,47 @@ func TestAnExpiredTokenIsToldToRefresh(t *testing.T) {
 		t.Fatalf("expected 401, got %d", res.Code)
 	}
 	_ = routes
+}
+
+func TestAUserLackingTheRoutePermissionIsRefusedOnceEnforced(t *testing.T) {
+	mux := http.NewServeMux()
+	routes := NewRoutes(mux, true, nil, nil).EnforcePermissions(true)
+	routes.HandleFunc("/jobs", []Audience{Tenant}, On("tenant.dispatch"), ok)
+	finance := &AuthClaims{Role: "FINANCE_VIEWER", TenantID: "t1", Portal: identity.PortalTenant}
+	dispatcher := &AuthClaims{Role: "DISPATCHER", TenantID: "t1", Portal: identity.PortalTenant}
+	post := func(claims *AuthClaims) int {
+		res := httptest.NewRecorder()
+		mux.ServeHTTP(res, withClaims(httptest.NewRequest(http.MethodPost, "/jobs", nil), claims))
+		return res.Code
+	}
+
+	if got := post(dispatcher); got != 200 {
+		t.Fatalf("a dispatcher manages dispatch, got %d", got)
+	}
+	if got := post(finance); got != 404 {
+		t.Fatalf("a finance viewer only reads dispatch, got %d", got)
+	}
+	if got := serve(routes, mux, "/jobs", finance).Code; got != 200 {
+		t.Fatalf("a finance viewer may read, got %d", got)
+	}
+}
+
+func TestLivePermissionsWinOverTheRoleBundle(t *testing.T) {
+	mux := http.NewServeMux()
+	NewRoutes(mux, true, nil, nil).EnforcePermissions(true).HandleFunc("/jobs", []Audience{Tenant}, On("tenant.dispatch"), ok)
+	demoted := &AuthClaims{Role: "DISPATCHER", TenantID: "t1", Portal: identity.PortalTenant, Permissions: []string{}}
+	res := httptest.NewRecorder()
+	mux.ServeHTTP(res, withClaims(httptest.NewRequest(http.MethodGet, "/jobs", nil), demoted))
+	if res.Code != 404 {
+		t.Fatalf("permissions auth reports now must decide, got %d", res.Code)
+	}
+}
+
+func TestARouteUsersReachMustNameAPermission(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected a user route without a permission to panic")
+		}
+	}()
+	NewRoutes(http.NewServeMux(), true, nil, nil).HandleFunc("/x", []Audience{Tenant}, None(), ok)
 }

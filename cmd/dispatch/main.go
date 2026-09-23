@@ -335,18 +335,18 @@ func main() {
 		}
 	}
 	mux := http.NewServeMux()
-	routes := httpx.NewRoutes(mux, cfg.PortalEnforced, log, httpx.RefusalPublisher(bus, "dispatch"))
+	routes := httpx.NewRoutes(mux, cfg.PortalEnforced, log, httpx.RefusalPublisher(bus, "dispatch")).EnforcePermissions(cfg.PermissionsEnforced)
 	handler.RegisterRoutes(routes)
 
 	metrics := httpx.NewMetrics(cfg.ServiceName)
-	routes.Handle("/metrics", []httpx.Audience{httpx.Public}, metrics.Handler())
+	routes.Handle("/metrics", []httpx.Audience{httpx.Public}, httpx.None(), metrics.Handler())
 
 	readiness := httpx.ReadinessHandler("dispatch",
 		httpx.ReadinessCheck{Name: "postgres", Probe: postgresDB.PingContext},
 		httpx.ReadinessCheck{Name: "nats", Probe: bus.Ping},
 	)
-	routes.Handle("/ready", []httpx.Audience{httpx.Public}, readiness)
-	routes.Handle("/dispatch/ready", []httpx.Audience{httpx.Public}, readiness)
+	routes.Handle("/ready", []httpx.Audience{httpx.Public}, httpx.None(), readiness)
+	routes.Handle("/dispatch/ready", []httpx.Audience{httpx.Public}, httpx.None(), readiness)
 
 	// Kong answers CORS in every deployed environment. SERVICE_CORS_ENABLED=true
 	// turns it on here instead, which a local run without Kong needs.
