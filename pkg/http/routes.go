@@ -110,7 +110,9 @@ func (r *Routes) refused(req *http.Request, caller Audience) {
 		r.log.Warn("route_refused", "method", refusal.Method, "path", refusal.Path, "ip", refusal.IP,
 			"caller", refusal.Audience, "enforced", r.enforce)
 	}
-	if r.report != nil {
+	// Only real refusals count toward IP blocking: while enforcement is off, a
+	// gap in the route table would otherwise block legitimate users.
+	if r.enforce && r.report != nil {
 		r.report(refusal)
 	}
 }

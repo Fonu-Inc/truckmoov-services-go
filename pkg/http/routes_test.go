@@ -49,7 +49,7 @@ func buildRoutes(enforce bool) (*Routes, *http.ServeMux, *[]Refusal) {
 }
 
 func TestEachRouteServesOnlyItsAudience(t *testing.T) {
-	routes, mux, _ := buildRoutes(true)
+	routes, mux, refusals := buildRoutes(true)
 	cases := []struct {
 		path   string
 		claims *AuthClaims
@@ -68,6 +68,9 @@ func TestEachRouteServesOnlyItsAudience(t *testing.T) {
 		if got := serve(routes, mux, c.path, c.claims).Code; got != c.want {
 			t.Fatalf("%s as %+v: got %d, want %d", c.path, c.claims, got, c.want)
 		}
+	}
+	if len(*refusals) != 4 || (*refusals)[0].Path != "/t" || (*refusals)[0].Audience != "admin" {
+		t.Fatalf("expected each refusal reported for IP blocking, got %+v", *refusals)
 	}
 }
 
@@ -89,7 +92,7 @@ func TestRefusalLooksLikeAMissingRoute(t *testing.T) {
 	}
 }
 
-func TestLogOnlyModeLetsRequestsThroughAndReportsThem(t *testing.T) {
+func TestLogOnlyModeLetsRequestsThroughAndBlocksNobody(t *testing.T) {
 	routes, mux, refusals := buildRoutes(false)
 
 	if got := serve(routes, mux, "/a", tenantUser).Code; got != 200 {
@@ -98,8 +101,8 @@ func TestLogOnlyModeLetsRequestsThroughAndReportsThem(t *testing.T) {
 	if got := serve(routes, mux, "/deep", tenantUser).Code; got != 403 {
 		t.Fatalf("log-only mode must leave a handler's answer alone, got %d", got)
 	}
-	if len(*refusals) != 2 || (*refusals)[0].Path != "/a" || (*refusals)[0].Audience != "tenant" {
-		t.Fatalf("expected both would-be refusals reported, got %+v", *refusals)
+	if len(*refusals) != 0 {
+		t.Fatalf("log-only refusals must not reach IP blocking, got %+v", *refusals)
 	}
 }
 
