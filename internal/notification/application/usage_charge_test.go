@@ -155,3 +155,32 @@ func TestIsBillable(t *testing.T) {
 		}
 	}
 }
+
+func TestSystemTenantSendIsLoggedButNotCharged(t *testing.T) {
+	charger := &recordingCharger{}
+	provider := &fakeMessageProvider{status: domain.StatusSent}
+	log := &recordingDeliveryLog{}
+	useCase := NewSendMessageUseCase(
+		newFakeOutboxRepository(), provider, &fakeDeliveryPublisher{}, log, charger,
+		fixedNotificationClock{now: time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)},
+		fixedNotificationIDGenerator{id: "1"}, "tenant-default",
+	)
+
+	_, err := useCase.Execute(context.Background(), SendMessageCommand{
+		TenantID: SystemTenantID, Channel: "sms", Recipient: "+2348000000000", Content: "hi",
+		NotificationType: domain.NotificationTypeInstallerJobAssigned,
+	})
+	if err != nil {
+		t.Fatalf("send failed: %v", err)
+	}
+
+	if len(charger.charges) != 0 {
+		t.Fatalf("the system tenant was charged: %+v", charger.charges)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("expected one send, got %d", provider.calls)
+	}
+	if len(log.entries) != 1 || log.entries[0].TenantID != SystemTenantID {
+		t.Fatalf("expected the send logged under the system tenant, got %+v", log.entries)
+	}
+}

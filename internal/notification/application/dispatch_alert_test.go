@@ -200,7 +200,7 @@ func TestUnknownAlertTypeIsRefused(t *testing.T) {
 
 func TestKnownAlertTypesAreAccepted(t *testing.T) {
 	for _, alertType := range []string{
-		"new_tenant_signup", "system_errors", "billing_alerts", "security_alerts",
+		"new_tenant_signup", "system_errors", "billing_alerts", "security_alerts", "installation_issues",
 	} {
 		if !IsKnownAlertType(alertType) {
 			t.Fatalf("%q should be a known alert type", alertType)
@@ -254,17 +254,17 @@ func TestAlertClaimingAnotherTenantIsRefused(t *testing.T) {
 func TestAlertIsAlwaysSentAsTheSystemTenant(t *testing.T) {
 	setting := enabled()
 	setting.Channels = []string{"sms"}
-	useCase, _, charger := alertHarness(setting, nil)
+	useCase, provider, charger := alertHarness(setting, nil)
 
 	if err := useCase.Handle(context.Background(), alertEvent("critical")); err != nil {
 		t.Fatalf("dispatch failed: %v", err)
 	}
 
-	// SMS is billable, so the tenant on the charge is the one that pays.
-	if len(charger.charges) != 1 {
-		t.Fatalf("expected one charge, got %d", len(charger.charges))
+	// SMS is billable, but the system tenant is the platform: sent, never debited.
+	if provider.calls != 1 {
+		t.Fatalf("expected one send, got %d", provider.calls)
 	}
-	if charger.charges[0].TenantID != SystemTenantID {
-		t.Fatalf("alert charged to %q instead of the platform", charger.charges[0].TenantID)
+	if len(charger.charges) != 0 {
+		t.Fatalf("a platform alert debited a wallet: %+v", charger.charges)
 	}
 }

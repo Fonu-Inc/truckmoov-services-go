@@ -253,7 +253,7 @@ func notificationOpenAPISpec() map[string]any {
 					"description": "Answers \"did we tell them\". The tenant comes from the token, never from a parameter.",
 					"operationId": "listDeliveryLog",
 					"parameters": []any{
-						map[string]any{"name": "notification_type", "in": "query", "required": false, "schema": map[string]any{"type": "string", "enum": []string{"generic", "kyc_decision", "compliance_reminder", "job_assignment", "campaign", "spending_limit"}}},
+						map[string]any{"name": "notification_type", "in": "query", "required": false, "schema": map[string]any{"type": "string", "enum": []string{"generic", "kyc_decision", "compliance_reminder", "job_assignment", "campaign", "spending_limit", "job_assigned", "job_updated", "job_reminder", "job_cancelled", "issue_resolved", "device_verified", "device_verification_failed"}}},
 						map[string]any{"name": "channel", "in": "query", "required": false, "schema": map[string]any{"type": "string"}},
 						map[string]any{"name": "status", "in": "query", "required": false, "schema": map[string]any{"type": "string"}},
 						map[string]any{"name": "limit", "in": "query", "required": false, "description": "Defaults to 50, capped at 200.", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": 200}},

@@ -18,6 +18,17 @@ const (
 	NotificationTypeSpendingLimit      = "spending_limit"
 )
 
+// Installer portal notices, sent under the system tenant.
+const (
+	NotificationTypeInstallerJobAssigned              = "job_assigned"
+	NotificationTypeInstallerJobUpdated               = "job_updated"
+	NotificationTypeInstallerJobReminder              = "job_reminder"
+	NotificationTypeInstallerJobCancelled             = "job_cancelled"
+	NotificationTypeInstallerIssueResolved            = "issue_resolved"
+	NotificationTypeInstallerDeviceVerified           = "device_verified"
+	NotificationTypeInstallerDeviceVerificationFailed = "device_verification_failed"
+)
+
 // DeliveryLogEntry answers "did we tell them", so it stores the message as it
 // was sent. Regenerating it from a template later would show what the template
 // says now, which is not necessarily what the recipient read.

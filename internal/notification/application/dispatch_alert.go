@@ -45,10 +45,11 @@ const SystemTenantID = identity.SystemTenantID
 // which makes an unchecked value both a way to reach a different endpoint and a
 // way to grow the cache without bound.
 var knownAlertTypes = map[string]bool{
-	"new_tenant_signup": true,
-	"system_errors":     true,
-	"billing_alerts":    true,
-	"security_alerts":   true,
+	"new_tenant_signup":   true,
+	"system_errors":       true,
+	"billing_alerts":      true,
+	"security_alerts":     true,
+	"installation_issues": true,
 }
 
 // IsKnownAlertType reports whether the platform recognises this alert type.

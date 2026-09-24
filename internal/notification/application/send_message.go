@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/truckmoov/services-go/internal/notification/domain"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 type SendMessageCommand struct {
@@ -118,9 +119,10 @@ func (u *SendMessageUseCase) Execute(ctx context.Context, command SendMessageCom
 // A channel with no rate is not charged rather than being refused: email rides
 // on the tenant's own mail server and costs the platform nothing. A missing
 // charger means charging is not configured in this deployment, which must not
-// silently stop every send.
+// silently stop every send. The system tenant is the platform itself, so its
+// sends are logged but never debited.
 func (u *SendMessageUseCase) chargeForSend(ctx context.Context, message domain.OutboxMessage) error {
-	if u.usageCharger == nil || !IsBillable(message.Channel) {
+	if u.usageCharger == nil || !IsBillable(message.Channel) || message.TenantID == identity.SystemTenantID {
 		return nil
 	}
 
