@@ -24,6 +24,7 @@ var (
 	tenantUser = &AuthClaims{Role: "FLEET_ADMIN", TenantID: "tenant-a", Portal: identity.PortalTenant}
 	staff      = &AuthClaims{Role: "PLATFORM_ADMIN", TenantID: "system", Portal: identity.PortalAdmin}
 	fleetCall  = &AuthClaims{Role: "FLEET_ADMIN", TenantID: "tenant-a", Portal: identity.PortalTenant, Service: "fleet"}
+	installer  = &AuthClaims{Role: identity.RoleInstaller, TenantID: "system", Portal: identity.PortalInstaller}
 )
 
 func serve(routes *Routes, mux *http.ServeMux, path string, claims *AuthClaims) *httptest.ResponseRecorder {
@@ -162,6 +163,34 @@ func TestLivePermissionsWinOverTheRoleBundle(t *testing.T) {
 	mux.ServeHTTP(res, withClaims(httptest.NewRequest(http.MethodGet, "/jobs", nil), demoted))
 	if res.Code != 404 {
 		t.Fatalf("permissions auth reports now must decide, got %d", res.Code)
+	}
+}
+
+// An installer token must not fall through into the tenant portal, nor an
+// unknown portal into any.
+func TestAnInstallerReachesOnlyInstallerRoutes(t *testing.T) {
+	routes, mux, _ := buildRoutes(true)
+	routes.HandleFunc("/i", []Audience{Installer}, SignedIn(), ok)
+	stranger := &AuthClaims{Role: "FLEET_ADMIN", TenantID: "tenant-a", Portal: identity.Portal("partner")}
+	cases := []struct {
+		path   string
+		claims *AuthClaims
+		want   int
+	}{
+		{"/i", installer, 200},
+		{"/t", installer, 404},
+		{"/ts", installer, 404},
+		{"/a", installer, 404},
+		{"/i", tenantUser, 404},
+		{"/i", staff, 404},
+	}
+	for _, c := range cases {
+		if got := serve(routes, mux, c.path, c.claims).Code; got != c.want {
+			t.Fatalf("%s as %+v: got %d, want %d", c.path, c.claims, got, c.want)
+		}
+	}
+	if got := CallerAudience(withClaims(httptest.NewRequest(http.MethodGet, "/t", nil), stranger)); got != Public {
+		t.Fatalf("an unknown portal must be nobody, got %s", got)
 	}
 }
 

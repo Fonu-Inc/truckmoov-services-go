@@ -16,10 +16,11 @@ import (
 type Audience string
 
 const (
-	Admin   Audience = "admin"
-	Tenant  Audience = "tenant"
-	Service Audience = "service"
-	Public  Audience = "public"
+	Admin     Audience = "admin"
+	Tenant    Audience = "tenant"
+	Installer Audience = "installer"
+	Service   Audience = "service"
+	Public    Audience = "public"
 )
 
 // Refusal is one request a route turned away, for the platform's IP blocking.
@@ -94,7 +95,7 @@ func (r *Routes) Permissions() []string {
 }
 
 func servesUsers(audiences []Audience) bool {
-	return slices.Contains(audiences, Tenant) || slices.Contains(audiences, Admin)
+	return slices.Contains(audiences, Tenant) || slices.Contains(audiences, Admin) || slices.Contains(audiences, Installer)
 }
 
 // Declared lists every registered pattern, for the route inventory test.
@@ -181,7 +182,8 @@ func admits(audiences []Audience, caller Audience) bool {
 }
 
 // CallerAudience is who is calling: a service, a user of one portal, or
-// nobody the request proves.
+// nobody the request proves. A portal it does not know is nobody: falling
+// back to tenant would let any other portal's token onto tenant routes.
 func CallerAudience(req *http.Request) Audience {
 	claims, ok := ClaimsFromRequest(req)
 	switch {
@@ -191,8 +193,12 @@ func CallerAudience(req *http.Request) Audience {
 		return Service
 	case claims.Portal == identity.PortalAdmin:
 		return Admin
-	default:
+	case claims.Portal == identity.PortalTenant:
 		return Tenant
+	case claims.Portal == identity.PortalInstaller:
+		return Installer
+	default:
+		return Public
 	}
 }
 

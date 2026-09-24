@@ -12,9 +12,14 @@ const SystemTenantID = "system"
 type Portal string
 
 const (
-	PortalAdmin  Portal = "admin"
-	PortalTenant Portal = "tenant"
+	PortalAdmin     Portal = "admin"
+	PortalTenant    Portal = "tenant"
+	PortalInstaller Portal = "installer"
 )
+
+// RoleInstaller is a field installer: held only in the system tenant, with
+// its own portal, and never platform staff.
+const RoleInstaller = "INSTALLER"
 
 var systemRoles = map[string]bool{
 	"SUPER_ADMIN":        true,
@@ -34,14 +39,24 @@ func IsPlatformActor(role, tenantID string) bool {
 	return tenantID == SystemTenantID && IsSystemRole(role)
 }
 
+// IsInstallerActor needs both halves too: an installer role inside a
+// customer tenant is not an installer.
+func IsInstallerActor(role, tenantID string) bool {
+	return tenantID == SystemTenantID && role == RoleInstaller
+}
+
 // PortalFor is the portal a user belongs to.
 func PortalFor(role, tenantID string) Portal {
-	if IsPlatformActor(role, tenantID) {
+	switch {
+	case IsPlatformActor(role, tenantID):
 		return PortalAdmin
+	case IsInstallerActor(role, tenantID):
+		return PortalInstaller
+	default:
+		return PortalTenant
 	}
-	return PortalTenant
 }
 
 func (p Portal) valid() bool {
-	return p == PortalAdmin || p == PortalTenant
+	return p == PortalAdmin || p == PortalTenant || p == PortalInstaller
 }
