@@ -99,6 +99,32 @@ func (c Credentials) options() []nats.Option {
 	return options
 }
 
+// connectionEvents logs what happens to the connection after start-up, so a
+// dropped link or a refused reconnect is visible instead of silent.
+func connectionEvents(log *slog.Logger) []nats.Option {
+	return []nats.Option{
+		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+			log.Warn("nats_disconnected", "error", errString(err))
+		}),
+		nats.ReconnectHandler(func(nc *nats.Conn) {
+			log.Info("nats_reconnected", "server", nc.ConnectedUrlRedacted())
+		}),
+		nats.ClosedHandler(func(nc *nats.Conn) {
+			log.Error("nats_connection_closed", "error", errString(nc.LastError()))
+		}),
+		nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+			log.Error("nats_async_error", "error", errString(err))
+		}),
+	}
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
 // New connects to NATS JetStream and ensures the event stream exists with
 // bounded retention. It fails loudly (returns an error) rather than silently
 // dropping events through a no-op bus — callers should treat a nil error as a
@@ -109,7 +135,7 @@ func New(ctx context.Context, natsURL, streamName string, creds Credentials, log
 		log.Warn("nats_stream_name_sanitized", "configured_stream", streamName, "effective_stream", effectiveStreamName)
 	}
 
-	nc, err := nats.Connect(natsURL, creds.options()...)
+	nc, err := nats.Connect(natsURL, append(creds.options(), connectionEvents(log)...)...)
 	if err != nil {
 		return nil, fmt.Errorf("connect nats %q: %w", natsURL, err)
 	}
