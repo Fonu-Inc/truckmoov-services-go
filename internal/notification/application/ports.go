@@ -27,6 +27,13 @@ type MessageProvider interface {
 	Send(ctx context.Context, tenantID, channel, recipient, content string) (status string, err error)
 }
 
+// TrackedMessageProvider is a MessageProvider that can also name the message it
+// sent. It is a separate interface so a provider with no receipts to match is
+// not made to invent an id.
+type TrackedMessageProvider interface {
+	SendTracked(ctx context.Context, tenantID, channel, recipient, content string) (domain.MessageSendResult, error)
+}
+
 type WhatsAppTemplateMessageProvider interface {
 	SendTemplate(ctx context.Context, request domain.WhatsAppTemplateMessageRequest) (domain.WhatsAppSendResult, error)
 }

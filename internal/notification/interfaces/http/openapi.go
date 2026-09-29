@@ -314,6 +314,28 @@ func notificationOpenAPISpec() map[string]any {
 					},
 				},
 			},
+			"/notify/sms/webhook": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"notification"},
+					"summary":     "Receive Dotgo SMS delivery receipts",
+					"description": "Called by Dotgo, not by clients. The callback address given to Dotgo carries a shared secret in the token query parameter, because Dotgo does not sign its callbacks. A receipt is matched to a sent message by the request id it was sent under; one that matches nothing is acknowledged and ignored.",
+					"operationId": "handleSMSDeliveryReceipt",
+					"parameters": []any{
+						map[string]any{"name": "token", "in": "query", "required": true, "schema": map[string]any{"type": "string"}},
+					},
+					"requestBody": map[string]any{"required": true, "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{
+						"type":       "object",
+						"properties": map[string]any{"id": map[string]any{"type": "string"}, "status": map[string]any{"type": "string", "enum": []string{"sent", "delivered", "undelivered", "failed", "rejected"}}, "error_reason": map[string]any{"type": "string"}},
+					}}}},
+					"responses": map[string]any{
+						"200": openAPIJSONResponse("Receipt acknowledged", map[string]any{"$ref": "#/components/schemas/WebhookAckEnvelope"}),
+						"400": openAPIJSONResponse("Invalid request body", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"401": openAPIJSONResponse("Missing or wrong token", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"502": openAPIJSONResponse("Receipt processing failed; Dotgo should retry", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"503": openAPIJSONResponse("Delivery receipts are not configured", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+					},
+				},
+			},
 			"/notify/whatsapp/webhook": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"notification"},

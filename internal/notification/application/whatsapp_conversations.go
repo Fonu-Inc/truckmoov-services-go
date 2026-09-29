@@ -732,11 +732,11 @@ func (u *HandleWhatsAppWebhookUseCase) trySMSFallbackForFailedJobInstruction(ctx
 		return err
 	}
 
-	sendStatus, sendErr := u.messageProvider.Send(ctx, outboxMessage.TenantID, "sms", outboxMessage.Recipient, smsBody)
+	sent, sendErr := sendViaProvider(ctx, u.messageProvider, outboxMessage.TenantID, "sms", outboxMessage.Recipient, smsBody)
 	if sendErr != nil {
 		smsOutbox = smsOutbox.MarkFailed(receivedAt)
 	} else {
-		smsOutbox = smsOutbox.MarkSent(sendStatus, "", receivedAt)
+		smsOutbox = smsOutbox.MarkSent(sent.Status, sent.ProviderMessageID, receivedAt)
 	}
 	if err := u.outboxRepository.Save(smsOutbox); err != nil {
 		return err

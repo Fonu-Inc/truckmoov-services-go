@@ -19,4 +19,6 @@ data:
   WHATSAPP_APP_ID: replace-me
   DOTGO_BASE_URL: https://konnect.dotgo.com
   DOTGO_TRANSACTIONAL_SENDER_MASK: FONU
+  # Public address of this service's own receipt route; needs DOTGO_WEBHOOK_SECRET too.
+  DOTGO_CALLBACK_URL: https://example-api-host/notify/sms/webhook
   CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000

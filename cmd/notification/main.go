@@ -118,10 +118,9 @@ func main() {
 		cfg.WhatsAppPhoneNumberID,
 		cfg.WhatsAppAccessToken,
 	)
-	dotgoCallbackURL := strings.TrimSpace(cfg.DotgoCallbackURL)
-	if dotgoCallbackURL != "" && !infrastructure.ValidDotgoCallbackURL(dotgoCallbackURL) {
-		log.Warn("sms_callback_url_invalid", "message", "DOTGO_CALLBACK_URL is not an absolute http(s) URL, so delivery receipts are not requested; replace the unfilled template with the real address")
-		dotgoCallbackURL = ""
+	dotgoCallbackURL := infrastructure.DotgoCallbackURLWithToken(cfg.DotgoCallbackURL, cfg.DotgoWebhookSecret)
+	if strings.TrimSpace(cfg.DotgoCallbackURL) != "" && dotgoCallbackURL == "" {
+		log.Warn("sms_callback_unusable", "message", "delivery receipts are not requested: DOTGO_CALLBACK_URL must be an absolute http(s) URL of this service's /notify/sms/webhook route, and DOTGO_WEBHOOK_SECRET must be set")
 	}
 	smsMessageProvider := infrastructure.NewDotgoSMSMessageProvider(
 		cfg.DotgoBaseURL,
@@ -334,6 +333,10 @@ func main() {
 		clock,
 		cfg.WhatsAppWebhookVerifyToken,
 		cfg.WhatsAppAppSecret,
+	)
+	handler = handler.WithSMSReceipts(
+		application.NewHandleSMSDeliveryReceiptUseCase(outboxRepository, deliveryLogRepository, deliveryPublisher, clock, idGenerator),
+		cfg.DotgoWebhookSecret,
 	)
 	handler = handler.WithCampaigns(
 		campaignRepository,

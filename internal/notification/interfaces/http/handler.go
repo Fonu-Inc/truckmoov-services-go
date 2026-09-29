@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -173,6 +174,8 @@ type Handler struct {
 	clock                                   application.Clock
 	whatsAppWebhookVerifyToken              string
 	whatsAppAppSecret                       string
+	handleSMSReceiptUseCase                 *application.HandleSMSDeliveryReceiptUseCase
+	smsWebhookToken                         string
 	campaignRepository                      application.CampaignRepository
 	createCampaignUseCase                   *application.CreateCampaignUseCase
 	sendCampaignUseCase                     *application.SendCampaignUseCase
@@ -269,6 +272,7 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 	routes.HandleFunc("/notify/campaigns/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.campaignByPath)
 	routes.HandleFunc("/notify/campaigns/suppressions", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.campaignSuppressions)
 	routes.HandleFunc("/notify/whatsapp/webhook", []httpx.Audience{httpx.Public}, httpx.None(), h.whatsAppWebhook)
+	routes.HandleFunc("/notify/sms/webhook", []httpx.Audience{httpx.Public}, httpx.None(), h.smsWebhook)
 	routes.HandleFunc("/health", []httpx.Audience{httpx.Public}, httpx.None(), h.health)
 }
 
@@ -887,6 +891,127 @@ func (h *Handler) handleWhatsAppWebhook(w http.ResponseWriter, r *http.Request) 
 	}
 
 	respondEnvelope(w, http.StatusOK, "received", map[string]any{"processed": processed})
+}
+
+// WithSMSReceipts turns on the Dotgo delivery receipt route. Until it is called
+// the route refuses every request, so a deployment with no token configured is
+// closed rather than open.
+func (h *Handler) WithSMSReceipts(useCase *application.HandleSMSDeliveryReceiptUseCase, token string) *Handler {
+	h.handleSMSReceiptUseCase = useCase
+	h.smsWebhookToken = strings.TrimSpace(token)
+	return h
+}
+
+// maxSMSWebhookBytes bounds a receipt body. A receipt is a few fields, so this
+// is generous, and the route is public.
+const maxSMSWebhookBytes = 1 << 20
+
+// smsWebhook receives Dotgo's delivery receipts for messages this service sent.
+//
+// Dotgo does not sign its callbacks, so the URL it was given carries a secret
+// token and this route refuses a request without it. The route has to stay
+// publicly reachable for Dotgo to call it; without the token anyone who learns
+// the address could mark real messages failed.
+func (h *Handler) smsWebhook(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	if !h.smsWebhookTokenValid(r.URL.Query().Get("token")) {
+		respondEnvelope(w, http.StatusUnauthorized, "invalid webhook token", nil)
+		return
+	}
+	if h.handleSMSReceiptUseCase == nil {
+		respondEnvelope(w, http.StatusServiceUnavailable, "sms delivery receipts are not configured", nil)
+		return
+	}
+
+	payload, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSMSWebhookBytes))
+	if err != nil {
+		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		return
+	}
+	receipts, ok := parseSMSReceipts(payload)
+	if !ok {
+		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		return
+	}
+
+	processed := 0
+	for _, receipt := range receipts {
+		matched, err := h.handleSMSReceiptUseCase.Execute(r.Context(), receipt)
+		if err != nil {
+			// A failure here is ours, so Dotgo is told to send it again.
+			respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+			return
+		}
+		if matched {
+			processed++
+		}
+	}
+
+	// A receipt for a message this service did not send is still a 200: Dotgo
+	// cannot do anything about it and would only retry.
+	respondEnvelope(w, http.StatusOK, "received", map[string]any{"processed": processed})
+}
+
+// smsWebhookTokenValid compares in constant time. An unset token refuses every
+// request rather than accepting every one.
+func (h *Handler) smsWebhookTokenValid(provided string) bool {
+	if h.smsWebhookToken == "" || provided == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(h.smsWebhookToken)) == 1
+}
+
+// parseSMSReceipts reads Dotgo's callback body, which is one receipt, a list of
+// them, or either wrapped in a JSON string. Numbers are kept as written so a
+// numeric request id is not turned into a float.
+func parseSMSReceipts(payload []byte) ([]application.SMSDeliveryReceipt, bool) {
+	var decoded any
+	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, false
+	}
+	if text, isText := decoded.(string); isText {
+		return parseSMSReceipts([]byte(text))
+	}
+
+	var items []any
+	switch value := decoded.(type) {
+	case map[string]any:
+		items = []any{value}
+	case []any:
+		items = value
+	default:
+		return nil, false
+	}
+
+	receipts := make([]application.SMSDeliveryReceipt, 0, len(items))
+	for _, item := range items {
+		fields, isObject := item.(map[string]any)
+		if !isObject {
+			continue
+		}
+		receipts = append(receipts, application.SMSDeliveryReceipt{
+			ID:          receiptText(fields["id"]),
+			Status:      receiptText(fields["status"]),
+			ErrorReason: receiptText(fields["error_reason"]),
+		})
+	}
+	return receipts, true
+}
+
+func receiptText(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case json.Number:
+		return typed.String()
+	default:
+		return ""
+	}
 }
 
 func (h *Handler) publishActivity(r *http.Request, command activitylog.PublishCommand) {

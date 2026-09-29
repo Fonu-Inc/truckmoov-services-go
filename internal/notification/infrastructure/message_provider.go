@@ -108,20 +108,29 @@ func (p *MetaWhatsAppMessageProvider) Send(ctx context.Context, tenantID, channe
 	return result.Status, err
 }
 
-func (p *DotgoSMSMessageProvider) Send(ctx context.Context, _ string, channel, recipient, content string) (string, error) {
+func (p *DotgoSMSMessageProvider) Send(ctx context.Context, tenantID, channel, recipient, content string) (string, error) {
+	result, err := p.SendTracked(ctx, tenantID, channel, recipient, content)
+	return result.Status, err
+}
+
+// SendTracked is Send that also returns the request id Dotgo was given. The
+// delivery receipt Dotgo posts later carries that id back, and it is the only
+// thing that ties the receipt to the message.
+func (p *DotgoSMSMessageProvider) SendTracked(ctx context.Context, _ string, channel, recipient, content string) (domain.MessageSendResult, error) {
+	failed := domain.MessageSendResult{Status: domain.StatusFailed}
 	if strings.EqualFold(strings.TrimSpace(channel), "sms") == false && strings.TrimSpace(channel) != "" {
-		return domain.StatusFailed, fmt.Errorf("unsupported notification channel: %s", channel)
+		return failed, fmt.Errorf("unsupported notification channel: %s", channel)
 	}
 	if strings.TrimSpace(recipient) == "" || strings.TrimSpace(content) == "" {
-		return domain.StatusFailed, errors.New("recipient and content are required")
+		return failed, errors.New("recipient and content are required")
 	}
 	if err := p.validateConfiguration(); err != nil {
-		return domain.StatusFailed, err
+		return failed, err
 	}
 
 	requestID, err := newDotgoRequestID()
 	if err != nil {
-		return domain.StatusFailed, fmt.Errorf("generate dotgo request id: %w", err)
+		return failed, fmt.Errorf("generate dotgo request id: %w", err)
 	}
 	payload := map[string]any{
 		"id":          requestID,
@@ -134,13 +143,13 @@ func (p *DotgoSMSMessageProvider) Send(ctx context.Context, _ string, channel, r
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return domain.StatusFailed, fmt.Errorf("marshal dotgo sms payload: %w", err)
+		return failed, fmt.Errorf("marshal dotgo sms payload: %w", err)
 	}
 
 	endpoint := fmt.Sprintf("%s/api/v1/Accounts/%s/Messages", p.baseURL, url.PathEscape(p.accountID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return domain.StatusFailed, fmt.Errorf("build dotgo sms request: %w", err)
+		return failed, fmt.Errorf("build dotgo sms request: %w", err)
 	}
 	// The account token goes in the header as issued, not as a Bearer token.
 	req.Header.Set("Authorization", p.apiToken)
@@ -148,40 +157,50 @@ func (p *DotgoSMSMessageProvider) Send(ctx context.Context, _ string, channel, r
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return domain.StatusFailed, fmt.Errorf("send dotgo sms: %w", err)
+		return failed, fmt.Errorf("send dotgo sms: %w", err)
 	}
 	defer resp.Body.Close()
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return domain.StatusFailed, fmt.Errorf("read dotgo sms response: %w", err)
+		return failed, fmt.Errorf("read dotgo sms response: %w", err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return domain.StatusFailed, fmt.Errorf("dotgo sms api %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+		return failed, fmt.Errorf("dotgo sms api %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
 	}
 
-	return domain.StatusSent, nil
+	return domain.MessageSendResult{Status: domain.StatusSent, ProviderMessageID: requestID}, nil
 }
 
 func (p *MultiChannelMessageProvider) Send(ctx context.Context, tenantID, channel, recipient, content string) (string, error) {
+	result, err := p.SendTracked(ctx, tenantID, channel, recipient, content)
+	return result.Status, err
+}
+
+// SendTracked routes by channel like Send, and passes the SMS provider's request
+// id through so its delivery receipts can be matched. The other channels report
+// no id of their own here.
+func (p *MultiChannelMessageProvider) SendTracked(ctx context.Context, tenantID, channel, recipient, content string) (domain.MessageSendResult, error) {
 	switch strings.ToLower(strings.TrimSpace(channel)) {
 	case "", "whatsapp":
 		if p.whatsApp == nil {
-			return domain.StatusFailed, errors.New("whatsapp provider is not configured")
+			return domain.MessageSendResult{Status: domain.StatusFailed}, errors.New("whatsapp provider is not configured")
 		}
-		return p.whatsApp.Send(ctx, tenantID, "whatsapp", recipient, content)
+		status, err := p.whatsApp.Send(ctx, tenantID, "whatsapp", recipient, content)
+		return domain.MessageSendResult{Status: status}, err
 	case "sms":
 		if p.sms == nil {
-			return domain.StatusFailed, errors.New("sms provider is not configured")
+			return domain.MessageSendResult{Status: domain.StatusFailed}, errors.New("sms provider is not configured")
 		}
-		return p.sms.Send(ctx, tenantID, "sms", recipient, content)
+		return p.sms.SendTracked(ctx, tenantID, "sms", recipient, content)
 	case "email":
 		if p.email == nil {
-			return domain.StatusFailed, errors.New("email provider is not configured")
+			return domain.MessageSendResult{Status: domain.StatusFailed}, errors.New("email provider is not configured")
 		}
-		return p.email.Send(ctx, tenantID, "email", recipient, content)
+		status, err := p.email.Send(ctx, tenantID, "email", recipient, content)
+		return domain.MessageSendResult{Status: status}, err
 	default:
-		return domain.StatusFailed, fmt.Errorf("unsupported notification channel: %s", channel)
+		return domain.MessageSendResult{Status: domain.StatusFailed}, fmt.Errorf("unsupported notification channel: %s", channel)
 	}
 }
 
@@ -468,6 +487,26 @@ func normalizeDotgoRecipient(recipient string) string {
 	default:
 		return normalized
 	}
+}
+
+// DotgoCallbackURLWithToken returns the receipt URL to give Dotgo: the public
+// address of this service's own receipt route with the shared secret added as
+// its token, which the route checks. It returns "" when the address is not a
+// usable URL or there is no secret, because a receipt this service would refuse
+// is not worth asking for.
+func DotgoCallbackURLWithToken(callbackURL, secret string) string {
+	trimmedSecret := strings.TrimSpace(secret)
+	if !ValidDotgoCallbackURL(callbackURL) || trimmedSecret == "" {
+		return ""
+	}
+	parsed, err := url.Parse(strings.TrimSpace(callbackURL))
+	if err != nil {
+		return ""
+	}
+	query := parsed.Query()
+	query.Set("token", trimmedSecret)
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 // newDotgoRequestID is twelve random digits, the same shape fonu-api sends, so

@@ -94,11 +94,11 @@ func (u *SendMessageUseCase) Execute(ctx context.Context, command SendMessageCom
 		return message, err
 	}
 
-	status, sendErr := u.provider.Send(ctx, message.TenantID, message.Channel, message.Recipient, message.Content)
+	sent, sendErr := sendViaProvider(ctx, u.provider, message.TenantID, message.Channel, message.Recipient, message.Content)
 	if sendErr != nil {
 		message = message.MarkFailed(u.clock.Now())
 	} else {
-		message = message.MarkSent(status, "", u.clock.Now())
+		message = message.MarkSent(sent.Status, sent.ProviderMessageID, u.clock.Now())
 	}
 
 	if err := u.repository.Save(message); err != nil {

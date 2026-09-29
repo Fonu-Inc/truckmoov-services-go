@@ -475,3 +475,61 @@ func TestNewDotgoRequestID_IsTwelveDigits(t *testing.T) {
 		}
 	}
 }
+
+func TestDotgoCallbackURLWithToken(t *testing.T) {
+	cases := []struct {
+		name, url, secret, want string
+	}{
+		{"adds the token", "https://api.example.com/notify/sms/webhook", "s3cret", "https://api.example.com/notify/sms/webhook?token=s3cret"},
+		{"keeps an existing query", "https://api.example.com/hook?env=dev", "s3cret", "https://api.example.com/hook?env=dev&token=s3cret"},
+		{"encodes the token", "https://api.example.com/hook", "a b&c", "https://api.example.com/hook?token=a+b%26c"},
+		{"no secret means no receipts", "https://api.example.com/hook", "", ""},
+		{"blank secret means no receipts", "https://api.example.com/hook", "   ", ""},
+		{"an unfilled template is refused", "<fonu-api-base-url>/v1/hook", "s3cret", ""},
+		{"a relative path is refused", "/notify/sms/webhook", "s3cret", ""},
+		{"empty is refused", "", "s3cret", ""},
+	}
+	for _, c := range cases {
+		if got := DotgoCallbackURLWithToken(c.url, c.secret); got != c.want {
+			t.Errorf("%s: DotgoCallbackURLWithToken(%q, %q) = %q, want %q", c.name, c.url, c.secret, got, c.want)
+		}
+	}
+}
+
+func TestDotgoSendTrackedReturnsTheRequestID(t *testing.T) {
+	server, got, _ := captureDotgo(t, http.StatusOK, `{}`)
+	provider := NewDotgoSMSMessageProviderWithClient(server.URL, "acc-1", "tok", "Truckmoov", "", server.Client())
+
+	result, err := provider.SendTracked(context.Background(), "tenant-a", "sms", "08012345678", "Hi")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if result.Status != domain.StatusSent || result.ProviderMessageID == "" {
+		t.Fatalf("expected sent with an id, got %+v", result)
+	}
+	if result.ProviderMessageID != got.payload["id"] {
+		t.Fatalf("the returned id %q must be the one sent to Dotgo, %v", result.ProviderMessageID, got.payload["id"])
+	}
+}
+
+func TestMultiChannelSendTrackedPassesTheSMSRequestIDThrough(t *testing.T) {
+	server, got, _ := captureDotgo(t, http.StatusOK, `{}`)
+	provider := NewMultiChannelMessageProvider(nil, NewDotgoSMSMessageProviderWithClient(server.URL, "acc-1", "tok", "Truckmoov", "", server.Client()), nil)
+
+	result, err := provider.SendTracked(context.Background(), "tenant-a", "sms", "08012345678", "Hi")
+
+	if err != nil || result.ProviderMessageID == "" || result.ProviderMessageID != got.payload["id"] {
+		t.Fatalf("expected the SMS request id through the router, got %+v err=%v", result, err)
+	}
+}
+
+func TestDotgoSendTrackedReturnsNoIDOnFailure(t *testing.T) {
+	server, _, _ := captureDotgo(t, http.StatusUnauthorized, `{"message":"invalid token"}`)
+	provider := NewDotgoSMSMessageProviderWithClient(server.URL, "acc-1", "tok", "Truckmoov", "", server.Client())
+
+	result, err := provider.SendTracked(context.Background(), "tenant-a", "sms", "08012345678", "Hi")
+
+	if err == nil || result.Status != domain.StatusFailed || result.ProviderMessageID != "" {
+		t.Fatalf("expected a failure with no id, got %+v err=%v", result, err)
+	}
+}

@@ -55,7 +55,8 @@ Notification SMS fallback vars (Dotgo REST API, the same one `fonu-api` uses; me
 - `DOTGO_TRANSACTIONAL_ACCOUNT_ID`
 - `DOTGO_TRANSACTIONAL_API_TOKEN`
 - `DOTGO_TRANSACTIONAL_SENDER_MASK`
-- `DOTGO_CALLBACK_URL` (optional): delivery receipt URL, left out of the request when unset
+- `DOTGO_CALLBACK_URL` (optional): public address of this service's own receipt route, `https://<public-api-host>/notify/sms/webhook`
+- `DOTGO_WEBHOOK_SECRET` (optional): token that route requires, sent to Dotgo as `?token=` on the callback address. Dotgo does not sign callbacks, so the route refuses a request without it. Receipts are only requested when both this and `DOTGO_CALLBACK_URL` are set.
 
 Migration note from `fonu-api`:
 - Truckmoov uses `WHATSAPP_PHONE_NUMBER_ID` as the canonical env name.

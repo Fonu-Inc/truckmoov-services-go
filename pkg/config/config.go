@@ -99,6 +99,7 @@ type Config struct {
 	DotgoAPIToken                string
 	DotgoSenderMask              string
 	DotgoCallbackURL             string
+	DotgoWebhookSecret           string
 	SMTPHost                     string
 	SMTPPort                     int
 	SMTPUsername                 string
@@ -182,6 +183,7 @@ func Load(serviceName, defaultPort string) Config {
 		DotgoAPIToken:              getEnv("DOTGO_TRANSACTIONAL_API_TOKEN", ""),
 		DotgoSenderMask:            getEnv("DOTGO_TRANSACTIONAL_SENDER_MASK", ""),
 		DotgoCallbackURL:           getEnv("DOTGO_CALLBACK_URL", ""),
+		DotgoWebhookSecret:         getEnv("DOTGO_WEBHOOK_SECRET", ""),
 		SMTPHost:                   getEnv("SMTP_HOST", ""),
 		SMTPPort:                   getEnvInt("SMTP_PORT", 465),
 		SMTPUsername:               getEnv("SMTP_USERNAME", ""),
