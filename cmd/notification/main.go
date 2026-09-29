@@ -118,11 +118,17 @@ func main() {
 		cfg.WhatsAppPhoneNumberID,
 		cfg.WhatsAppAccessToken,
 	)
+	dotgoCallbackURL := strings.TrimSpace(cfg.DotgoCallbackURL)
+	if dotgoCallbackURL != "" && !infrastructure.ValidDotgoCallbackURL(dotgoCallbackURL) {
+		log.Warn("sms_callback_url_invalid", "message", "DOTGO_CALLBACK_URL is not an absolute http(s) URL, so delivery receipts are not requested; replace the unfilled template with the real address")
+		dotgoCallbackURL = ""
+	}
 	smsMessageProvider := infrastructure.NewDotgoSMSMessageProvider(
-		cfg.SMSServiceURL,
-		cfg.SMSServiceUsername,
-		cfg.SMSServicePassword,
-		cfg.SMSServiceSenderID,
+		cfg.DotgoBaseURL,
+		cfg.DotgoAccountID,
+		cfg.DotgoAPIToken,
+		cfg.DotgoSenderMask,
+		dotgoCallbackURL,
 	)
 	emailMessageProvider := infrastructure.NewSMTPEmailMessageProvider(
 		cfg.SMTPHost,
@@ -143,8 +149,8 @@ func main() {
 		cfg.WhatsAppBusinessAccountID,
 		cfg.WhatsAppAccessToken,
 	)
-	if cfg.SMSServiceURL == "" || cfg.SMSServiceUsername == "" || cfg.SMSServicePassword == "" || cfg.SMSServiceSenderID == "" {
-		log.Warn("sms_provider_unconfigured", "message", "set SMS_SERVICE_URL, SMS_SERVICE_USER_NAME, SMS_SERVICE_PASSWORD, and SMS_SERVICE_SENDER_ID before enabling SMS fallback delivery")
+	if cfg.DotgoBaseURL == "" || cfg.DotgoAccountID == "" || cfg.DotgoAPIToken == "" || cfg.DotgoSenderMask == "" {
+		log.Warn("sms_provider_unconfigured", "message", "set DOTGO_BASE_URL, DOTGO_TRANSACTIONAL_ACCOUNT_ID, DOTGO_TRANSACTIONAL_API_TOKEN, and DOTGO_TRANSACTIONAL_SENDER_MASK before enabling SMS fallback delivery")
 	}
 	deliveryPublisher := infrastructure.NewDeliveryEventPublisher(bus)
 	deliveryLogRepository := infrastructure.NewPostgresDeliveryLogRepository(postgresDB)

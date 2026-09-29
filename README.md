@@ -50,11 +50,12 @@ Notification WhatsApp vars (Meta Cloud API transport):
 - `WHATSAPP_ACCESS_TOKEN`: legacy fallback permanent/system-user access token when no tenant WhatsApp account has been connected yet
 - `WHATSAPP_WEBHOOK_VERIFY_TOKEN`: used for inbound webhook verification
 
-Notification SMS fallback vars (Dotgo, mirrored from `fonu-api` v2):
-- `SMS_SERVICE_URL`
-- `SMS_SERVICE_USER_NAME`
-- `SMS_SERVICE_PASSWORD`
-- `SMS_SERVICE_SENDER_ID`
+Notification SMS fallback vars (Dotgo REST API, the same one `fonu-api` uses; messages go through the transactional account):
+- `DOTGO_BASE_URL`
+- `DOTGO_TRANSACTIONAL_ACCOUNT_ID`
+- `DOTGO_TRANSACTIONAL_API_TOKEN`
+- `DOTGO_TRANSACTIONAL_SENDER_MASK`
+- `DOTGO_CALLBACK_URL` (optional): delivery receipt URL, left out of the request when unset
 
 Migration note from `fonu-api`:
 - Truckmoov uses `WHATSAPP_PHONE_NUMBER_ID` as the canonical env name.

@@ -94,10 +94,11 @@ type Config struct {
 	WhatsAppPhoneNumberID        string
 	WhatsAppBusinessAccountID    string
 	WhatsAppWebhookVerifyToken   string
-	SMSServiceURL                string
-	SMSServiceUsername           string
-	SMSServicePassword           string
-	SMSServiceSenderID           string
+	DotgoBaseURL                 string
+	DotgoAccountID               string
+	DotgoAPIToken                string
+	DotgoSenderMask              string
+	DotgoCallbackURL             string
 	SMTPHost                     string
 	SMTPPort                     int
 	SMTPUsername                 string
@@ -176,10 +177,11 @@ func Load(serviceName, defaultPort string) Config {
 		WhatsAppPhoneNumberID:      getFirstEnv([]string{"WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_BUSINESS_NUMBER_ID"}, ""),
 		WhatsAppBusinessAccountID:  getFirstEnv([]string{"WHATSAPP_BUSINESS_ACCOUNT_ID", "WHATSAPP_WABA_ID"}, ""),
 		WhatsAppWebhookVerifyToken: getFirstEnv([]string{"WHATSAPP_WEBHOOK_VERIFY_TOKEN", "WEBHOOK_VERIFY_TOKEN"}, ""),
-		SMSServiceURL:              getEnv("SMS_SERVICE_URL", ""),
-		SMSServiceUsername:         getEnv("SMS_SERVICE_USER_NAME", ""),
-		SMSServicePassword:         getEnv("SMS_SERVICE_PASSWORD", ""),
-		SMSServiceSenderID:         getEnv("SMS_SERVICE_SENDER_ID", ""),
+		DotgoBaseURL:               getEnv("DOTGO_BASE_URL", ""),
+		DotgoAccountID:             getEnv("DOTGO_TRANSACTIONAL_ACCOUNT_ID", ""),
+		DotgoAPIToken:              getEnv("DOTGO_TRANSACTIONAL_API_TOKEN", ""),
+		DotgoSenderMask:            getEnv("DOTGO_TRANSACTIONAL_SENDER_MASK", ""),
+		DotgoCallbackURL:           getEnv("DOTGO_CALLBACK_URL", ""),
 		SMTPHost:                   getEnv("SMTP_HOST", ""),
 		SMTPPort:                   getEnvInt("SMTP_PORT", 465),
 		SMTPUsername:               getEnv("SMTP_USERNAME", ""),

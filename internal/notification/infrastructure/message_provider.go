@@ -3,13 +3,14 @@ package infrastructure
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -17,24 +18,6 @@ import (
 )
 
 const defaultWhatsAppAPIBaseURL = "https://graph.facebook.com/v18.0"
-
-var dotgoSMSStatusMessages = map[int]string{
-	11: "MISSING USERNAME",
-	12: "MISSING USERNAME",
-	13: "MISSING RECIPIENT",
-	14: "MISSING SENDER ID",
-	15: "MISSING MESSAGE",
-	21: "SENDER ID TOO LONG",
-	22: "INVALID RECIPIENT",
-	23: "INVALID MESSAGE",
-	31: "INVALID USERNAME",
-	32: "INVALID PASSWORD",
-	33: "INVALID LOGIN",
-	34: "ACCOUNT DISABLED",
-	41: "INSUFFICIENT CREDIT",
-	51: "GATEWAY UNREACHABLE",
-	52: "SYSTEM ERROR",
-}
 
 type whatsAppAccountRepository interface {
 	FindAccountByTenantID(ctx context.Context, tenantID string) (domain.WhatsAppAccount, bool, error)
@@ -53,12 +36,17 @@ type MetaWhatsAppMessageProvider struct {
 	client              *http.Client
 }
 
+// DotgoSMSMessageProvider sends SMS through Dotgo's REST API, the same one
+// fonu-api uses: one POST per message to the account's Messages resource,
+// authenticated with the account token. The account is the transactional one,
+// which is what job and installer notices are.
 type DotgoSMSMessageProvider struct {
-	baseURL  string
-	username string
-	password string
-	senderID string
-	client   *http.Client
+	baseURL     string
+	accountID   string
+	apiToken    string
+	senderMask  string
+	callbackURL string
+	client      *http.Client
 }
 
 type MultiChannelMessageProvider struct {
@@ -90,21 +78,21 @@ func NewMetaWhatsAppMessageProviderWithClient(baseURL string, accountRepository 
 	}
 }
 
-func NewDotgoSMSMessageProvider(baseURL, username, password, senderID string) *DotgoSMSMessageProvider {
-	return NewDotgoSMSMessageProviderWithClient(baseURL, username, password, senderID, nil)
+func NewDotgoSMSMessageProvider(baseURL, accountID, apiToken, senderMask, callbackURL string) *DotgoSMSMessageProvider {
+	return NewDotgoSMSMessageProviderWithClient(baseURL, accountID, apiToken, senderMask, callbackURL, nil)
 }
 
-func NewDotgoSMSMessageProviderWithClient(baseURL, username, password, senderID string, client *http.Client) *DotgoSMSMessageProvider {
-	trimmedBaseURL := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+func NewDotgoSMSMessageProviderWithClient(baseURL, accountID, apiToken, senderMask, callbackURL string, client *http.Client) *DotgoSMSMessageProvider {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	return &DotgoSMSMessageProvider{
-		baseURL:  trimmedBaseURL,
-		username: strings.TrimSpace(username),
-		password: strings.TrimSpace(password),
-		senderID: strings.TrimSpace(senderID),
-		client:   client,
+		baseURL:     strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		accountID:   strings.TrimSpace(accountID),
+		apiToken:    strings.TrimSpace(apiToken),
+		senderMask:  strings.TrimSpace(senderMask),
+		callbackURL: strings.TrimSpace(callbackURL),
+		client:      client,
 	}
 }
 
@@ -131,18 +119,32 @@ func (p *DotgoSMSMessageProvider) Send(ctx context.Context, _ string, channel, r
 		return domain.StatusFailed, err
 	}
 
-	query := url.Values{}
-	query.Set("u", p.username)
-	query.Set("p", p.password)
-	query.Set("r", recipient)
-	query.Set("s", p.senderID)
-	query.Set("m", content)
-	query.Set("t", "1")
+	requestID, err := newDotgoRequestID()
+	if err != nil {
+		return domain.StatusFailed, fmt.Errorf("generate dotgo request id: %w", err)
+	}
+	payload := map[string]any{
+		"id":          requestID,
+		"to":          []string{normalizeDotgoRecipient(recipient)},
+		"body":        content,
+		"sender_mask": p.senderMask,
+	}
+	if p.callbackURL != "" {
+		payload["callback_url"] = p.callbackURL
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return domain.StatusFailed, fmt.Errorf("marshal dotgo sms payload: %w", err)
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/httpsms.php?"+query.Encode(), nil)
+	endpoint := fmt.Sprintf("%s/api/v1/Accounts/%s/Messages", p.baseURL, url.PathEscape(p.accountID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return domain.StatusFailed, fmt.Errorf("build dotgo sms request: %w", err)
 	}
+	// The account token goes in the header as issued, not as a Bearer token.
+	req.Header.Set("Authorization", p.apiToken)
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
@@ -156,14 +158,6 @@ func (p *DotgoSMSMessageProvider) Send(ctx context.Context, _ string, channel, r
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return domain.StatusFailed, fmt.Errorf("dotgo sms api %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
-	}
-
-	trimmedBody := strings.TrimSpace(string(responseBody))
-	if code, err := strconv.Atoi(trimmedBody); err == nil {
-		if message, ok := dotgoSMSStatusMessages[code]; ok {
-			return domain.StatusFailed, errors.New(message)
-		}
-		return domain.StatusFailed, fmt.Errorf("dotgo sms failed with code %d", code)
 	}
 
 	return domain.StatusSent, nil
@@ -446,10 +440,64 @@ func (p *MetaWhatsAppMessageProvider) send(ctx context.Context, phoneNumberID, a
 }
 
 func (p *DotgoSMSMessageProvider) validateConfiguration() error {
-	if p.baseURL == "" || p.username == "" || p.password == "" || p.senderID == "" {
-		return errors.New("sms provider is not configured; set SMS_SERVICE_URL, SMS_SERVICE_USER_NAME, SMS_SERVICE_PASSWORD, and SMS_SERVICE_SENDER_ID")
+	if p.baseURL == "" || p.accountID == "" || p.apiToken == "" || p.senderMask == "" {
+		return errors.New("sms provider is not configured; set DOTGO_BASE_URL, DOTGO_TRANSACTIONAL_ACCOUNT_ID, DOTGO_TRANSACTIONAL_API_TOKEN, and DOTGO_TRANSACTIONAL_SENDER_MASK")
 	}
 	return nil
+}
+
+// normalizeDotgoRecipient puts a Nigerian number in the 234XXXXXXXXXX form
+// Dotgo expects, with no plus sign: +2348012345678, 08012345678 and
+// 8012345678 all become 2348012345678. Numbers outside that shape are passed
+// through with the punctuation stripped, so another country's number is not
+// mangled.
+func normalizeDotgoRecipient(recipient string) string {
+	var digits strings.Builder
+	for _, r := range strings.TrimSpace(recipient) {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		}
+	}
+	normalized := digits.String()
+
+	switch {
+	case strings.HasPrefix(normalized, "0"):
+		return "234" + normalized[1:]
+	case !strings.HasPrefix(normalized, "234") && len(normalized) == 10:
+		return "234" + normalized
+	default:
+		return normalized
+	}
+}
+
+// newDotgoRequestID is twelve random digits, the same shape fonu-api sends, so
+// Dotgo sees one id format from both services and a receipt can be traced by it.
+func newDotgoRequestID() (string, error) {
+	digits := make([]byte, 12)
+	for i := range digits {
+		n, err := rand.Int(rand.Reader, big.NewInt(10))
+		if err != nil {
+			return "", err
+		}
+		digits[i] = byte('0' + n.Int64())
+	}
+	return string(digits), nil
+}
+
+// ValidDotgoCallbackURL reports whether value can be sent to Dotgo as the
+// delivery receipt URL: an absolute http(s) URL with no whitespace. A template
+// left unfilled, such as "<fonu-api-base-url>/v1/...", fails this and must not
+// reach the request.
+func ValidDotgoCallbackURL(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || strings.ContainsAny(trimmed, " \t\r\n<>") {
+		return false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return false
+	}
+	return (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
 }
 
 func normalizeWhatsAppRecipient(recipient string) string {
