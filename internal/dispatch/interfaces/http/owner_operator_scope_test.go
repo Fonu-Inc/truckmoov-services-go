@@ -172,13 +172,94 @@ func TestAnOwnerOperatorIsRefusedTenantWideRoutes(t *testing.T) {
 	auth := bearerFor("oo-a", "OWNER_OPERATOR")
 
 	for _, call := range []struct{ method, path, body string }{
-		{http.MethodPost, "/dispatch/jobs", `{"pickupLocation":"Apapa","deliveryLocation":"Lekki"}`},
 		{http.MethodGet, "/dispatch/job-offers", ""},
 		{http.MethodGet, "/dispatch/aggregator/summary", ""},
 	} {
 		if res := dispatchRequestWithHeaders(t, server, call.method, call.path, call.body, auth); res.Code != http.StatusNotFound {
 			t.Fatalf("%s %s: expected 404, got %d %s", call.method, call.path, res.Code, res.Body.String())
 		}
+	}
+}
+
+func createJobAs(t *testing.T, server http.Handler, auth map[string]string, body string) domain.Job {
+	t.Helper()
+	res := dispatchRequestWithHeaders(t, server, http.MethodPost, "/dispatch/jobs", body, auth)
+	if res.Code != http.StatusCreated {
+		t.Fatalf("create job: expected 201, got %d %s", res.Code, res.Body.String())
+	}
+	return decodeJobBody(t, res.Body.Bytes())
+}
+
+func TestAnOwnerOperatorSeesTheUnassignedJobTheyCreated(t *testing.T) {
+	server := scopedDispatchServer(t, twoOperatorsVehicles, nil)
+	auth := bearerFor("oo-a", "OWNER_OPERATOR")
+
+	job := createJobAs(t, server, auth, `{"job_id":"j-own","pickupLocation":"Apapa","deliveryLocation":"Lekki"}`)
+	if job.CreatedBy == nil || *job.CreatedBy != "oo-a" {
+		t.Fatalf("expected created_by oo-a, got %v", job.CreatedBy)
+	}
+
+	if got := listedJobIDs(t, server, auth); !slices.Equal(got, []string{"j-a", "j-own"}) {
+		t.Fatalf("list: expected [j-a j-own], got %v", got)
+	}
+	if got := summaryTotal(t, server, auth); got != 2 {
+		t.Fatalf("summary: expected 2 jobs, got %d", got)
+	}
+	res := dispatchRequestWithHeaders(t, server, http.MethodGet, "/dispatch/jobs/j-own", "", auth)
+	if res.Code != http.StatusOK || *decodeJobBody(t, res.Body.Bytes()).CreatedBy != "oo-a" {
+		t.Fatalf("get own job: expected 200 created by oo-a, got %d %s", res.Code, res.Body.String())
+	}
+}
+
+func TestAJobAnOwnerOperatorCreatedIsNotFoundToAnotherOwnerOperator(t *testing.T) {
+	server := scopedDispatchServer(t, twoOperatorsVehicles, nil)
+	createJobAs(t, server, bearerFor("oo-a", "OWNER_OPERATOR"), `{"job_id":"j-own","pickupLocation":"Apapa","deliveryLocation":"Lekki"}`)
+	other := bearerFor("oo-b", "OWNER_OPERATOR")
+
+	expectJobNotFound(t, dispatchRequestWithHeaders(t, server, http.MethodGet, "/dispatch/jobs/j-own", "", other))
+	if got := listedJobIDs(t, server, other); !slices.Equal(got, []string{"j-b"}) {
+		t.Fatalf("other operator list: expected [j-b], got %v", got)
+	}
+}
+
+func TestAnOwnerOperatorAssignsTheirCreatedJobOnlyToTheirOwnVehicles(t *testing.T) {
+	server := scopedDispatchServer(t, twoOperatorsVehicles, nil)
+	auth := bearerFor("oo-a", "OWNER_OPERATOR")
+	createJobAs(t, server, auth, `{"job_id":"j-own","pickupLocation":"Apapa","deliveryLocation":"Lekki"}`)
+
+	res := dispatchRequestWithHeaders(t, server, http.MethodPost, "/dispatch/jobs/j-own/assign", `{"vehicle_id":"v-b"}`, auth)
+	if res.Code != http.StatusNotFound || !strings.Contains(res.Body.String(), "vehicle not found") {
+		t.Fatalf("foreign vehicle: expected 404 vehicle not found, got %d %s", res.Code, res.Body.String())
+	}
+	res = dispatchRequestWithHeaders(t, server, http.MethodPost, "/dispatch/jobs/j-own/assign", `{"vehicle_id":"v-a"}`, auth)
+	if res.Code != http.StatusOK {
+		t.Fatalf("own vehicle: expected 200, got %d %s", res.Code, res.Body.String())
+	}
+}
+
+func TestCreatingAJobWithAnIDInUseIsRefused(t *testing.T) {
+	server := scopedDispatchServer(t, twoOperatorsVehicles, nil)
+
+	res := dispatchRequestWithHeaders(t, server, http.MethodPost, "/dispatch/jobs", `{"job_id":"j-b","pickupLocation":"Apapa","deliveryLocation":"Lekki"}`, bearerFor("oo-a", "OWNER_OPERATOR"))
+	if res.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d %s", res.Code, res.Body.String())
+	}
+	if got := listedJobIDs(t, server, bearerFor("oo-b", "OWNER_OPERATOR")); !slices.Equal(got, []string{"j-b"}) {
+		t.Fatalf("j-b must stay with oo-b, got %v", got)
+	}
+}
+
+func TestAnAdminSeesOwnerOperatorJobsAndIsRecordedAsCreator(t *testing.T) {
+	server := scopedDispatchServer(t, twoOperatorsVehicles, nil)
+	createJobAs(t, server, bearerFor("oo-a", "OWNER_OPERATOR"), `{"job_id":"j-own","pickupLocation":"Apapa","deliveryLocation":"Lekki"}`)
+	admin := bearerFor("staff-1", "FLEET_ADMIN")
+
+	job := createJobAs(t, server, admin, `{"job_id":"j-admin","pickupLocation":"Apapa","deliveryLocation":"Lekki"}`)
+	if job.CreatedBy == nil || *job.CreatedBy != "staff-1" {
+		t.Fatalf("expected created_by staff-1, got %v", job.CreatedBy)
+	}
+	if got := listedJobIDs(t, server, admin); !slices.Equal(got, []string{"j-a", "j-admin", "j-b", "j-fleet", "j-own", "j-pool"}) {
+		t.Fatalf("admin: expected every job, got %v", got)
 	}
 }
 

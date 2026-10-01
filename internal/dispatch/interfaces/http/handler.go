@@ -444,7 +444,7 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 		h.listJobs(w, r)
 		return
 	case http.MethodPost:
-		hiddenFromOwnerOperators(h.createJob)(w, r)
+		h.createJob(w, r)
 		return
 	default:
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -492,9 +492,10 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 		EstimatedServiceMinutes: req.EstimatedServiceMinutes,
 		Priority:                req.Priority,
 		TimeWindow:              timeWindow,
+		CreatedBy:               requestSubject(r),
 	})
 	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		respondCreateJobError(w, err)
 		return
 	}
 
@@ -513,6 +514,22 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 			"status":              job.Status,
 		},
 	})
+}
+
+func requestSubject(r *http.Request) string {
+	claims, ok := httpx.ClaimsFromRequest(r)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(claims.Subject)
+}
+
+func respondCreateJobError(w http.ResponseWriter, err error) {
+	if errors.Is(err, application.ErrJobAlreadyExists) {
+		httpx.WriteError(w, http.StatusConflict, err.Error())
+		return
+	}
+	httpx.WriteError(w, http.StatusBadRequest, err.Error())
 }
 
 func (h *Handler) resolveTenantID(r *http.Request) (string, error) {

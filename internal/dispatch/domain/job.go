@@ -131,6 +131,7 @@ type Job struct {
 	DriverStatusRequests    []DriverStatusRequest `json:"driver_status_requests"`
 	Timeline                []JobTimelineEntry    `json:"timeline"`
 	Punctuality             *JobPunctuality       `json:"punctuality,omitempty"`
+	CreatedBy               *string               `json:"created_by"`
 	CreatedAt               time.Time             `json:"created_at"`
 	UpdatedAt               time.Time             `json:"updated_at"`
 }
@@ -208,6 +209,7 @@ func NewJob(params Job) (Job, error) {
 		PODAttachments:          append([]JobPODAttachment{}, params.PODAttachments...),
 		DriverStatusRequests:    append([]DriverStatusRequest{}, params.DriverStatusRequests...),
 		Timeline:                append([]JobTimelineEntry{}, params.Timeline...),
+		CreatedBy:               normalizeOptionalText(params.CreatedBy),
 		CreatedAt:               params.CreatedAt.UTC(),
 		UpdatedAt:               params.UpdatedAt.UTC(),
 	}
@@ -842,6 +844,18 @@ func normalizeOptionalTime(value *time.Time) *time.Time {
 		return nil
 	}
 	normalized := value.UTC()
+	return &normalized
+}
+
+// normalizeOptionalText keeps a blank value absent rather than an empty string.
+func normalizeOptionalText(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	normalized := strings.TrimSpace(*value)
+	if normalized == "" {
+		return nil
+	}
 	return &normalized
 }
 

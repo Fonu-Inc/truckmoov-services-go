@@ -11,7 +11,10 @@ import (
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
 )
 
-var ErrJobNotFound = errors.New("job not found")
+var (
+	ErrJobNotFound      = errors.New("job not found")
+	ErrJobAlreadyExists = errors.New("job already exists")
+)
 
 type JobRepository interface {
 	Save(job domain.Job) error
@@ -49,6 +52,7 @@ type CreateJobCommand struct {
 	EstimatedServiceMinutes int
 	Priority                string
 	TimeWindow              domain.JobTimeWindow
+	CreatedBy               string
 }
 
 type UpdateJobSchedulingCommand struct {
@@ -199,9 +203,9 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		return domain.Job{}, err
 	}
 
-	jobID := strings.TrimSpace(command.JobID)
-	if jobID == "" {
-		jobID = u.idGenerator.New()
+	jobID, err := u.newJobID(tenantID, command.JobID)
+	if err != nil {
+		return domain.Job{}, err
 	}
 	reference := strings.TrimSpace(command.Reference)
 	if reference == "" {
@@ -261,6 +265,7 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		Priority:                priority,
 		TimeWindow:              timeWindow,
 		Status:                  status,
+		CreatedBy:               &command.CreatedBy,
 		CreatedAt:               now,
 		UpdatedAt:               now,
 		Timeline:                timeline,
@@ -276,6 +281,19 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 	}
 
 	return job, nil
+}
+
+// newJobID refuses a caller-chosen id already in use: saving would overwrite
+// that job, its history and its creator.
+func (u *JobLifecycleUseCase) newJobID(tenantID, requested string) (string, error) {
+	jobID := strings.TrimSpace(requested)
+	if jobID == "" {
+		return u.idGenerator.New(), nil
+	}
+	if _, exists := u.repository.FindByTenantAndID(tenantID, jobID); exists {
+		return "", ErrJobAlreadyExists
+	}
+	return jobID, nil
 }
 
 func (u *JobLifecycleUseCase) UpdateScheduling(_ context.Context, command UpdateJobSchedulingCommand) (domain.Job, error) {

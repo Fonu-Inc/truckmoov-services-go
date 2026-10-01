@@ -214,7 +214,7 @@ func dispatchOpenAPISpec() map[string]any {
 					"tags":        []string{"dispatch"},
 					"summary":     "Create job from the dispatch UI payload",
 					"operationId": "createJob",
-					"description": "Accepts the original Dispatch Center create-dispatch modal payload. The older richer flat payload and nested pickup/dropoff payload are still accepted for backward compatibility.",
+					"description": "Accepts the original Dispatch Center create-dispatch modal payload. The older richer flat payload and nested pickup/dropoff payload are still accepted for backward compatibility. The caller is recorded as created_by; an owner operator limited to their own vehicles also sees every job they created.",
 					"requestBody": map[string]any{
 						"required": true,
 						"content": map[string]any{
@@ -238,6 +238,16 @@ func dispatchOpenAPISpec() map[string]any {
 						},
 						"400": map[string]any{
 							"description": "Validation error",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{
+										"$ref": "#/components/schemas/ErrorResponse",
+									},
+								},
+							},
+						},
+						"409": map[string]any{
+							"description": "A job with the supplied job_id already exists",
 							"content": map[string]any{
 								"application/json": map[string]any{
 									"schema": map[string]any{
@@ -1107,6 +1117,7 @@ func dispatchOpenAPISpec() map[string]any {
 						"assigned_vehicle_model":    map[string]any{"type": "string", "nullable": true},
 						"cancellation_reason":       map[string]any{"type": "string"},
 						"acknowledged_at":           map[string]any{"type": "string", "format": "date-time"},
+						"created_by":                map[string]any{"type": "string", "nullable": true, "description": "Subject of the token that created the job. Null for jobs created before it was recorded."},
 						"created_at":                map[string]any{"type": "string", "format": "date-time"},
 						"updated_at":                map[string]any{"type": "string", "format": "date-time"},
 						"timeline": map[string]any{

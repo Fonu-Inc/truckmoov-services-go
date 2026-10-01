@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS dispatch_jobs (
     assigned_driver_id TEXT NOT NULL DEFAULT '',
     assigned_driver_phone TEXT NOT NULL DEFAULT '',
     assigned_vehicle_id TEXT NOT NULL DEFAULT '',
+    created_by TEXT NULL,
     deadline TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
@@ -66,6 +67,12 @@ ALTER TABLE dispatch_jobs
     ADD COLUMN IF NOT EXISTS assigned_driver_phone TEXT NOT NULL DEFAULT ''
 `); err != nil {
 		return fmt.Errorf("ensure assigned driver phone column: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+ALTER TABLE dispatch_jobs
+    ADD COLUMN IF NOT EXISTS created_by TEXT NULL
+`); err != nil {
+		return fmt.Errorf("ensure created by column: %w", err)
 	}
 
 	// Canonicalize older persisted priority values so the database, API responses,
@@ -131,12 +138,13 @@ INSERT INTO dispatch_jobs (
     assigned_driver_id,
     assigned_driver_phone,
     assigned_vehicle_id,
+    created_by,
     deadline,
     created_at,
     updated_at,
     payload
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 )
 ON CONFLICT (tenant_id, id) DO UPDATE SET
     reference = EXCLUDED.reference,
@@ -165,6 +173,7 @@ ON CONFLICT (tenant_id, id) DO UPDATE SET
 		strings.TrimSpace(job.AssignedDriverID),
 		strings.TrimSpace(job.AssignedDriverPhone),
 		strings.TrimSpace(job.AssignedVehicleID),
+		job.CreatedBy,
 		deadline,
 		job.CreatedAt.UTC(),
 		job.UpdatedAt.UTC(),

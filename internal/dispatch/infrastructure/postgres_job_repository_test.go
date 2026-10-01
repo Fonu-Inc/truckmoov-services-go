@@ -96,3 +96,39 @@ func TestPostgresJobRepository_Delete_WrongTenantIsNoOp(t *testing.T) {
 		t.Fatalf("expected job to remain when deleted under wrong tenant")
 	}
 }
+
+func TestDecodeStoredJob_CreatedBy(t *testing.T) {
+	base := `"id":"job-1","tenant_id":"tenant-1","pickup":{"address":"Apapa"},"dropoff":{"address":"Lekki"},"status":"created","created_at":"2026-04-01T10:00:00Z","updated_at":"2026-04-01T10:00:00Z"`
+
+	legacy, err := decodeStoredJob([]byte(`{` + base + `}`))
+	if err != nil || legacy.CreatedBy != nil {
+		t.Fatalf("legacy job: expected nil created_by, got %v (err %v)", legacy.CreatedBy, err)
+	}
+	recorded, err := decodeStoredJob([]byte(`{` + base + `,"created_by":"oo-a"}`))
+	if err != nil || recorded.CreatedBy == nil || *recorded.CreatedBy != "oo-a" {
+		t.Fatalf("recorded job: expected created_by oo-a, got %v (err %v)", recorded.CreatedBy, err)
+	}
+}
+
+func TestPostgresJobRepository_PersistsCreatedBy(t *testing.T) {
+	repo := newTestPostgresRepo(t)
+	tenantID := "tenant-pg-created-by"
+	id := fmt.Sprintf("job-created-by-%d", time.Now().UnixNano())
+	t.Cleanup(func() { _ = repo.Delete(tenantID, id) })
+
+	job := newTestJob(t, tenantID, id)
+	creator := "oo-a"
+	job.CreatedBy = &creator
+	if err := repo.Save(job); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	var column sql.NullString
+	if err := repo.db.QueryRow(`SELECT created_by FROM dispatch_jobs WHERE tenant_id = $1 AND id = $2`, tenantID, id).Scan(&column); err != nil {
+		t.Fatalf("read created_by column: %v", err)
+	}
+	stored, ok := repo.FindByTenantAndID(tenantID, id)
+	if column.String != creator || !ok || stored.CreatedBy == nil || *stored.CreatedBy != creator {
+		t.Fatalf("expected created_by %q in column and payload, got %q / %v", creator, column.String, stored.CreatedBy)
+	}
+}

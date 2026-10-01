@@ -55,3 +55,18 @@ func TestInMemoryJobRepository_Delete_NonExistentIsNoOp(t *testing.T) {
 		t.Fatalf("expected unrelated job to remain after no-op delete")
 	}
 }
+
+func TestInMemoryJobRepository_KeepsCreatedBy(t *testing.T) {
+	repo := NewInMemoryJobRepository()
+	job := newTestJob(t, "tenant-1", "job-1")
+	creator := "oo-a"
+	job.CreatedBy = &creator
+	if err := repo.Save(job); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	stored, ok := repo.FindByTenantAndID(job.TenantID, job.ID)
+	if !ok || stored.CreatedBy == nil || *stored.CreatedBy != creator {
+		t.Fatalf("expected created_by %q, got %v", creator, stored.CreatedBy)
+	}
+}

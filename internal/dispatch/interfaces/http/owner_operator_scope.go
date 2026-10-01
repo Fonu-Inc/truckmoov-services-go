@@ -19,8 +19,8 @@ type ownedVehicleLister interface {
 	OwnedVehicleIDs(ctx context.Context, tenantID, ownerOperatorID string) ([]string, error)
 }
 
-// limitedOwnerOperatorID is the owner operator whose vehicles the caller is
-// limited to. In an owner_operator organisation the role is the founder, who
+// limitedOwnerOperatorID is the owner operator whose vehicles and own jobs the
+// caller is limited to. In an owner_operator organisation the role is the founder, who
 // runs the whole fleet; anywhere else it is an operator brought in, who sees
 // only their own vehicles. An unknown organisation type counts as the second,
 // so not knowing narrows access rather than widening it.
@@ -36,22 +36,22 @@ func limitedOwnerOperatorID(r *http.Request) (string, bool) {
 }
 
 // jobScopeFor is nil for a caller who sees the whole tenant. A failed lookup
-// leaves an owner operator owning nothing rather than seeing everything.
+// leaves an owner operator owning no vehicles rather than seeing everything.
 func (h *Handler) jobScopeFor(r *http.Request) *application.JobScope {
 	ownerOperatorID, limited := limitedOwnerOperatorID(r)
 	if !limited {
 		return nil
 	}
 	if h.ownedVehicles == nil {
-		return application.NewVehicleScope(nil)
+		return application.NewOwnerOperatorScope(ownerOperatorID, nil)
 	}
 	tenantID := httpx.TenantIDFromRequest(r)
 	ids, err := h.ownedVehicles.OwnedVehicleIDs(r.Context(), tenantID, ownerOperatorID)
 	if err != nil {
 		log.Printf("dispatch: owned vehicles lookup failed for owner_operator_id=%s tenant_id=%s: %v", ownerOperatorID, tenantID, err)
-		return application.NewVehicleScope(nil)
+		return application.NewOwnerOperatorScope(ownerOperatorID, nil)
 	}
-	return application.NewVehicleScope(ids)
+	return application.NewOwnerOperatorScope(ownerOperatorID, ids)
 }
 
 // jobsVisible reports whether every job exists for the caller; one outside
