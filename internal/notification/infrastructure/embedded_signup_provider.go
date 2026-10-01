@@ -41,11 +41,34 @@ func NewMetaWhatsAppEmbeddedSignupProviderWithClient(baseURL, appID, appSecret s
 }
 
 func (p *MetaWhatsAppEmbeddedSignupProvider) ExchangeCodeForLongLivedToken(ctx context.Context, code string) (string, error) {
-	shortLivedToken, err := p.exchangeCodeForShortLivedToken(ctx, code)
+	token, err := p.exchangeCodeForShortLivedToken(ctx, code)
 	if err != nil {
 		return "", err
 	}
-	return p.exchangeForLongLivedToken(ctx, shortLivedToken)
+	// A signup configured for a system user token already returns one that never
+	// expires, and Meta refuses to exchange it again.
+	if p.neverExpires(ctx, token) {
+		return token, nil
+	}
+	return p.exchangeForLongLivedToken(ctx, token)
+}
+
+// neverExpires answers false when Meta cannot say, so the usual exchange runs.
+func (p *MetaWhatsAppEmbeddedSignupProvider) neverExpires(ctx context.Context, token string) bool {
+	query := url.Values{}
+	query.Set("input_token", strings.TrimSpace(token))
+	query.Set("access_token", p.appID+"|"+p.appSecret)
+	endpoint := fmt.Sprintf("%s/debug_token?%s", p.baseURL, query.Encode())
+	var response struct {
+		Data struct {
+			IsValid   bool  `json:"is_valid"`
+			ExpiresAt int64 `json:"expires_at"`
+		} `json:"data"`
+	}
+	if err := p.getJSON(ctx, endpoint, "", &response); err != nil {
+		return false
+	}
+	return response.Data.IsValid && response.Data.ExpiresAt == 0
 }
 
 func (p *MetaWhatsAppEmbeddedSignupProvider) GetPhoneNumberProfile(ctx context.Context, accessToken, phoneNumberID string) (domain.WhatsAppAccount, error) {
