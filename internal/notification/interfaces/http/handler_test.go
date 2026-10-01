@@ -1042,3 +1042,73 @@ func TestWhatsAppWebhookAcceptsCorrectlySignedPayload(t *testing.T) {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, res.Code, res.Body.String())
 	}
 }
+
+func TestSystemWhatsAppAccountIsHeldUnderTheSystemTenant(t *testing.T) {
+	handler, _, _, _, _, _, activityPublisher := notificationHandlerForTests(t)
+
+	connectReq := makeNotificationAuthRequestWithRole(http.MethodPost, "/notify/system/whatsapp/settings", []byte(`{
+		"phoneNumberId":"pnid-sys",
+		"businessAccountId":"waba-sys",
+		"code":"embedded-signup-code"
+	}`), "system", "SUPER_ADMIN")
+	connectRes := httptest.NewRecorder()
+	handler.ServeHTTP(connectRes, connectReq)
+	if connectRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, connectRes.Code, connectRes.Body.String())
+	}
+	var account domain.WhatsAppAccount
+	if err := json.Unmarshal(decodeNotificationEnvelope(t, connectRes).Data, &account); err != nil {
+		t.Fatalf("decode whatsapp account: %v", err)
+	}
+	if account.TenantID != "system" {
+		t.Fatalf("expected the account under the system tenant, got %q", account.TenantID)
+	}
+	if account.EncryptedAccessToken != "" || account.AccessTokenIV != "" {
+		t.Fatal("expected sensitive token fields to be omitted from response")
+	}
+
+	getRes := httptest.NewRecorder()
+	handler.ServeHTTP(getRes, makeNotificationAuthRequestWithRole(http.MethodGet, "/notify/system/whatsapp/settings", nil, "system", "SYSTEM_ADMIN"))
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, getRes.Code, getRes.Body.String())
+	}
+
+	tenantRes := httptest.NewRecorder()
+	handler.ServeHTTP(tenantRes, makeNotificationAuthRequestWithRole(http.MethodGet, "/notify/whatsapp/settings", nil, "tenant-a", "FLEET_ADMIN"))
+	if tenantRes.Code != http.StatusNotFound {
+		t.Fatalf("expected a tenant to see no account of its own, got %d: %s", tenantRes.Code, tenantRes.Body.String())
+	}
+
+	templatesRes := httptest.NewRecorder()
+	handler.ServeHTTP(templatesRes, makeNotificationAuthRequestWithRole(http.MethodGet, "/notify/system/whatsapp/templates", nil, "system", "SUPER_ADMIN"))
+	if templatesRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, templatesRes.Code, templatesRes.Body.String())
+	}
+
+	deleteRes := httptest.NewRecorder()
+	handler.ServeHTTP(deleteRes, makeNotificationAuthRequestWithRole(http.MethodDelete, "/notify/system/whatsapp/settings/pnid-sys", nil, "system", "SUPER_ADMIN"))
+	if deleteRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, deleteRes.Code, deleteRes.Body.String())
+	}
+
+	var logged bool
+	for _, command := range activityPublisher.commands {
+		if command.Action == "whatsapp.account.connected" && command.TenantID == "system" {
+			logged = true
+		}
+	}
+	if !logged {
+		t.Fatalf("expected the connection logged under the system tenant, got %#v", activityPublisher.commands)
+	}
+}
+
+func TestSystemWhatsAppRoutesAreClosedToTenants(t *testing.T) {
+	handler, _, _, _, _, _, _ := notificationHandlerForTests(t)
+	for _, path := range []string{"/notify/system/whatsapp/settings", "/notify/system/whatsapp/templates"} {
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, makeNotificationAuthRequestWithRole(http.MethodGet, path, nil, "tenant-a", "FLEET_ADMIN"))
+		if res.Code == http.StatusOK {
+			t.Fatalf("%s answered a tenant admin: %s", path, res.Body.String())
+		}
+	}
+}

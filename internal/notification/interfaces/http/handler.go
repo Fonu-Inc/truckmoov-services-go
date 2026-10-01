@@ -257,6 +257,9 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 	routes.HandleFunc("/docs/notification/openapi.json", []httpx.Audience{httpx.Public}, httpx.None(), h.docsOpenAPI)
 	routes.HandleFunc("/notify/messages/send", []httpx.Audience{httpx.Tenant, httpx.Service}, httpx.On("tenant.messaging"), h.sendMessage)
 	routes.HandleFunc("/notify/messages/retry/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.retryMessage)
+	routes.HandleFunc("/notify/system/whatsapp/settings", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppSettings)
+	routes.HandleFunc("/notify/system/whatsapp/settings/", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppSettingsByPath)
+	routes.HandleFunc("/notify/system/whatsapp/templates", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppTemplates)
 	routes.HandleFunc("/notify/whatsapp/settings", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.whatsAppSettings)
 	routes.HandleFunc("/notify/whatsapp/settings/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.whatsAppSettingsByPath)
 	routes.HandleFunc("/notify/whatsapp/create-template", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.createWhatsAppTemplate)
@@ -382,7 +385,10 @@ func (h *Handler) createWhatsAppTemplate(w http.ResponseWriter, r *http.Request)
 		respondEnvelope(w, http.StatusUnauthorized, "authentication required", nil)
 		return
 	}
+	h.createWhatsAppTemplateFor(w, r, tenantID)
+}
 
+func (h *Handler) createWhatsAppTemplateFor(w http.ResponseWriter, r *http.Request, tenantID string) {
 	var req createWhatsAppTemplateRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -437,6 +443,10 @@ func (h *Handler) getAllWhatsAppTemplates(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	h.listWhatsAppTemplatesFor(w, r, tenantID)
+}
+
+func (h *Handler) listWhatsAppTemplatesFor(w http.ResponseWriter, r *http.Request, tenantID string) {
 	templates, err := h.listWhatsAppTemplatesUseCase.Execute(r.Context(), application.ListWhatsAppTemplatesQuery{TenantID: tenantID})
 	if err != nil {
 		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)

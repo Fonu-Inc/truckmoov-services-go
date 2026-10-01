@@ -50,7 +50,10 @@ func (h *Handler) connectWhatsAppSettings(w http.ResponseWriter, r *http.Request
 		respondEnvelope(w, authStatus, whatsAppSettingsAuthMessage(authStatus), nil)
 		return
 	}
+	h.connectWhatsAppAccountFor(w, r, tenantID)
+}
 
+func (h *Handler) connectWhatsAppAccountFor(w http.ResponseWriter, r *http.Request, tenantID string) {
 	var req connectWhatsAppSettingsRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -93,7 +96,10 @@ func (h *Handler) getWhatsAppSettings(w http.ResponseWriter, r *http.Request) {
 		respondEnvelope(w, authStatus, whatsAppSettingsAuthMessage(authStatus), nil)
 		return
 	}
+	h.getWhatsAppAccountFor(w, r, tenantID)
+}
 
+func (h *Handler) getWhatsAppAccountFor(w http.ResponseWriter, r *http.Request, tenantID string) {
 	account, found, err := h.getWhatsAppAccountUseCase.Execute(r.Context(), application.GetWhatsAppAccountQuery{TenantID: tenantID})
 	if err != nil {
 		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
@@ -113,7 +119,10 @@ func (h *Handler) disconnectWhatsAppSettings(w http.ResponseWriter, r *http.Requ
 		respondEnvelope(w, authStatus, whatsAppSettingsAuthMessage(authStatus), nil)
 		return
 	}
+	h.disconnectWhatsAppAccountFor(w, r, tenantID, phoneNumberID)
+}
 
+func (h *Handler) disconnectWhatsAppAccountFor(w http.ResponseWriter, r *http.Request, tenantID, phoneNumberID string) {
 	err := h.disconnectWhatsAppAccountUseCase.Execute(r.Context(), application.DisconnectWhatsAppAccountCommand{
 		TenantID:      tenantID,
 		PhoneNumberID: strings.TrimSpace(phoneNumberID),
