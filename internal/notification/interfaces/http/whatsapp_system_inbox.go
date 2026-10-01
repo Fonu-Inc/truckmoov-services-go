@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/truckmoov/services-go/internal/notification/application"
+	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
 const systemConversationsPrefix = "/notify/system/whatsapp/conversations/"
@@ -33,7 +34,7 @@ func (h *Handler) systemWhatsAppConversations(w http.ResponseWriter, r *http.Req
 		respondInboxError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, page)
+	httpx.WriteOK(w, http.StatusOK, page)
 }
 
 func (h *Handler) systemWhatsAppConversationByPath(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +48,7 @@ func (h *Handler) systemWhatsAppConversationByPath(w http.ResponseWriter, r *htt
 	case len(parts) == 2 && parts[0] != "" && parts[1] == "messages":
 		h.systemWhatsAppMessages(w, r, parts[0])
 	default:
-		respondEnvelope(w, http.StatusNotFound, "not found", nil)
+		httpx.WriteError(w, http.StatusNotFound, "not found")
 	}
 }
 
@@ -57,7 +58,7 @@ func (h *Handler) systemWhatsAppConversation(w http.ResponseWriter, r *http.Requ
 		respondInboxError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, conversation)
+	httpx.WriteOK(w, http.StatusOK, conversation)
 }
 
 func (h *Handler) systemWhatsAppMessages(w http.ResponseWriter, r *http.Request, id string) {
@@ -67,7 +68,7 @@ func (h *Handler) systemWhatsAppMessages(w http.ResponseWriter, r *http.Request,
 		respondInboxError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, page)
+	httpx.WriteOK(w, http.StatusOK, page)
 }
 
 func (h *Handler) allowInboxRead(w http.ResponseWriter, r *http.Request) bool {
@@ -75,11 +76,11 @@ func (h *Handler) allowInboxRead(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return false
 	}
 	if h.platformInbox == nil {
-		respondEnvelope(w, http.StatusServiceUnavailable, "platform inbox is not configured", nil)
+		httpx.WriteError(w, http.StatusServiceUnavailable, "platform inbox is not configured")
 		return false
 	}
 	return true
@@ -96,10 +97,10 @@ func parseLimit(raw string) int {
 func respondInboxError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, application.ErrWhatsAppConversationNotFound):
-		respondEnvelope(w, http.StatusNotFound, "conversation not found", nil)
+		httpx.WriteError(w, http.StatusNotFound, "conversation not found")
 	case errors.Is(err, application.ErrInvalidInboxCursor):
-		respondEnvelope(w, http.StatusBadRequest, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 	default:
-		respondEnvelope(w, http.StatusBadGateway, "could not load messages", nil)
+		httpx.WriteError(w, http.StatusBadGateway, "could not load messages")
 	}
 }

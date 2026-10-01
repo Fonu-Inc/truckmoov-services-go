@@ -378,13 +378,13 @@ func (h *Handler) publishActivity(r *http.Request, command activitylog.PublishCo
 
 func (h *Handler) blockedDevices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	claims, ok := httpx.ClaimsFromRequest(r)
 	if !ok || claims == nil || claims.Service != "auth" {
-		http.NotFound(w, r)
+		httpx.NotFound(w, r)
 		return
 	}
-	respondJSON(w, http.StatusOK, h.gate.BlockedDevices())
+	httpx.WriteOK(w, http.StatusOK, h.gate.BlockedDevices())
 }
