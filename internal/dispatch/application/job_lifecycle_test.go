@@ -808,7 +808,7 @@ func TestJobLifecycleUseCase_SummarizeJobs_ExcludesCancelledFromTotalValue(t *te
 		t.Fatalf("cancel job three failed: %v", err)
 	}
 
-	summary, err := useCase.SummarizeJobs(context.Background(), "")
+	summary, err := useCase.SummarizeJobs(context.Background(), "", nil)
 	if err != nil {
 		t.Fatalf("summarize jobs failed: %v", err)
 	}

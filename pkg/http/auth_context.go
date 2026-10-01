@@ -23,6 +23,9 @@ type AuthClaims struct {
 	// Permissions is what the user may do right now, from auth; nil when
 	// auth could not be asked.
 	Permissions []string
+	// OrganizationType is the kind of organisation the user belongs to, from
+	// auth; empty when auth could not be asked or knows none.
+	OrganizationType string
 }
 
 // WithAuthContext attaches the caller's claims when the request carries a

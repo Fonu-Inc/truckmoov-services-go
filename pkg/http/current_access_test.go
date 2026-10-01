@@ -56,3 +56,10 @@ func TestTheTokenStandsWhenAuthCannotBeAsked(t *testing.T) {
 		t.Fatal("an unreachable auth must not sign everyone out")
 	}
 }
+
+func TestAnActiveAccountCarriesItsOrganizationType(t *testing.T) {
+	claims, ok := claimsAfter(t, accessServer(t, 200, identity.Access{UserID: "u1", Active: true, OrganizationType: "enterprise"}))
+	if !ok || claims.OrganizationType != "enterprise" {
+		t.Fatalf("expected the organisation type from auth, got %+v", claims)
+	}
+}

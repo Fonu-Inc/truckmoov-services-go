@@ -20,11 +20,12 @@ const accessCacheTTL = 30 * time.Second
 
 // Access is what a user may do right now, as auth sees it.
 type Access struct {
-	UserID      string   `json:"userId"`
-	TenantID    string   `json:"tenantId"`
-	Portal      Portal   `json:"portal"`
-	Active      bool     `json:"active"`
-	Permissions []string `json:"permissions"`
+	UserID           string   `json:"userId"`
+	TenantID         string   `json:"tenantId"`
+	Portal           Portal   `json:"portal"`
+	Active           bool     `json:"active"`
+	Permissions      []string `json:"permissions"`
+	OrganizationType string   `json:"organizationType"`
 }
 
 // AccessLookup is the answer to one question to auth.

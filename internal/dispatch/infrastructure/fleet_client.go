@@ -12,6 +12,9 @@ import (
 	"github.com/truckmoov/services-go/pkg/identity"
 )
 
+// fleetResponseLimit fits a tenant's whole vehicle list; a cut-off body fails to decode.
+const fleetResponseLimit = 4 << 20
+
 // FleetClient looks up driver and vehicle details from the fleet service so the
 // dispatch service can enrich job responses without owning that data itself.
 type FleetClient struct {
@@ -69,6 +72,31 @@ func (c *FleetClient) GetDriver(ctx context.Context, tenantID, driverID string) 
 	return FleetDriver{Name: envelope.Data.Name}, nil
 }
 
+// OwnedVehicleIDs lists the tenant's vehicles whose owner operator is the
+// given user. Fleet scopes nothing for a service call, so the match is made here.
+func (c *FleetClient) OwnedVehicleIDs(ctx context.Context, tenantID, ownerOperatorID string) ([]string, error) {
+	ownerOperatorID = strings.TrimSpace(ownerOperatorID)
+	if ownerOperatorID == "" {
+		return nil, nil
+	}
+	var envelope struct {
+		Data []struct {
+			ID              string `json:"id"`
+			OwnerOperatorID string `json:"ownerOperatorId"`
+		} `json:"data"`
+	}
+	if err := c.get(ctx, tenantID, "/fleet/vehicles", &envelope); err != nil {
+		return nil, err
+	}
+	ids := []string{}
+	for _, vehicle := range envelope.Data {
+		if vehicle.OwnerOperatorID == ownerOperatorID {
+			ids = append(ids, vehicle.ID)
+		}
+	}
+	return ids, nil
+}
+
 func (c *FleetClient) get(ctx context.Context, tenantID, path string, dest any) error {
 	if c.baseURL == "" {
 		return fmt.Errorf("fleet service url is not configured")
@@ -86,7 +114,7 @@ func (c *FleetClient) get(ctx context.Context, tenantID, path string, dest any) 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, fleetResponseLimit))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("fleet service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}

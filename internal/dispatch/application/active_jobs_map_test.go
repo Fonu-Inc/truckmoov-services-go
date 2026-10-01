@@ -57,7 +57,7 @@ func TestActiveJobsMap_ReturnsOnlyActiveJobsWithCounts(t *testing.T) {
 	}}
 	uc := NewActiveJobsMapUseCase(repo, fixedClock{now: time.Now()}, "", time.Minute, &countingShaper{})
 
-	result, err := uc.Execute(context.Background(), "tenant-a")
+	result, err := uc.Execute(context.Background(), "tenant-a", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestActiveJobsMap_NeverReturnsAnotherTenantsJobs(t *testing.T) {
 	}}
 	uc := NewActiveJobsMapUseCase(repo, fixedClock{now: time.Now()}, "", time.Minute, &countingShaper{})
 
-	result, err := uc.Execute(context.Background(), "tenant-b")
+	result, err := uc.Execute(context.Background(), "tenant-b", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestActiveJobsMap_CachesGeometryAcrossCalls(t *testing.T) {
 	uc := NewActiveJobsMapUseCase(repo, fixedClock{now: time.Now()}, "", time.Minute, shaper)
 
 	for i := 0; i < 3; i++ {
-		if _, err := uc.Execute(context.Background(), "tenant-a"); err != nil {
+		if _, err := uc.Execute(context.Background(), "tenant-a", nil); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	}
@@ -118,7 +118,7 @@ func TestActiveJobsMap_DegradesWhenShaperFails(t *testing.T) {
 	}}
 	uc := NewActiveJobsMapUseCase(repo, fixedClock{now: time.Now()}, "", time.Minute, &countingShaper{err: errors.New("valhalla down")})
 
-	result, err := uc.Execute(context.Background(), "tenant-a")
+	result, err := uc.Execute(context.Background(), "tenant-a", nil)
 	if err != nil {
 		t.Fatalf("a routing outage must not fail the map: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestActiveJobsMap_SkipsGeometryWithoutEnoughCoordinates(t *testing.T) {
 	shaper := &countingShaper{}
 	uc := NewActiveJobsMapUseCase(repo, fixedClock{now: time.Now()}, "", time.Minute, shaper)
 
-	result, err := uc.Execute(context.Background(), "tenant-a")
+	result, err := uc.Execute(context.Background(), "tenant-a", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

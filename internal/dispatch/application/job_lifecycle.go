@@ -142,6 +142,7 @@ type ListJobsFilter struct {
 	AmountFrom   *float64
 	AmountTo     *float64
 	Deadline     *time.Time
+	Scope        *JobScope
 }
 
 var ErrDriverStatusRequestNotFound = errors.New("driver status request not found")
@@ -579,6 +580,9 @@ func (u *JobLifecycleUseCase) ListJobs(_ context.Context, tenantID string, filte
 
 	filtered := make([]domain.Job, 0, len(jobs))
 	for _, job := range jobs {
+		if !filter.Scope.Allows(job) {
+			continue
+		}
 		if statusMatcher != nil && !statusMatcher(job.Status) {
 			continue
 		}
@@ -631,8 +635,8 @@ type JobStatusSummary struct {
 	TotalValueNgn float64        `json:"total_value_ngn"`
 }
 
-func (u *JobLifecycleUseCase) SummarizeJobs(ctx context.Context, tenantID string) (JobStatusSummary, error) {
-	jobs, err := u.ListJobs(ctx, tenantID, ListJobsFilter{})
+func (u *JobLifecycleUseCase) SummarizeJobs(ctx context.Context, tenantID string, scope *JobScope) (JobStatusSummary, error) {
+	jobs, err := u.ListJobs(ctx, tenantID, ListJobsFilter{Scope: scope})
 	if err != nil {
 		return JobStatusSummary{}, err
 	}

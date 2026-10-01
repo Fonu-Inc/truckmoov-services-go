@@ -106,7 +106,7 @@ func NewActiveJobsMapUseCase(
 	}
 }
 
-func (u *ActiveJobsMapUseCase) Execute(ctx context.Context, tenantID string) (ActiveJobsMap, error) {
+func (u *ActiveJobsMapUseCase) Execute(ctx context.Context, tenantID string, scope *JobScope) (ActiveJobsMap, error) {
 	resolvedTenant := strings.TrimSpace(tenantID)
 	if resolvedTenant == "" {
 		resolvedTenant = u.defaultTenant
@@ -119,7 +119,7 @@ func (u *ActiveJobsMapUseCase) Execute(ctx context.Context, tenantID string) (Ac
 
 	result := ActiveJobsMap{Jobs: []ActiveJobMapEntry{}}
 	for _, job := range jobs {
-		if !activeMapStatuses[job.Status] {
+		if !activeMapStatuses[job.Status] || !scope.Allows(job) {
 			continue
 		}
 

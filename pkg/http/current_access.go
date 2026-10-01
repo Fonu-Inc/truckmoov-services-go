@@ -25,6 +25,7 @@ func WithCurrentAccess(next http.Handler, client *identity.AccessClient) http.Ha
 		case lookup == identity.AccessFound:
 			current := *claims
 			current.Permissions = access.Permissions
+			current.OrganizationType = access.OrganizationType
 			r = r.WithContext(context.WithValue(r.Context(), authClaimsContextKey{}, &current))
 		}
 		next.ServeHTTP(w, r)

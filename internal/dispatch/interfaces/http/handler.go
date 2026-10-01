@@ -235,6 +235,7 @@ type Handler struct {
 	sendJobInstructionUseCase *application.SendJobInstructionUseCase
 	activityPublisher         *activitylog.Publisher
 	fleetClient               *infrastructure.FleetClient
+	ownedVehicles             ownedVehicleLister
 	createJobOfferUseCase     *application.CreateJobOfferUseCase
 	acceptJobOfferUseCase     *application.AcceptJobOfferUseCase
 	declineJobOfferUseCase    *application.DeclineJobOfferUseCase
@@ -327,7 +328,7 @@ func NewHandler(
 	activityPublisher *activitylog.Publisher,
 	fleetClient *infrastructure.FleetClient,
 ) *Handler {
-	return &Handler{
+	handler := &Handler{
 		publishJobStatusUseCase:   publishJobStatusUseCase,
 		jobLifecycleUseCase:       jobLifecycleUseCase,
 		routingUseCase:            routingUseCase,
@@ -335,6 +336,10 @@ func NewHandler(
 		activityPublisher:         activityPublisher,
 		fleetClient:               fleetClient,
 	}
+	if fleetClient != nil {
+		handler.ownedVehicles = fleetClient
+	}
+	return handler
 }
 
 // jobWithAssignments flattens domain.Job and adds driver/vehicle display details
@@ -406,22 +411,22 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 	routes.HandleFunc("/dispatch/routes/optimize", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), h.optimizeRoute)
 	// Legacy contract kept for existing integrations that publish status events directly.
 	routes.HandleFunc("/dispatch/jobs/status", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), h.updateStatus)
-	routes.HandleFunc("/dispatch/job-offers", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), h.jobOffers)
-	routes.HandleFunc("/dispatch/job-offers/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), h.jobOfferByPath)
-	routes.HandleFunc("/dispatch/job-offers/capacity", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), h.jobOfferCapacity)
-	routes.HandleFunc("/dispatch/aggregator/summary", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorSummary)
-	routes.HandleFunc("/dispatch/aggregator/operators", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorOperators)
-	routes.HandleFunc("/dispatch/aggregator/operators/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorOperatorByPath)
-	routes.HandleFunc("/dispatch/aggregator/invites/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorInviteByPath)
-	routes.HandleFunc("/dispatch/aggregator/sub-dispatch", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorSubDispatchQueue)
-	routes.HandleFunc("/dispatch/aggregator/sub-dispatch/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorSubDispatchByPath)
-	routes.HandleFunc("/dispatch/aggregator/performance", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorPerformance)
-	routes.HandleFunc("/dispatch/aggregator/top-operators", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorTopOperators)
-	routes.HandleFunc("/dispatch/aggregator/ratings", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorRatings)
-	routes.HandleFunc("/dispatch/aggregator/settlements", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorSettlements)
-	routes.HandleFunc("/dispatch/aggregator/settlements/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorSettlementByPath)
-	routes.HandleFunc("/dispatch/aggregator/activity", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorActivity)
-	routes.HandleFunc("/dispatch/aggregator/compliance-snapshot", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), h.aggregatorComplianceSnapshot)
+	routes.HandleFunc("/dispatch/job-offers", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), hiddenFromOwnerOperators(h.jobOffers))
+	routes.HandleFunc("/dispatch/job-offers/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), hiddenFromOwnerOperators(h.jobOfferByPath))
+	routes.HandleFunc("/dispatch/job-offers/capacity", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), hiddenFromOwnerOperators(h.jobOfferCapacity))
+	routes.HandleFunc("/dispatch/aggregator/summary", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorSummary))
+	routes.HandleFunc("/dispatch/aggregator/operators", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorOperators))
+	routes.HandleFunc("/dispatch/aggregator/operators/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorOperatorByPath))
+	routes.HandleFunc("/dispatch/aggregator/invites/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorInviteByPath))
+	routes.HandleFunc("/dispatch/aggregator/sub-dispatch", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorSubDispatchQueue))
+	routes.HandleFunc("/dispatch/aggregator/sub-dispatch/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorSubDispatchByPath))
+	routes.HandleFunc("/dispatch/aggregator/performance", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorPerformance))
+	routes.HandleFunc("/dispatch/aggregator/top-operators", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorTopOperators))
+	routes.HandleFunc("/dispatch/aggregator/ratings", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorRatings))
+	routes.HandleFunc("/dispatch/aggregator/settlements", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorSettlements))
+	routes.HandleFunc("/dispatch/aggregator/settlements/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorSettlementByPath))
+	routes.HandleFunc("/dispatch/aggregator/activity", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorActivity))
+	routes.HandleFunc("/dispatch/aggregator/compliance-snapshot", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.aggregator"), hiddenFromOwnerOperators(h.aggregatorComplianceSnapshot))
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
@@ -439,7 +444,7 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 		h.listJobs(w, r)
 		return
 	case http.MethodPost:
-		h.createJob(w, r)
+		hiddenFromOwnerOperators(h.createJob)(w, r)
 		return
 	default:
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -586,7 +591,7 @@ func (h *Handler) jobsSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	summary, err := h.jobLifecycleUseCase.SummarizeJobs(r.Context(), tenantID)
+	summary, err := h.jobLifecycleUseCase.SummarizeJobs(r.Context(), tenantID, h.jobScopeFor(r))
 	if err != nil {
 		respondLifecycleError(w, err)
 		return
@@ -614,6 +619,7 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 		Deadline:     parseOptionalDate(q.Get("deadline")),
 		WeightFromKg: parseOptionalFloat(q.Get("weight_from")),
 		WeightToKg:   parseOptionalFloat(q.Get("weight_to")),
+		Scope:        h.jobScopeFor(r),
 	}
 
 	jobs, err := h.jobLifecycleUseCase.ListJobs(r.Context(), tenantID, filter)
@@ -644,7 +650,7 @@ func (h *Handler) activeJobsMap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.activeJobsMapUseCase.Execute(r.Context(), tenantID)
+	result, err := h.activeJobsMapUseCase.Execute(r.Context(), tenantID, h.jobScopeFor(r))
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -695,6 +701,11 @@ func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, "not found")
 		return
 	}
+	scope := h.jobScopeFor(r)
+	if !h.jobsVisible(r, scope, jobID) {
+		writeJobNotFound(w)
+		return
+	}
 
 	switch action {
 	case "":
@@ -711,7 +722,7 @@ func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
 	case "scheduling":
 		h.updateJobScheduling(w, r, jobID)
 	case "assign":
-		h.assignJob(w, r, jobID)
+		h.assignJob(w, r, jobID, scope)
 	case "cancel":
 		h.cancelJob(w, r, jobID)
 	case "acknowledge":
@@ -877,7 +888,7 @@ func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jo
 	})
 }
 
-func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string) {
+func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string, scope *application.JobScope) {
 	if r.Method != http.MethodPost {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -886,6 +897,10 @@ func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string
 	var req assignJobRequest
 	if err := decodeJSONBody(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if !allowsNamedVehicle(scope, req.VehicleID) {
+		httpx.WriteError(w, http.StatusNotFound, "vehicle not found")
 		return
 	}
 
@@ -1323,6 +1338,10 @@ func (h *Handler) updateStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if scope := h.jobScopeFor(r); !h.jobsVisible(r, scope, req.JobID) || !allowsNamedVehicle(scope, req.VehicleID) {
+		writeJobNotFound(w)
+		return
+	}
 
 	tenantID, ok := h.requireTenantID(w, r)
 	if !ok {
@@ -1359,6 +1378,10 @@ func (h *Handler) optimizeRoute(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.routingUseCase == nil {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "routing is not configured")
+		return
+	}
+	if !h.jobsVisible(r, h.jobScopeFor(r), req.JobIDs...) {
+		writeJobNotFound(w)
 		return
 	}
 
