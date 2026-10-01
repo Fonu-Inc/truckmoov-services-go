@@ -1451,6 +1451,9 @@ func parseJobResourcePath(path string) (jobID, action string, ok bool) {
 }
 
 func respondLifecycleError(w http.ResponseWriter, err error) {
+	if respondFleetLookupError(w, err) {
+		return
+	}
 	if err == application.ErrJobNotFound {
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
 		return
@@ -1469,6 +1472,23 @@ func respondLifecycleError(w http.ResponseWriter, err error) {
 		return
 	}
 	httpx.WriteError(w, http.StatusBadRequest, err.Error())
+}
+
+// respondFleetLookupError reports a driver or vehicle fleet refused, or fleet
+// being unreachable, without leaking the underlying fleet error.
+func respondFleetLookupError(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, application.ErrDriverNotFound):
+		httpx.WriteError(w, http.StatusNotFound, application.ErrDriverNotFound.Error())
+	case errors.Is(err, application.ErrVehicleNotFound):
+		httpx.WriteError(w, http.StatusNotFound, application.ErrVehicleNotFound.Error())
+	case errors.Is(err, application.ErrFleetUnavailable):
+		log.Printf("dispatch: fleet lookup failed: %v", err)
+		httpx.WriteError(w, http.StatusServiceUnavailable, application.ErrFleetUnavailable.Error())
+	default:
+		return false
+	}
+	return true
 }
 
 func (s stopRequest) toDomain() domain.JobStop {

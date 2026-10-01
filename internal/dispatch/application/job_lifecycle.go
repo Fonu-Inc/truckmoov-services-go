@@ -155,6 +155,7 @@ type JobLifecycleUseCase struct {
 	idGenerator   IDGenerator
 	defaultTenant string
 	estimator     RouteEstimator
+	fleet         FleetDirectory
 }
 
 // WithRouteEstimator enables punctuality capture on delivery. Optional: without
@@ -162,6 +163,13 @@ type JobLifecycleUseCase struct {
 // allowance.
 func (u *JobLifecycleUseCase) WithRouteEstimator(estimator RouteEstimator) *JobLifecycleUseCase {
 	u.estimator = estimator
+	return u
+}
+
+// WithFleetDirectory makes assignment refuse a driver or vehicle fleet does
+// not know in the job's tenant.
+func (u *JobLifecycleUseCase) WithFleetDirectory(fleet FleetDirectory) *JobLifecycleUseCase {
+	u.fleet = fleet
 	return u
 }
 
@@ -324,43 +332,52 @@ func (u *JobLifecycleUseCase) AssignJob(ctx context.Context, command AssignJobCo
 		return domain.Job{}, err
 	}
 
-	previousStatus := job.Status
 	updatedJob, err := job.Assign(command.DriverID, command.DriverPhone, command.VehicleID, u.clock.Now(), u.idGenerator.New())
 	if err != nil {
+		return domain.Job{}, err
+	}
+	if err := verifyAssignees(ctx, u.fleet, job.TenantID, command.DriverID, command.VehicleID); err != nil {
 		return domain.Job{}, err
 	}
 
 	if err := u.repository.Save(updatedJob); err != nil {
 		return domain.Job{}, fmt.Errorf("save assigned job: %w", err)
 	}
-	if updatedJob.AssignedDriverID == "" {
-		return updatedJob, nil
+	return u.announceAssignment(ctx, job, updatedJob, command.Reason), nil
+}
+
+// announceAssignment emits the status event when the status or the driver
+// changed, and instructs the driver only when they are new to the job: the
+// instruction says nothing about the vehicle.
+func (u *JobLifecycleUseCase) announceAssignment(ctx context.Context, before, after domain.Job, reason string) domain.Job {
+	driverChanged := after.DriverChangedFrom(before)
+	if after.Status != before.Status || driverChanged {
+		u.emitStatusChanged(ctx, PublishJobStatusChangedCommand{
+			TenantID:          after.TenantID,
+			JobID:             after.ID,
+			PreviousStatus:    string(before.Status),
+			NewStatus:         string(after.Status),
+			AssignedDriverID:  after.AssignedDriverID,
+			AssignedVehicleID: after.AssignedVehicleID,
+			Reason:            strings.TrimSpace(reason),
+		})
 	}
-
-	u.emitStatusChanged(ctx, PublishJobStatusChangedCommand{
-		TenantID:          updatedJob.TenantID,
-		JobID:             updatedJob.ID,
-		PreviousStatus:    string(previousStatus),
-		NewStatus:         string(updatedJob.Status),
-		AssignedDriverID:  updatedJob.AssignedDriverID,
-		AssignedVehicleID: updatedJob.AssignedVehicleID,
-		Reason:            strings.TrimSpace(command.Reason),
-	})
-
-	message := buildDriverInstructionMessage(updatedJob)
-	if notifyErr := u.notifyDriverInstruction(
-		ctx,
-		updatedJob.TenantID,
-		updatedJob.ID,
-		updatedJob.AssignedDriverID,
-		message,
-	); notifyErr == nil {
-		// Keep this as best effort so assignment never fails because messaging is unavailable.
-		updatedJob = updatedJob.MarkDriverInstructionSent("whatsapp", u.clock.Now(), u.idGenerator.New())
-		_ = u.repository.Save(updatedJob)
+	if !driverChanged {
+		return after
 	}
+	return u.instructDriver(ctx, after)
+}
 
-	return updatedJob, nil
+// instructDriver is best effort: assignment never fails because messaging is
+// unavailable.
+func (u *JobLifecycleUseCase) instructDriver(ctx context.Context, job domain.Job) domain.Job {
+	message := buildDriverInstructionMessage(job)
+	if err := u.notifyDriverInstruction(ctx, job.TenantID, job.ID, job.AssignedDriverID, message); err != nil {
+		return job
+	}
+	sent := job.MarkDriverInstructionSent("whatsapp", u.clock.Now(), u.idGenerator.New())
+	_ = u.repository.Save(sent)
+	return sent
 }
 
 func (u *JobLifecycleUseCase) CancelJob(ctx context.Context, command CancelJobCommand) (domain.Job, error) {

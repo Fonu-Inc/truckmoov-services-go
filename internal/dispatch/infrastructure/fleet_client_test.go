@@ -54,3 +54,51 @@ func TestOwnedVehicleIDsReportsAFleetFailure(t *testing.T) {
 		t.Fatal("expected an error when fleet fails")
 	}
 }
+
+func fleetRecordServer(t *testing.T, status int, seen *string) *FleetClient {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*seen = r.URL.EscapedPath()
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(`{"data":{"id":"x"}}`))
+	}))
+	t.Cleanup(server.Close)
+	return NewFleetClient(server.URL, identity.NewCaller("dispatch", nil, ""), nil)
+}
+
+func TestDriverAndVehicleExistsReadFleetsAnswer(t *testing.T) {
+	cases := []struct {
+		status    int
+		wantFound bool
+		wantErr   bool
+	}{
+		{http.StatusOK, true, false},
+		{http.StatusNotFound, false, false},
+		{http.StatusInternalServerError, false, true},
+		{http.StatusUnauthorized, false, true},
+	}
+	for _, tc := range cases {
+		var seen string
+		client := fleetRecordServer(t, tc.status, &seen)
+
+		for name, exists := range map[string]func(context.Context, string, string) (bool, error){
+			"driver":  client.DriverExists,
+			"vehicle": client.VehicleExists,
+		} {
+			found, err := exists(context.Background(), "tenant-1", "id-1")
+			if found != tc.wantFound || (err != nil) != tc.wantErr {
+				t.Fatalf("%s on %d: expected found=%v err=%v, got found=%v err=%v", name, tc.status, tc.wantFound, tc.wantErr, found, err)
+			}
+		}
+	}
+}
+
+func TestDriverExistsEscapesTheID(t *testing.T) {
+	var seen string
+	client := fleetRecordServer(t, http.StatusOK, &seen)
+
+	_, _ = client.DriverExists(context.Background(), "tenant-1", "../vehicles/v1")
+	if seen != "/fleet/drivers/..%2Fvehicles%2Fv1" {
+		t.Fatalf("expected the id kept inside the drivers path, got %s", seen)
+	}
+}

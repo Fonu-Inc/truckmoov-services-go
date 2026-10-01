@@ -3,9 +3,11 @@ package infrastructure
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -54,7 +56,7 @@ func (c *FleetClient) GetVehicle(ctx context.Context, tenantID, vehicleID string
 			Model       string `json:"model"`
 		} `json:"data"`
 	}
-	if err := c.get(ctx, tenantID, "/fleet/vehicles/"+strings.TrimSpace(vehicleID), &envelope); err != nil {
+	if err := c.get(ctx, tenantID, vehiclePath(vehicleID), &envelope); err != nil {
 		return FleetVehicle{}, err
 	}
 	return FleetVehicle{PlateNumber: envelope.Data.PlateNumber, Make: envelope.Data.Make, Model: envelope.Data.Model}, nil
@@ -66,10 +68,39 @@ func (c *FleetClient) GetDriver(ctx context.Context, tenantID, driverID string) 
 			Name string `json:"name"`
 		} `json:"data"`
 	}
-	if err := c.get(ctx, tenantID, "/fleet/drivers/"+strings.TrimSpace(driverID), &envelope); err != nil {
+	if err := c.get(ctx, tenantID, driverPath(driverID), &envelope); err != nil {
 		return FleetDriver{}, err
 	}
 	return FleetDriver{Name: envelope.Data.Name}, nil
+}
+
+func (c *FleetClient) DriverExists(ctx context.Context, tenantID, driverID string) (bool, error) {
+	return c.exists(ctx, tenantID, driverPath(driverID))
+}
+
+func (c *FleetClient) VehicleExists(ctx context.Context, tenantID, vehicleID string) (bool, error) {
+	return c.exists(ctx, tenantID, vehiclePath(vehicleID))
+}
+
+// exists treats only fleet's 404 as "no such record"; any other failure is
+// reported so the caller can refuse rather than guess.
+func (c *FleetClient) exists(ctx context.Context, tenantID, path string) (bool, error) {
+	var envelope struct{}
+	err := c.get(ctx, tenantID, path, &envelope)
+	var statusErr fleetStatusError
+	if errors.As(err, &statusErr) && statusErr.status == http.StatusNotFound {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// Escaped so an id cannot reach a different fleet path.
+func driverPath(driverID string) string {
+	return "/fleet/drivers/" + url.PathEscape(strings.TrimSpace(driverID))
+}
+
+func vehiclePath(vehicleID string) string {
+	return "/fleet/vehicles/" + url.PathEscape(strings.TrimSpace(vehicleID))
 }
 
 // OwnedVehicleIDs lists the tenant's vehicles whose owner operator is the
@@ -116,10 +147,19 @@ func (c *FleetClient) get(ctx context.Context, tenantID, path string, dest any) 
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, fleetResponseLimit))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("fleet service returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fleetStatusError{status: resp.StatusCode, body: strings.TrimSpace(string(body))}
 	}
 	if err := json.Unmarshal(body, dest); err != nil {
 		return fmt.Errorf("decode fleet response: %w", err)
 	}
 	return nil
+}
+
+type fleetStatusError struct {
+	status int
+	body   string
+}
+
+func (e fleetStatusError) Error() string {
+	return fmt.Sprintf("fleet service returned %d: %s", e.status, e.body)
 }

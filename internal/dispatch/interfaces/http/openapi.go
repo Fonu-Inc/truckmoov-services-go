@@ -397,6 +397,22 @@ func dispatchOpenAPISpec() map[string]any {
 								},
 							},
 						},
+						"404": map[string]any{
+							"description": "Job, driver or vehicle not found. A driver_id or vehicle_id fleet does not know in the job's tenant is refused before anything is saved or sent.",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/ErrorResponse"},
+								},
+							},
+						},
+						"503": map[string]any{
+							"description": "Fleet could not be reached to confirm the driver or vehicle; nothing is assigned.",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/ErrorResponse"},
+								},
+							},
+						},
 					},
 				},
 			},
@@ -882,7 +898,7 @@ func dispatchOpenAPISpec() map[string]any {
 				},
 				"AssignJobRequest": map[string]any{
 					"type":        "object",
-					"description": "Send driver_id, vehicle_id or both. A side not sent keeps its current value. The job becomes assigned once it has a driver; a vehicle alone leaves its status unchanged.",
+					"description": "Send driver_id, vehicle_id or both. A side not sent keeps its current value. Each id sent must exist in fleet for the job's tenant. The job becomes assigned when it gets a new driver; a vehicle alone leaves its status unchanged. The driver is sent the WhatsApp instruction only when newly assigned or changed.",
 					"properties": map[string]any{
 						"driver_id":    map[string]any{"type": "string"},
 						"driver_phone": map[string]any{"type": "string", "description": "Persisted WhatsApp phone for the assigned driver."},

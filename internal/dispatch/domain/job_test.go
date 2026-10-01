@@ -237,6 +237,65 @@ func TestJob_Assign_RequiresDriverOrVehicle(t *testing.T) {
 	}
 }
 
+func mustAssign(t *testing.T, job Job, driverID, vehicleID string) Job {
+	t.Helper()
+	assigned, err := job.Assign(driverID, "", vehicleID, job.UpdatedAt, "tl-"+driverID+vehicleID)
+	if err != nil {
+		t.Fatalf("assign driver=%q vehicle=%q: %v", driverID, vehicleID, err)
+	}
+	return assigned
+}
+
+func lastTimelineEntry(t *testing.T, job Job) JobTimelineEntry {
+	t.Helper()
+	if len(job.Timeline) == 0 {
+		t.Fatal("expected a timeline entry")
+	}
+	return job.Timeline[len(job.Timeline)-1]
+}
+
+func TestJob_Assign_TimelineNamesWhatChanged(t *testing.T) {
+	withVehicle := mustAssign(t, validJobFixture(t), "", "vehicle-1")
+	if entry := lastTimelineEntry(t, withVehicle); entry.Type != "vehicle_assigned" || entry.Summary != "Vehicle assigned" {
+		t.Fatalf("vehicle alone: expected vehicle_assigned/Vehicle assigned, got %s/%s", entry.Type, entry.Summary)
+	}
+
+	withDriver := mustAssign(t, withVehicle, "driver-1", "")
+	if entry := lastTimelineEntry(t, withDriver); entry.Type != "job_assigned" || entry.Metadata["previous_driver_id"] != "" {
+		t.Fatalf("first driver after a vehicle: expected job_assigned, got %s %v", entry.Type, entry.Metadata)
+	}
+
+	swapped := mustAssign(t, withDriver, "", "vehicle-2")
+	entry := lastTimelineEntry(t, swapped)
+	if entry.Type != "vehicle_assigned" || entry.Summary != "Vehicle changed" || entry.Metadata["previous_vehicle_id"] != "vehicle-1" {
+		t.Fatalf("vehicle swap: expected vehicle_assigned/Vehicle changed from vehicle-1, got %s/%s %v", entry.Type, entry.Summary, entry.Metadata)
+	}
+
+	reassigned := mustAssign(t, swapped, "driver-2", "")
+	if entry := lastTimelineEntry(t, reassigned); entry.Type != "job_reassigned" || entry.Metadata["previous_driver_id"] != "driver-1" {
+		t.Fatalf("driver change: expected job_reassigned from driver-1, got %s %v", entry.Type, entry.Metadata)
+	}
+}
+
+func TestJob_Assign_VehicleSwapKeepsAnInProgressStatus(t *testing.T) {
+	job := mustAssign(t, validJobFixture(t), "driver-1", "vehicle-1")
+	job.Status = StatusEnRoute
+
+	swapped := mustAssign(t, job, "", "vehicle-2")
+	if swapped.Status != StatusEnRoute {
+		t.Fatalf("expected %q kept, got %q", StatusEnRoute, swapped.Status)
+	}
+}
+
+func TestJob_Assign_SameDriverAgainLogsNothing(t *testing.T) {
+	job := mustAssign(t, validJobFixture(t), "driver-1", "vehicle-1")
+
+	again := mustAssign(t, job, "driver-1", "vehicle-1")
+	if len(again.Timeline) != len(job.Timeline) {
+		t.Fatalf("expected no new timeline entry, got %d -> %d", len(job.Timeline), len(again.Timeline))
+	}
+}
+
 func TestJob_PatchDetails_KeepsFieldsNotSent(t *testing.T) {
 	job := validJobFixture(t)
 	deadline := job.UpdatedAt.Add(48 * time.Hour)

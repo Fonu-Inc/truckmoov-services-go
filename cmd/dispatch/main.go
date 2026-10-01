@@ -187,6 +187,7 @@ func main() {
 	}()
 
 	fleetClient := infrastructure.NewFleetClient(cfg.FleetServiceURL, serviceCaller, nil)
+	jobLifecycleUseCase = jobLifecycleUseCase.WithFleetDirectory(fleetClient)
 
 	jobOfferRepository := infrastructure.NewPostgresJobOfferRepository(postgresDB)
 	if err := jobOfferRepository.EnsureSchema(ctx); err != nil {

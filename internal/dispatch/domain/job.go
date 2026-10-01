@@ -384,33 +384,18 @@ func (j Job) Assign(driverID, driverPhone, vehicleID string, now time.Time, time
 	}
 
 	updated := j
-	previousDriver := updated.AssignedDriverID
-	previousVehicle := updated.AssignedVehicleID
-	if driverID != "" {
-		updated.AssignedDriverID = driverID
-		if driverPhone != "" {
-			updated.AssignedDriverPhone = driverPhone
-		} else if previousDriver != driverID {
-			updated.AssignedDriverPhone = ""
-		}
-	}
-	if vehicleID != "" {
-		updated.AssignedVehicleID = vehicleID
-	}
-	// Assigned means a driver has been told. A vehicle alone leaves the job
-	// waiting for one.
-	if updated.AssignedDriverID != "" {
+	updated.applyAssignment(driverID, driverPhone, vehicleID)
+	// Assigned means a driver has been told. A vehicle alone, or the same
+	// driver again, leaves the status where it was.
+	if updated.DriverChangedFrom(j) {
 		updated.Status = StatusAssigned
 	}
 	updated.UpdatedAt = now.UTC()
 
-	eventType := "job_assigned"
-	summary := "Job assigned to driver/vehicle"
-	if previousDriver != "" || previousVehicle != "" {
-		eventType = "job_reassigned"
-		summary = "Job reassigned to a new driver/vehicle"
+	eventType, summary := assignmentEvent(j, updated)
+	if eventType == "" {
+		return updated, nil
 	}
-
 	updated.appendTimeline(JobTimelineEntry{
 		ID:         strings.TrimSpace(timelineID),
 		Type:       eventType,
@@ -420,11 +405,48 @@ func (j Job) Assign(driverID, driverPhone, vehicleID string, now time.Time, time
 			"driver_id":           updated.AssignedDriverID,
 			"driver_phone":        updated.AssignedDriverPhone,
 			"vehicle_id":          updated.AssignedVehicleID,
-			"previous_driver_id":  previousDriver,
-			"previous_vehicle_id": previousVehicle,
+			"previous_driver_id":  j.AssignedDriverID,
+			"previous_vehicle_id": j.AssignedVehicleID,
 		},
 	})
 	return updated, nil
+}
+
+// DriverChangedFrom reports whether the job now has a different driver than
+// before: newly assigned or replaced.
+func (j Job) DriverChangedFrom(before Job) bool {
+	return j.AssignedDriverID != before.AssignedDriverID
+}
+
+func (j *Job) applyAssignment(driverID, driverPhone, vehicleID string) {
+	if driverID != "" {
+		// A new driver never inherits the previous driver's phone.
+		if driverPhone != "" || driverID != j.AssignedDriverID {
+			j.AssignedDriverPhone = driverPhone
+		}
+		j.AssignedDriverID = driverID
+	}
+	if vehicleID != "" {
+		j.AssignedVehicleID = vehicleID
+	}
+}
+
+// assignmentEvent names what an assignment changed. A driver change wins over
+// a vehicle change; nothing changed means no timeline entry.
+func assignmentEvent(before, after Job) (string, string) {
+	vehicleChanged := after.AssignedVehicleID != before.AssignedVehicleID
+	switch {
+	case after.DriverChangedFrom(before) && before.AssignedDriverID == "":
+		return "job_assigned", "Job assigned to driver/vehicle"
+	case after.DriverChangedFrom(before):
+		return "job_reassigned", "Job reassigned to a new driver/vehicle"
+	case vehicleChanged && before.AssignedVehicleID == "":
+		return "vehicle_assigned", "Vehicle assigned"
+	case vehicleChanged:
+		return "vehicle_assigned", "Vehicle changed"
+	default:
+		return "", ""
+	}
 }
 
 func (j Job) Cancel(reason string, now time.Time, timelineID string) (Job, error) {

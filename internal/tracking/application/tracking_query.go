@@ -36,12 +36,20 @@ func (u *TrackingQueryUseCase) VehicleHistory(_ context.Context, tenantID, vehic
 	resolvedTenant := u.resolveTenant(tenantID)
 	cleanVehicle := strings.TrimSpace(vehicleID)
 	if cleanVehicle == "" {
-		return nil, nil
+		return []LatestLocation{}, nil
 	}
 	if limit <= 0 {
 		limit = 50
 	}
-	return u.historyRepo.History(resolvedTenant, cleanVehicle, limit)
+	history, err := u.historyRepo.History(resolvedTenant, cleanVehicle, limit)
+	if err != nil {
+		return nil, err
+	}
+	// Never nil, so the response is [] rather than null.
+	if history == nil {
+		history = []LatestLocation{}
+	}
+	return history, nil
 }
 
 func (u *TrackingQueryUseCase) resolveTenant(tenantID string) string {

@@ -902,3 +902,149 @@ func TestJobLifecycleUseCase_AssignVehicleThenDriver(t *testing.T) {
 func ptr[T any](value T) *T {
 	return &value
 }
+
+type fakeFleetDirectory struct {
+	drivers  map[string]bool
+	vehicles map[string]bool
+	err      error
+}
+
+func (f fakeFleetDirectory) DriverExists(_ context.Context, tenantID, driverID string) (bool, error) {
+	return f.drivers[tenantID+":"+driverID], f.err
+}
+
+func (f fakeFleetDirectory) VehicleExists(_ context.Context, tenantID, vehicleID string) (bool, error) {
+	return f.vehicles[tenantID+":"+vehicleID], f.err
+}
+
+type assignFixture struct {
+	useCase    *JobLifecycleUseCase
+	repository *lifecycleRepository
+	emitter    *lifecycleEmitter
+	notifier   *lifecycleNotifier
+	job        domain.Job
+}
+
+func newAssignFixture(t *testing.T, fleet FleetDirectory) assignFixture {
+	t.Helper()
+	f := assignFixture{repository: newLifecycleRepository(), emitter: &lifecycleEmitter{}, notifier: &lifecycleNotifier{}}
+	f.useCase = NewJobLifecycleUseCase(
+		f.repository, f.emitter, f.notifier,
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{}, "default",
+	).WithFleetDirectory(fleet)
+	job, err := f.useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:   "job-1",
+		Pickup:  domain.JobStop{Address: "Apapa Port"},
+		Dropoff: domain.JobStop{Address: "Lekki Free Zone"},
+	})
+	if err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+	f.job = job
+	return f
+}
+
+func (f assignFixture) assign(t *testing.T, driverID, vehicleID string) domain.Job {
+	t.Helper()
+	job, err := f.useCase.AssignJob(context.Background(), AssignJobCommand{JobID: f.job.ID, DriverID: driverID, VehicleID: vehicleID})
+	if err != nil {
+		t.Fatalf("assign driver=%q vehicle=%q: %v", driverID, vehicleID, err)
+	}
+	return job
+}
+
+func (f assignFixture) stored(t *testing.T) domain.Job {
+	t.Helper()
+	job, ok := f.repository.FindByTenantAndID("default", f.job.ID)
+	if !ok {
+		t.Fatal("job missing from repository")
+	}
+	return job
+}
+
+func knownFleet() fakeFleetDirectory {
+	return fakeFleetDirectory{
+		drivers:  map[string]bool{"default:driver-1": true, "default:driver-2": true},
+		vehicles: map[string]bool{"default:vehicle-1": true, "default:vehicle-2": true},
+	}
+}
+
+func TestAssignJob_RefusesIdsFleetDoesNotKnow(t *testing.T) {
+	cases := []struct {
+		name      string
+		driverID  string
+		vehicleID string
+		want      error
+	}{
+		{"unknown driver", "00000000-0000-0000-0000-000000000000", "", ErrDriverNotFound},
+		{"unknown vehicle", "", "not-a-uuid", ErrVehicleNotFound},
+		{"known driver, unknown vehicle", "driver-1", "vehicle-9", ErrVehicleNotFound},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAssignFixture(t, knownFleet())
+
+			_, err := f.useCase.AssignJob(context.Background(), AssignJobCommand{JobID: f.job.ID, DriverID: tc.driverID, VehicleID: tc.vehicleID})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("expected %v, got %v", tc.want, err)
+			}
+			stored := f.stored(t)
+			if stored.AssignedDriverID != "" || stored.AssignedVehicleID != "" || len(stored.Timeline) != len(f.job.Timeline) {
+				t.Fatalf("expected nothing saved, got driver=%q vehicle=%q timeline=%d", stored.AssignedDriverID, stored.AssignedVehicleID, len(stored.Timeline))
+			}
+			if f.notifier.calls != 0 || len(f.emitter.commands) != 0 {
+				t.Fatalf("expected no notification or event, got notified=%d events=%d", f.notifier.calls, len(f.emitter.commands))
+			}
+		})
+	}
+}
+
+func TestAssignJob_FleetUnreachableRefusesRatherThanAssigns(t *testing.T) {
+	f := newAssignFixture(t, fakeFleetDirectory{err: errors.New("dial tcp: connection refused")})
+
+	_, err := f.useCase.AssignJob(context.Background(), AssignJobCommand{JobID: f.job.ID, DriverID: "driver-1"})
+	if !errors.Is(err, ErrFleetUnavailable) {
+		t.Fatalf("expected ErrFleetUnavailable, got %v", err)
+	}
+	if f.stored(t).AssignedDriverID != "" || f.notifier.calls != 0 {
+		t.Fatalf("expected nothing assigned or sent, got driver=%q notified=%d", f.stored(t).AssignedDriverID, f.notifier.calls)
+	}
+}
+
+func TestAssignJob_VehicleSwapOnADriverJobSendsNothing(t *testing.T) {
+	f := newAssignFixture(t, knownFleet())
+	f.assign(t, "driver-1", "vehicle-1")
+	notified, events := f.notifier.calls, len(f.emitter.commands)
+
+	swapped := f.assign(t, "", "vehicle-2")
+	if swapped.AssignedVehicleID != "vehicle-2" || swapped.AssignedDriverID != "driver-1" {
+		t.Fatalf("expected vehicle-2 with driver-1 kept, got driver=%q vehicle=%q", swapped.AssignedDriverID, swapped.AssignedVehicleID)
+	}
+	if f.notifier.calls != notified || len(f.emitter.commands) != events {
+		t.Fatalf("expected no instruction or status event, got notified=%d->%d events=%d->%d", notified, f.notifier.calls, events, len(f.emitter.commands))
+	}
+}
+
+func TestAssignJob_SameDriverAgainSendsNothing(t *testing.T) {
+	f := newAssignFixture(t, knownFleet())
+	f.assign(t, "driver-1", "")
+
+	f.assign(t, "driver-1", "")
+	if f.notifier.calls != 1 || len(f.emitter.commands) != 1 {
+		t.Fatalf("expected only the first assign to announce, got notified=%d events=%d", f.notifier.calls, len(f.emitter.commands))
+	}
+}
+
+func TestAssignJob_DriverChangeInstructsTheNewDriver(t *testing.T) {
+	f := newAssignFixture(t, knownFleet())
+	f.assign(t, "driver-1", "vehicle-1")
+
+	f.assign(t, "driver-2", "")
+	if f.notifier.calls != 2 || len(f.emitter.commands) != 2 {
+		t.Fatalf("expected the new driver instructed and an event, got notified=%d events=%d", f.notifier.calls, len(f.emitter.commands))
+	}
+	if last := f.emitter.commands[1]; last.AssignedDriverID != "driver-2" {
+		t.Fatalf("expected event for driver-2, got %q", last.AssignedDriverID)
+	}
+}

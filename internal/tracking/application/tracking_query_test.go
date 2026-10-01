@@ -153,7 +153,20 @@ func TestTrackingQueryUseCase_VehicleHistory_EmptyVehicleID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if hist != nil {
-		t.Fatalf("expected nil for blank vehicleID, got %v", hist)
+	if hist == nil || len(hist) != 0 {
+		t.Fatalf("expected empty non-nil history for blank vehicleID, got %#v", hist)
+	}
+}
+
+type nilHistoryReader struct{ *fakeHistoryReader }
+
+func (nilHistoryReader) History(string, string, int) ([]LatestLocation, error) { return nil, nil }
+
+func TestTrackingQueryUseCase_VehicleHistory_EmptyIsNotNil(t *testing.T) {
+	uc := NewTrackingQueryUseCase(newFakeLatestReader(), nilHistoryReader{newFakeHistoryReader()}, "default")
+
+	history, err := uc.VehicleHistory(context.Background(), "tenant-1", "v-none", 0)
+	if err != nil || history == nil || len(history) != 0 {
+		t.Fatalf("expected an empty non-nil history, got %#v err=%v", history, err)
 	}
 }

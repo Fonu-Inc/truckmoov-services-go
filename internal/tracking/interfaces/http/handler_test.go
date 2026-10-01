@@ -341,3 +341,26 @@ func decodeData(t *testing.T, body []byte, dest any) {
 		t.Fatalf("decode data: %v", err)
 	}
 }
+
+func TestHandler_VehicleHistoryWithNoPointsIsAnEmptyArray(t *testing.T) {
+	handler, _ := buildTrackingTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
+	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
+
+	req := httptest.NewRequest(http.MethodGet, "/tracking/vehicles/vehicle-none/history", nil)
+	req.Header.Set("Authorization", "Bearer "+makeTrackingBearerToken("replace-me", "tenant-1", "DISPATCHER"))
+	res := httptest.NewRecorder()
+	server.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, res.Code)
+	}
+
+	var payload struct {
+		History json.RawMessage `json:"history"`
+	}
+	decodeData(t, res.Body.Bytes(), &payload)
+	if string(payload.History) != "[]" {
+		t.Fatalf("expected history [], got %s", payload.History)
+	}
+}
