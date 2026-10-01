@@ -274,6 +274,64 @@ type JobDetailsUpdate struct {
 	LoadVolumeM3     float64
 }
 
+// JobDetailsPatch carries only the fields a caller sent. Nil keeps the job's
+// current value.
+type JobDetailsPatch struct {
+	Pickup           *JobStop
+	Dropoff          *JobStop
+	Stops            *[]JobStop
+	CargoType        *string
+	CargoDescription *string
+	AmountNgn        *float64
+	Deadline         *time.Time
+	ClearDeadline    bool
+	LoadWeightKg     *float64
+	LoadVolumeM3     *float64
+}
+
+func (j Job) PatchDetails(patch JobDetailsPatch, now time.Time, timelineID string) (Job, error) {
+	return j.UpdateDetails(patch.over(j.details()), now, timelineID)
+}
+
+func (j Job) details() JobDetailsUpdate {
+	return JobDetailsUpdate{
+		Pickup:           j.Pickup,
+		Dropoff:          j.Dropoff,
+		Stops:            j.Stops,
+		CargoType:        j.CargoType,
+		CargoDescription: j.CargoDescription,
+		AmountNgn:        j.AmountNgn,
+		Deadline:         j.Deadline,
+		LoadWeightKg:     j.LoadWeightKg,
+		LoadVolumeM3:     j.LoadVolumeM3,
+	}
+}
+
+func (p JobDetailsPatch) over(base JobDetailsUpdate) JobDetailsUpdate {
+	merged := base
+	setIfSent(&merged.Pickup, p.Pickup)
+	setIfSent(&merged.Dropoff, p.Dropoff)
+	setIfSent(&merged.Stops, p.Stops)
+	setIfSent(&merged.CargoType, p.CargoType)
+	setIfSent(&merged.CargoDescription, p.CargoDescription)
+	setIfSent(&merged.AmountNgn, p.AmountNgn)
+	setIfSent(&merged.LoadWeightKg, p.LoadWeightKg)
+	setIfSent(&merged.LoadVolumeM3, p.LoadVolumeM3)
+	if p.Deadline != nil {
+		merged.Deadline = p.Deadline
+	}
+	if p.ClearDeadline {
+		merged.Deadline = nil
+	}
+	return merged
+}
+
+func setIfSent[T any](target *T, sent *T) {
+	if sent != nil {
+		*target = *sent
+	}
+}
+
 func (j Job) UpdateDetails(update JobDetailsUpdate, now time.Time, timelineID string) (Job, error) {
 	if j.Status == StatusCancelled || j.Status == StatusDelivered {
 		return Job{}, errors.New("cannot edit a completed/cancelled job")

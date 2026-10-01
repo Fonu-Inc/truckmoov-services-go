@@ -79,17 +79,9 @@ type DeleteJobCommand struct {
 }
 
 type UpdateJobDetailsCommand struct {
-	TenantID         string
-	JobID            string
-	Pickup           domain.JobStop
-	Dropoff          domain.JobStop
-	Stops            []domain.JobStop
-	CargoType        string
-	CargoDescription string
-	AmountNgn        float64
-	Deadline         *time.Time
-	LoadWeightKg     float64
-	LoadVolumeM3     float64
+	TenantID string
+	JobID    string
+	Patch    domain.JobDetailsPatch
 }
 
 type AcknowledgeJobCommand struct {
@@ -304,17 +296,7 @@ func (u *JobLifecycleUseCase) UpdateDetails(_ context.Context, command UpdateJob
 		return domain.Job{}, err
 	}
 
-	updatedJob, err := job.UpdateDetails(domain.JobDetailsUpdate{
-		Pickup:           command.Pickup,
-		Dropoff:          command.Dropoff,
-		Stops:            command.Stops,
-		CargoType:        command.CargoType,
-		CargoDescription: command.CargoDescription,
-		AmountNgn:        command.AmountNgn,
-		Deadline:         command.Deadline,
-		LoadWeightKg:     command.LoadWeightKg,
-		LoadVolumeM3:     command.LoadVolumeM3,
-	}, u.clock.Now(), u.idGenerator.New())
+	updatedJob, err := job.PatchDetails(command.Patch, u.clock.Now(), u.idGenerator.New())
 	if err != nil {
 		return domain.Job{}, err
 	}

@@ -852,7 +852,7 @@ func TestHandler_CreateJobAlternateFlatPayloadStillAccepted(t *testing.T) {
 			"deliveryLat":6.44,
 			"deliveryLng":3.48,
 			"cargoType":"Electronics",
-			"cargoWeight":12.5,
+			"cargoWeight":12500,
 			"cargoDescription":"High-value electronics cargo",
 			"amount":450000,
 			"deadline":"2026-01-01T15:30",
@@ -1453,5 +1453,61 @@ func TestHandler_JobResourceBarePathGetAndMethodNotAllowed(t *testing.T) {
 	postRes := dispatchRequest(t, mux, http.MethodPost, "/dispatch/jobs/"+jobID, "")
 	if postRes.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusMethodNotAllowed, postRes.Code, postRes.Body.String())
+	}
+}
+
+func TestHandler_PatchJobChangesOnlySentFields(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
+
+	created := dispatchRequest(t, mux, http.MethodPost, "/dispatch/jobs", `{
+		"reference":"TM-3001",
+		"pickupLocation":"Apapa Port",
+		"deliveryLocation":"Victoria Island"
+	}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusCreated, created.Code, created.Body.String())
+	}
+	var createdPayload struct {
+		Data domain.Job `json:"data"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &createdPayload); err != nil {
+		t.Fatalf("decode created job: %v", err)
+	}
+
+	res := dispatchRequest(t, mux, http.MethodPatch, "/dispatch/jobs/"+createdPayload.Data.ID, `{"load_weight_kg":8500}`)
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, res.Code, res.Body.String())
+	}
+	var payload struct {
+		Data domain.Job `json:"data"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode patched job: %v", err)
+	}
+	if payload.Data.LoadWeightKg != 8500 {
+		t.Fatalf("expected weight 8500, got %v", payload.Data.LoadWeightKg)
+	}
+	if payload.Data.Pickup.Address != "Apapa Port" || payload.Data.Dropoff.Address != "Victoria Island" {
+		t.Fatalf("expected stops kept, got %q/%q", payload.Data.Pickup.Address, payload.Data.Dropoff.Address)
+	}
+}
+
+func TestHandler_ErrorsUseTheStandardEnvelope(t *testing.T) {
+	handler := buildDispatchTestHandler()
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
+
+	res := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs/missing-job", "")
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d body=%s", http.StatusNotFound, res.Code, res.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if payload["message"] != "job not found" || payload["error"] != "Not Found" || payload["statusCode"] != float64(http.StatusNotFound) {
+		t.Fatalf("unexpected error envelope: %#v", payload)
 	}
 }

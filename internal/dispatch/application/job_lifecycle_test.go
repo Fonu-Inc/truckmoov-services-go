@@ -597,13 +597,15 @@ func TestJobLifecycleUseCase_UpdateDetails_HappyPath(t *testing.T) {
 	}
 
 	updatedJob, err := useCase.UpdateDetails(context.Background(), UpdateJobDetailsCommand{
-		JobID:            job.ID,
-		Pickup:           domain.JobStop{Address: "Ikeja"},
-		Dropoff:          domain.JobStop{Address: "Yaba"},
-		Stops:            []domain.JobStop{{Address: "Oshodi"}},
-		CargoType:        "Furniture",
-		CargoDescription: "Office chairs",
-		AmountNgn:        5000,
+		JobID: job.ID,
+		Patch: domain.JobDetailsPatch{
+			Pickup:           &domain.JobStop{Address: "Ikeja"},
+			Dropoff:          &domain.JobStop{Address: "Yaba"},
+			Stops:            &[]domain.JobStop{{Address: "Oshodi"}},
+			CargoType:        ptr("Furniture"),
+			CargoDescription: ptr("Office chairs"),
+			AmountNgn:        ptr(5000.0),
+		},
 	})
 	if err != nil {
 		t.Fatalf("update details failed: %v", err)
@@ -638,9 +640,8 @@ func TestJobLifecycleUseCase_UpdateDetails_NotFound(t *testing.T) {
 	)
 
 	_, err := useCase.UpdateDetails(context.Background(), UpdateJobDetailsCommand{
-		JobID:   "unknown-job",
-		Pickup:  domain.JobStop{Address: "Ikeja"},
-		Dropoff: domain.JobStop{Address: "Yaba"},
+		JobID: "unknown-job",
+		Patch: domain.JobDetailsPatch{Pickup: &domain.JobStop{Address: "Ikeja"}},
 	})
 	if !errors.Is(err, ErrJobNotFound) {
 		t.Fatalf("expected ErrJobNotFound, got %v", err)
@@ -675,9 +676,8 @@ func TestJobLifecycleUseCase_UpdateDetails_CancelledJob(t *testing.T) {
 	}
 
 	_, err = useCase.UpdateDetails(context.Background(), UpdateJobDetailsCommand{
-		JobID:   job.ID,
-		Pickup:  domain.JobStop{Address: "Ikeja"},
-		Dropoff: domain.JobStop{Address: "Yaba"},
+		JobID: job.ID,
+		Patch: domain.JobDetailsPatch{Pickup: &domain.JobStop{Address: "Ikeja"}},
 	})
 	if err == nil {
 		t.Fatal("expected error updating details of a cancelled job")
@@ -897,4 +897,8 @@ func TestJobLifecycleUseCase_AssignVehicleThenDriver(t *testing.T) {
 	if notifier.calls != 1 || len(emitter.commands) != 1 {
 		t.Fatalf("expected one notification and one event, got notified=%d events=%d", notifier.calls, len(emitter.commands))
 	}
+}
+
+func ptr[T any](value T) *T {
+	return &value
 }

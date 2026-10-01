@@ -16,7 +16,7 @@ func (h *Handler) aggregatorConfigured() bool {
 }
 
 func (h *Handler) aggregatorUnconfigured(w http.ResponseWriter) {
-	respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "aggregator network is not configured"})
+	respondError(w, http.StatusServiceUnavailable, "aggregator network is not configured")
 }
 
 func (h *Handler) aggregatorSummary(w http.ResponseWriter, r *http.Request) {
@@ -25,7 +25,7 @@ func (h *Handler) aggregatorSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -35,7 +35,7 @@ func (h *Handler) aggregatorSummary(w http.ResponseWriter, r *http.Request) {
 
 	summary, err := h.summaryFiguresUseCase.Execute(r.Context(), tenantID)
 	if err != nil {
-		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": summary})
@@ -60,7 +60,7 @@ func (h *Handler) aggregatorOperators(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		h.addOperator(w, r)
 	default:
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -71,7 +71,7 @@ func (h *Handler) listLinkedOperators(w http.ResponseWriter, r *http.Request) {
 	}
 	operators, err := h.listLinkedOperatorsUseCase.Execute(r.Context(), tenantID)
 	if err != nil {
-		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": operators})
@@ -80,7 +80,7 @@ func (h *Handler) listLinkedOperators(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) addOperator(w http.ResponseWriter, r *http.Request) {
 	var req addOperatorRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -110,7 +110,7 @@ func (h *Handler) aggregatorOperatorByPath(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -121,7 +121,7 @@ func (h *Handler) aggregatorOperatorByPath(w http.ResponseWriter, r *http.Reques
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/dispatch/aggregator/operators/"), "/")
 	parts := strings.Split(rest, "/")
 	if len(parts) != 2 || parts[1] != "remove" {
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
 
@@ -129,7 +129,7 @@ func (h *Handler) aggregatorOperatorByPath(w http.ResponseWriter, r *http.Reques
 		Reason string `json:"reason"`
 	}
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -152,20 +152,20 @@ func (h *Handler) aggregatorInviteByPath(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/dispatch/aggregator/invites/"), "/")
 	parts := strings.Split(rest, "/")
 	if len(parts) != 2 || parts[1] != "accept" {
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
 
 	claims, ok := httpx.ClaimsFromRequest(r)
 	if !ok || claims == nil || strings.TrimSpace(claims.TenantID) == "" {
-		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authenticated tenant context is required"})
+		respondError(w, http.StatusUnauthorized, "authenticated tenant context is required")
 		return
 	}
 
@@ -187,7 +187,7 @@ func (h *Handler) aggregatorSubDispatchQueue(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -197,7 +197,7 @@ func (h *Handler) aggregatorSubDispatchQueue(w http.ResponseWriter, r *http.Requ
 
 	queue, err := h.subDispatchQueueUseCase.Execute(r.Context(), tenantID)
 	if err != nil {
-		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": queue})
@@ -215,7 +215,7 @@ func (h *Handler) aggregatorSubDispatchByPath(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -226,13 +226,13 @@ func (h *Handler) aggregatorSubDispatchByPath(w http.ResponseWriter, r *http.Req
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/dispatch/aggregator/sub-dispatch/"), "/")
 	parts := strings.Split(rest, "/")
 	if len(parts) != 2 || parts[1] != "assign" {
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
 
 	var req assignSubDispatchJobRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -255,7 +255,7 @@ func (h *Handler) aggregatorPerformance(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -264,7 +264,7 @@ func (h *Handler) aggregatorPerformance(w http.ResponseWriter, r *http.Request) 
 	}
 	performance, err := h.operatorPerformanceUseCase.Execute(r.Context(), tenantID)
 	if err != nil {
-		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": performance})
@@ -276,7 +276,7 @@ func (h *Handler) aggregatorComplianceSnapshot(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -285,7 +285,7 @@ func (h *Handler) aggregatorComplianceSnapshot(w http.ResponseWriter, r *http.Re
 	}
 	snapshot, err := h.complianceSnapshotUseCase.Execute(r.Context(), tenantID)
 	if err != nil {
-		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": snapshot})
@@ -297,7 +297,7 @@ func (h *Handler) aggregatorTopOperators(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -306,7 +306,7 @@ func (h *Handler) aggregatorTopOperators(w http.ResponseWriter, r *http.Request)
 	}
 	ranking, err := h.topPerformingOperatorsUseCase.Execute(r.Context(), tenantID)
 	if err != nil {
-		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": ranking})
@@ -325,12 +325,12 @@ func (h *Handler) aggregatorRatings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	var req rateOperatorRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -358,7 +358,7 @@ func (h *Handler) aggregatorSettlements(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -368,7 +368,7 @@ func (h *Handler) aggregatorSettlements(w http.ResponseWriter, r *http.Request) 
 	q := r.URL.Query()
 	result, err := h.listSettlementsUseCase.Execute(r.Context(), tenantID, parsePositiveIntOrZero(q.Get("limit")), parsePositiveIntOrZero(q.Get("offset")))
 	if err != nil {
-		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": result})
@@ -385,20 +385,20 @@ func (h *Handler) aggregatorSettlementByPath(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/dispatch/aggregator/settlements/"), "/")
 	parts := strings.Split(rest, "/")
 	if len(parts) != 2 || parts[1] != "pay" {
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
 
 	var req paySettlementRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -431,7 +431,7 @@ func (h *Handler) aggregatorActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -440,7 +440,7 @@ func (h *Handler) aggregatorActivity(w http.ResponseWriter, r *http.Request) {
 	}
 	activity, err := h.listAggregatorActivityUseCase.Execute(r.Context(), tenantID)
 	if err != nil {
-		respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": activity})
@@ -452,20 +452,20 @@ func respondAggregatorError(w http.ResponseWriter, err error) {
 		errors.Is(err, application.ErrSubDispatchJobNotFound),
 		errors.Is(err, application.ErrSettlementNotFound),
 		errors.Is(err, application.ErrJobOfferNotFound):
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, application.ErrRelationshipNotYours),
 		errors.Is(err, application.ErrSettlementNotYours),
 		errors.Is(err, application.ErrInvitedEmailMismatch),
 		errors.Is(err, application.ErrSubDispatchRelationshipNotActive),
 		errors.Is(err, application.ErrJobNotSubDispatched):
-		respondJSON(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, application.ErrRelationshipAlreadyExists),
 		errors.Is(err, application.ErrOperatorHasActiveJobs),
 		errors.Is(err, application.ErrRatingAlreadyExists),
 		errors.Is(err, application.ErrJobNotDelivered):
-		respondJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusConflict, err.Error())
 	default:
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadRequest, err.Error())
 	}
 }
 

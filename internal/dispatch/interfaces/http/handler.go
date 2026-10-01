@@ -77,40 +77,53 @@ type updateJobSchedulingRequest struct {
 }
 
 type updateJobDetailsRequest struct {
-	Pickup           stopRequest   `json:"pickup"`
-	Dropoff          stopRequest   `json:"dropoff"`
-	Stops            []stopRequest `json:"stops,omitempty"`
-	CargoType        string        `json:"cargo_type,omitempty"`
-	CargoDescription string        `json:"cargo_description,omitempty"`
-	Amount           *float64      `json:"amount,omitempty"`
-	Deadline         *string       `json:"deadline,omitempty"`
-	LoadWeightKg     *float64      `json:"load_weight_kg,omitempty"`
-	LoadVolumeM3     float64       `json:"load_volume_m3,omitempty"`
+	Pickup           *stopRequest   `json:"pickup,omitempty"`
+	Dropoff          *stopRequest   `json:"dropoff,omitempty"`
+	Stops            *[]stopRequest `json:"stops,omitempty"`
+	CargoType        *string        `json:"cargo_type,omitempty"`
+	CargoDescription *string        `json:"cargo_description,omitempty"`
+	Amount           *float64       `json:"amount,omitempty"`
+	Deadline         *string        `json:"deadline,omitempty"`
+	LoadWeightKg     *float64       `json:"load_weight_kg,omitempty"`
+	LoadVolumeM3     *float64       `json:"load_volume_m3,omitempty"`
 }
 
-func (r updateJobDetailsRequest) stops() []domain.JobStop {
-	if len(r.Stops) == 0 {
+func (r updateJobDetailsRequest) patch() (domain.JobDetailsPatch, error) {
+	deadline, err := parseTimeValue(r.Deadline)
+	if err != nil {
+		return domain.JobDetailsPatch{}, err
+	}
+	return domain.JobDetailsPatch{
+		Pickup:           optionalStop(r.Pickup),
+		Dropoff:          optionalStop(r.Dropoff),
+		Stops:            r.stops(),
+		CargoType:        r.CargoType,
+		CargoDescription: r.CargoDescription,
+		AmountNgn:        r.Amount,
+		Deadline:         deadline,
+		ClearDeadline:    r.Deadline != nil && deadline == nil,
+		LoadWeightKg:     r.LoadWeightKg,
+		LoadVolumeM3:     r.LoadVolumeM3,
+	}, nil
+}
+
+func (r updateJobDetailsRequest) stops() *[]domain.JobStop {
+	if r.Stops == nil {
 		return nil
 	}
-	stops := make([]domain.JobStop, 0, len(r.Stops))
-	for _, s := range r.Stops {
+	stops := make([]domain.JobStop, 0, len(*r.Stops))
+	for _, s := range *r.Stops {
 		stops = append(stops, s.toDomain())
 	}
-	return stops
+	return &stops
 }
 
-func (r updateJobDetailsRequest) amountNgn() float64 {
-	if r.Amount == nil {
-		return 0
+func optionalStop(stop *stopRequest) *domain.JobStop {
+	if stop == nil {
+		return nil
 	}
-	return *r.Amount
-}
-
-func (r updateJobDetailsRequest) loadWeightKg() float64 {
-	if r.LoadWeightKg == nil {
-		return 0
-	}
-	return *r.LoadWeightKg
+	converted := stop.toDomain()
+	return &converted
 }
 
 type assignJobRequest struct {
@@ -326,12 +339,25 @@ func NewHandler(
 
 // jobWithAssignments flattens domain.Job and adds driver/vehicle display details
 // fetched from the fleet service, so API consumers don't need a second round-trip.
+// Always present, null when nothing is assigned or fleet could not be read,
+// so a client never has to tell a missing field from an empty one.
 type jobWithAssignments struct {
 	domain.Job
-	AssignedDriverName   string `json:"assigned_driver_name,omitempty"`
-	AssignedVehicleReg   string `json:"assigned_vehicle_reg,omitempty"`
-	AssignedVehicleMake  string `json:"assigned_vehicle_make,omitempty"`
-	AssignedVehicleModel string `json:"assigned_vehicle_model,omitempty"`
+	AssignedDriverName   *string `json:"assigned_driver_name"`
+	AssignedVehicleReg   *string `json:"assigned_vehicle_reg"`
+	AssignedVehicleMake  *string `json:"assigned_vehicle_make"`
+	AssignedVehicleModel *string `json:"assigned_vehicle_model"`
+}
+
+func (h *Handler) respondJob(w http.ResponseWriter, r *http.Request, status int, job domain.Job) {
+	respondJSON(w, status, map[string]any{"status": true, "message": "success", "data": h.enrichJob(r.Context(), job.TenantID, job)})
+}
+
+func nonEmpty(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func (h *Handler) enrichJob(ctx context.Context, tenantID string, job domain.Job) jobWithAssignments {
@@ -341,16 +367,16 @@ func (h *Handler) enrichJob(ctx context.Context, tenantID string, job domain.Job
 	}
 	if job.AssignedDriverID != "" {
 		if driver, err := h.fleetClient.GetDriver(ctx, tenantID, job.AssignedDriverID); err == nil {
-			enriched.AssignedDriverName = driver.Name
+			enriched.AssignedDriverName = nonEmpty(driver.Name)
 		} else {
 			log.Printf("dispatch: enrichJob: fleet GetDriver failed for driver_id=%s tenant_id=%s: %v", job.AssignedDriverID, tenantID, err)
 		}
 	}
 	if job.AssignedVehicleID != "" {
 		if vehicle, err := h.fleetClient.GetVehicle(ctx, tenantID, job.AssignedVehicleID); err == nil {
-			enriched.AssignedVehicleReg = vehicle.PlateNumber
-			enriched.AssignedVehicleMake = vehicle.Make
-			enriched.AssignedVehicleModel = vehicle.Model
+			enriched.AssignedVehicleReg = nonEmpty(vehicle.PlateNumber)
+			enriched.AssignedVehicleMake = nonEmpty(vehicle.Make)
+			enriched.AssignedVehicleModel = nonEmpty(vehicle.Model)
 		} else {
 			log.Printf("dispatch: enrichJob: fleet GetVehicle failed for vehicle_id=%s tenant_id=%s: %v", job.AssignedVehicleID, tenantID, err)
 		}
@@ -404,7 +430,7 @@ func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 	if h.jobLifecycleUseCase == nil {
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "job lifecycle is not configured"})
+		respondError(w, http.StatusServiceUnavailable, "job lifecycle is not configured")
 		return
 	}
 
@@ -416,7 +442,7 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 		h.createJob(w, r)
 		return
 	default:
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 }
@@ -424,17 +450,17 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 	var req createJobRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	timeWindow, err := req.TimeWindow.toDomain()
 	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	deadline, err := parseTimeValue(req.Deadline)
 	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -463,11 +489,11 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 		TimeWindow:              timeWindow,
 	})
 	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusCreated, map[string]any{"status": true, "message": "success", "data": job})
+	h.respondJob(w, r, http.StatusCreated, job)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -495,7 +521,7 @@ func (h *Handler) resolveTenantID(r *http.Request) (string, error) {
 func (h *Handler) requireTenantID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	tenantID, err := h.resolveTenantID(r)
 	if err != nil {
-		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusUnauthorized, err.Error())
 		return "", false
 	}
 	return tenantID, true
@@ -510,11 +536,11 @@ func decodeJSONBody(r *http.Request, dest any) error {
 func rejectClientTenantQuery(w http.ResponseWriter, r *http.Request) bool {
 	query := r.URL.Query()
 	if _, ok := query["tenant_id"]; ok {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id must not be supplied; tenant context is derived from the access token"})
+		respondError(w, http.StatusBadRequest, "tenant_id must not be supplied; tenant context is derived from the access token")
 		return true
 	}
 	if _, ok := query["tenantId"]; ok {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantId must not be supplied; tenant context is derived from the access token"})
+		respondError(w, http.StatusBadRequest, "tenantId must not be supplied; tenant context is derived from the access token")
 		return true
 	}
 	return false
@@ -545,11 +571,11 @@ func isDispatcherCapableRole(role string) bool {
 
 func (h *Handler) jobsSummary(w http.ResponseWriter, r *http.Request) {
 	if h.jobLifecycleUseCase == nil {
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "job lifecycle is not configured"})
+		respondError(w, http.StatusServiceUnavailable, "job lifecycle is not configured")
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -579,22 +605,15 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	filter := application.ListJobsFilter{
-		Status:     q.Get("status"),
-		Query:      q.Get("query"),
-		DriverID:   q.Get("driver_id"),
-		VehicleID:  q.Get("vehicle_id"),
-		AmountFrom: parseOptionalFloat(q.Get("amount_from")),
-		AmountTo:   parseOptionalFloat(q.Get("amount_to")),
-		Deadline:   parseOptionalDate(q.Get("deadline")),
-	}
-	// UI submits weight in tons; the domain stores kilograms.
-	if from := parseOptionalFloat(q.Get("weight_from")); from != nil {
-		kg := *from * 1000
-		filter.WeightFromKg = &kg
-	}
-	if to := parseOptionalFloat(q.Get("weight_to")); to != nil {
-		kg := *to * 1000
-		filter.WeightToKg = &kg
+		Status:       q.Get("status"),
+		Query:        q.Get("query"),
+		DriverID:     q.Get("driver_id"),
+		VehicleID:    q.Get("vehicle_id"),
+		AmountFrom:   parseOptionalFloat(q.Get("amount_from")),
+		AmountTo:     parseOptionalFloat(q.Get("amount_to")),
+		Deadline:     parseOptionalDate(q.Get("deadline")),
+		WeightFromKg: parseOptionalFloat(q.Get("weight_from")),
+		WeightToKg:   parseOptionalFloat(q.Get("weight_to")),
 	}
 
 	jobs, err := h.jobLifecycleUseCase.ListJobs(r.Context(), tenantID, filter)
@@ -609,11 +628,11 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 // order, and the route geometry between them.
 func (h *Handler) activeJobsMap(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if h.activeJobsMapUseCase == nil {
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "active jobs map is not configured"})
+		respondError(w, http.StatusServiceUnavailable, "active jobs map is not configured")
 		return
 	}
 
@@ -627,7 +646,7 @@ func (h *Handler) activeJobsMap(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.activeJobsMapUseCase.Execute(r.Context(), tenantID)
 	if err != nil {
-		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -667,13 +686,13 @@ func parseOptionalDate(raw string) *time.Time {
 
 func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
 	if h.jobLifecycleUseCase == nil {
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "job lifecycle is not configured"})
+		respondError(w, http.StatusServiceUnavailable, "job lifecycle is not configured")
 		return
 	}
 
 	jobID, action, ok := parseJobResourcePath(r.URL.Path)
 	if !ok {
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
 
@@ -687,7 +706,7 @@ func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
 		case http.MethodDelete:
 			h.deleteJob(w, r, jobID)
 		default:
-			respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	case "scheduling":
 		h.updateJobScheduling(w, r, jobID)
@@ -714,20 +733,20 @@ func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
 			requestID := strings.TrimSuffix(strings.TrimPrefix(action, "driver-status-requests/"), "/confirm")
 			requestID = strings.Trim(requestID, "/")
 			if requestID == "" {
-				respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+				respondError(w, http.StatusNotFound, "not found")
 				return
 			}
 			h.confirmDriverStatusRequest(w, r, jobID, requestID)
 			return
 		}
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		respondError(w, http.StatusNotFound, "not found")
 		return
 	}
 }
 
 func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -741,19 +760,19 @@ func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, jobID string) {
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": h.enrichJob(r.Context(), tenantID, job)})
+	h.respondJob(w, r, http.StatusOK, job)
 }
 
 func (h *Handler) updateJobDetails(w http.ResponseWriter, r *http.Request, jobID string) {
 	var req updateJobDetailsRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	deadline, err := parseTimeValue(req.Deadline)
+	patch, err := req.patch()
 	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -763,23 +782,15 @@ func (h *Handler) updateJobDetails(w http.ResponseWriter, r *http.Request, jobID
 	}
 
 	job, err := h.jobLifecycleUseCase.UpdateDetails(r.Context(), application.UpdateJobDetailsCommand{
-		TenantID:         tenantID,
-		JobID:            jobID,
-		Pickup:           req.Pickup.toDomain(),
-		Dropoff:          req.Dropoff.toDomain(),
-		Stops:            req.stops(),
-		CargoType:        req.CargoType,
-		CargoDescription: req.CargoDescription,
-		AmountNgn:        req.amountNgn(),
-		Deadline:         deadline,
-		LoadWeightKg:     req.loadWeightKg(),
-		LoadVolumeM3:     req.LoadVolumeM3,
+		TenantID: tenantID,
+		JobID:    jobID,
+		Patch:    patch,
 	})
 	if err != nil {
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	h.respondJob(w, r, http.StatusOK, job)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -820,19 +831,19 @@ func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request, jobID string
 
 func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPatch && r.Method != http.MethodPut {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req updateJobSchedulingRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	timeWindow, err := req.TimeWindow.toDomain()
 	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -851,7 +862,7 @@ func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jo
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	h.respondJob(w, r, http.StatusOK, job)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -868,13 +879,13 @@ func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jo
 
 func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req assignJobRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -895,7 +906,7 @@ func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	h.respondJob(w, r, http.StatusOK, job)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -914,13 +925,13 @@ func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string
 
 func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req cancelJobRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -938,7 +949,7 @@ func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request, jobID string
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	h.respondJob(w, r, http.StatusOK, job)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -955,13 +966,13 @@ func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request, jobID string
 
 func (h *Handler) acknowledgeJob(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req acknowledgeJobRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -979,7 +990,7 @@ func (h *Handler) acknowledgeJob(w http.ResponseWriter, r *http.Request, jobID s
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	h.respondJob(w, r, http.StatusOK, job)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -996,19 +1007,19 @@ func (h *Handler) acknowledgeJob(w http.ResponseWriter, r *http.Request, jobID s
 
 func (h *Handler) updateJobLifecycleStatus(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondJSON(w, authStatus, map[string]string{"error": http.StatusText(authStatus)})
+		respondError(w, authStatus, http.StatusText(authStatus))
 		return
 	}
 
 	var req updateJobStatusRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1021,24 +1032,24 @@ func (h *Handler) updateJobLifecycleStatus(w http.ResponseWriter, r *http.Reques
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	h.respondJob(w, r, http.StatusOK, job)
 }
 
 func (h *Handler) createDriverStatusRequest(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondJSON(w, authStatus, map[string]string{"error": http.StatusText(authStatus)})
+		respondError(w, authStatus, http.StatusText(authStatus))
 		return
 	}
 
 	var req createDriverStatusRequestRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1084,22 +1095,22 @@ func (h *Handler) createDriverStatusRequest(w http.ResponseWriter, r *http.Reque
 
 func (h *Handler) confirmDriverStatusRequest(w http.ResponseWriter, r *http.Request, jobID, requestID string) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	claims, ok := httpx.ClaimsFromRequest(r)
 	if !ok || claims == nil {
-		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": http.StatusText(http.StatusUnauthorized)})
+		respondError(w, http.StatusUnauthorized, http.StatusText(http.StatusUnauthorized))
 		return
 	}
 	if !isDispatcherCapableRole(claims.Role) {
-		respondJSON(w, http.StatusForbidden, map[string]string{"error": http.StatusText(http.StatusForbidden)})
+		respondError(w, http.StatusForbidden, http.StatusText(http.StatusForbidden))
 		return
 	}
 	tenantID := strings.TrimSpace(claims.TenantID)
 	if tenantID == "" {
-		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authenticated tenant context is required"})
+		respondError(w, http.StatusUnauthorized, "authenticated tenant context is required")
 		return
 	}
 	confirmedBy := firstNonEmptyDispatchValue(claims.Subject, claims.Email)
@@ -1141,7 +1152,7 @@ func (h *Handler) confirmDriverStatusRequest(w http.ResponseWriter, r *http.Requ
 
 func (h *Handler) getJobTimeline(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -1163,17 +1174,17 @@ func (h *Handler) getJobTimeline(w http.ResponseWriter, r *http.Request, jobID s
 
 func (h *Handler) sendWhatsAppInstruction(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if h.sendJobInstructionUseCase == nil {
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "job instruction sending is not configured"})
+		respondError(w, http.StatusServiceUnavailable, "job instruction sending is not configured")
 		return
 	}
 
 	var req sendJobInstructionRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1198,26 +1209,26 @@ func (h *Handler) sendWhatsAppInstruction(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		switch {
 		case errors.Is(err, application.ErrJobNotFound):
-			respondJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			respondError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, application.ErrJobInstructionJobIDRequired),
 			errors.Is(err, application.ErrJobInstructionDriverIDRequired),
 			errors.Is(err, application.ErrJobInstructionTemplateNameRequired),
 			errors.Is(err, application.ErrJobInstructionDriverNameRequired),
 			errors.Is(err, application.ErrJobInstructionCargoRequired):
-			respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			respondError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, application.ErrJobInstructionJobNotAssigned),
 			errors.Is(err, application.ErrJobInstructionAssignedPhoneRequired),
 			errors.Is(err, application.ErrJobInstructionDriverMismatch),
 			errors.Is(err, application.ErrJobInstructionRecipientMismatch),
 			errors.Is(err, application.ErrJobInstructionStatusNotSendable):
-			respondJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			respondError(w, http.StatusConflict, err.Error())
 		default:
-			respondJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			respondError(w, http.StatusBadGateway, err.Error())
 		}
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	h.respondJob(w, r, http.StatusOK, job)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -1235,13 +1246,13 @@ func (h *Handler) sendWhatsAppInstruction(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) addPODAttachment(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req addPODAttachmentRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1261,7 +1272,7 @@ func (h *Handler) addPODAttachment(w http.ResponseWriter, r *http.Request, jobID
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	h.respondJob(w, r, http.StatusOK, job)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -1279,13 +1290,13 @@ func (h *Handler) addPODAttachment(w http.ResponseWriter, r *http.Request, jobID
 
 func (h *Handler) addJobNote(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req addJobNoteRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1304,7 +1315,7 @@ func (h *Handler) addJobNote(w http.ResponseWriter, r *http.Request, jobID strin
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": job})
+	h.respondJob(w, r, http.StatusOK, job)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -1320,13 +1331,13 @@ func (h *Handler) addJobNote(w http.ResponseWriter, r *http.Request, jobID strin
 
 func (h *Handler) updateStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req statusRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1345,7 +1356,7 @@ func (h *Handler) updateStatus(w http.ResponseWriter, r *http.Request) {
 		Reason:            req.Reason,
 	})
 	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -1354,29 +1365,29 @@ func (h *Handler) updateStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) optimizeRoute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req optimizeRouteRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if h.routingUseCase == nil {
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "routing is not configured"})
+		respondError(w, http.StatusServiceUnavailable, "routing is not configured")
 		return
 	}
 
 	tenantID, _ := h.resolveTenantID(r)
 	departureTime, err := parseTimeValue(req.DepartureTime)
 	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	driverShift, err := req.DriverShift.toDomain()
 	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -1435,11 +1446,11 @@ func parseJobResourcePath(path string) (jobID, action string, ok bool) {
 
 func respondLifecycleError(w http.ResponseWriter, err error) {
 	if err == application.ErrJobNotFound {
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	if err == application.ErrDriverStatusRequestNotFound {
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	if strings.Contains(strings.ToLower(err.Error()), "already has a pending driver status request") ||
@@ -1448,10 +1459,10 @@ func respondLifecycleError(w http.ResponseWriter, err error) {
 		strings.Contains(strings.ToLower(err.Error()), "phone number does not match") ||
 		strings.Contains(strings.ToLower(err.Error()), "cannot report driver status") ||
 		strings.Contains(strings.ToLower(err.Error()), "cannot confirm driver status request") {
-		respondJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		respondError(w, http.StatusConflict, err.Error())
 		return
 	}
-	respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	respondError(w, http.StatusBadRequest, err.Error())
 }
 
 func (s stopRequest) toDomain() domain.JobStop {
@@ -1520,7 +1531,7 @@ func (r createJobRequest) loadWeightKg() float64 {
 		return *r.LoadWeightKg
 	}
 	if r.CargoWeight != nil {
-		return *r.CargoWeight * 1000
+		return *r.CargoWeight
 	}
 	return 0
 }
@@ -1660,6 +1671,16 @@ func normalizeDispatchButtonParameters(primary, alternate []sendJobInstructionBu
 	}
 	return normalized
 }
+
+// The error shape every other service answers with.
+func respondError(w http.ResponseWriter, status int, message string) {
+	respondJSON(w, status, map[string]any{
+		"message":    message,
+		"error":      http.StatusText(status),
+		"statusCode": status,
+	})
+}
+
 func respondJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

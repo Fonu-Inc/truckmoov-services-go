@@ -29,7 +29,7 @@ const swaggerUIHTML = `<!doctype html>
 
 func (h *Handler) docsUI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -40,7 +40,7 @@ func (h *Handler) docsUI(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) docsOpenAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	respondJSON(w, http.StatusOK, dispatchOpenAPISpec())
@@ -181,8 +181,8 @@ func dispatchOpenAPISpec() map[string]any {
 						{"name": "query", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "driver_id", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "vehicle_id", "in": "query", "schema": map[string]any{"type": "string"}},
-						{"name": "weight_from", "in": "query", "description": "Minimum cargo weight in tons", "schema": map[string]any{"type": "number"}},
-						{"name": "weight_to", "in": "query", "description": "Maximum cargo weight in tons", "schema": map[string]any{"type": "number"}},
+						{"name": "weight_from", "in": "query", "description": "Minimum cargo weight in kg", "schema": map[string]any{"type": "number"}},
+						{"name": "weight_to", "in": "query", "description": "Maximum cargo weight in kg", "schema": map[string]any{"type": "number"}},
 						{"name": "amount_from", "in": "query", "description": "Minimum quoted amount (NGN)", "schema": map[string]any{"type": "number"}},
 						{"name": "amount_to", "in": "query", "description": "Maximum quoted amount (NGN)", "schema": map[string]any{"type": "number"}},
 						{"name": "deadline", "in": "query", "description": "Only jobs whose deadline falls on this date (YYYY-MM-DD)", "schema": map[string]any{"type": "string", "format": "date"}},
@@ -297,7 +297,7 @@ func dispatchOpenAPISpec() map[string]any {
 				},
 				"put": map[string]any{
 					"tags":        []string{"dispatch"},
-					"summary":     "Edit job details (alias of PATCH)",
+					"summary":     "Edit job details (alias of PATCH, also partial)",
 					"operationId": "replaceJobDetails",
 					"parameters":  []any{jobIDParameter},
 					"requestBody": map[string]any{
@@ -716,7 +716,7 @@ func dispatchOpenAPISpec() map[string]any {
 				},
 				"UpdateJobDetailsRequest": map[string]any{
 					"type":        "object",
-					"description": "Edit a job's pickup/dropoff, intermediate stops, cargo, amount, deadline, and load details.",
+					"description": "Partial update: only the fields sent change, the rest keep their current values. stops, when sent, replaces the whole list. Send deadline as an empty string to clear it.",
 					"properties": map[string]any{
 						"pickup":            map[string]any{"$ref": "#/components/schemas/Stop"},
 						"dropoff":           map[string]any{"$ref": "#/components/schemas/Stop"},
@@ -750,7 +750,7 @@ func dispatchOpenAPISpec() map[string]any {
 						"deliveryLat":               map[string]any{"type": "number"},
 						"deliveryLng":               map[string]any{"type": "number"},
 						"cargoType":                 map[string]any{"type": "string"},
-						"cargoWeight":               map[string]any{"type": "number", "description": "Cargo weight in tons, matching the UI form."},
+						"cargoWeight":               map[string]any{"type": "number", "description": "Cargo weight in kg. Alias for load_weight_kg, which wins when both are sent."},
 						"cargoDescription":          map[string]any{"type": "string"},
 						"notes":                     map[string]any{"type": "string"},
 						"additionalNotes":           map[string]any{"type": "string", "description": "Legacy alias for notes."},
@@ -765,7 +765,7 @@ func dispatchOpenAPISpec() map[string]any {
 						"pickup":                    map[string]any{"$ref": "#/components/schemas/Stop"},
 						"dropoff":                   map[string]any{"$ref": "#/components/schemas/Stop"},
 					},
-					"required": []string{"vehicleId", "pickupLocation", "deliveryLocation"},
+					"required": []string{"pickupLocation", "deliveryLocation"},
 				},
 				"RouteLocation": map[string]any{
 					"type": "object",
@@ -1083,6 +1083,10 @@ func dispatchOpenAPISpec() map[string]any {
 						"assigned_driver_id":        map[string]any{"type": "string"},
 						"assigned_driver_phone":     map[string]any{"type": "string"},
 						"assigned_vehicle_id":       map[string]any{"type": "string"},
+						"assigned_driver_name":      map[string]any{"type": "string", "nullable": true, "description": "From fleet. Null when no driver is assigned or fleet could not be read."},
+						"assigned_vehicle_reg":      map[string]any{"type": "string", "nullable": true, "description": "From fleet. Null when no vehicle is assigned or fleet could not be read."},
+						"assigned_vehicle_make":     map[string]any{"type": "string", "nullable": true},
+						"assigned_vehicle_model":    map[string]any{"type": "string", "nullable": true},
 						"cancellation_reason":       map[string]any{"type": "string"},
 						"acknowledged_at":           map[string]any{"type": "string", "format": "date-time"},
 						"created_at":                map[string]any{"type": "string", "format": "date-time"},
@@ -1179,8 +1183,11 @@ func dispatchOpenAPISpec() map[string]any {
 				"ErrorResponse": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"error": map[string]any{"type": "string"},
+						"message":    map[string]any{"type": "string", "description": "What went wrong, e.g. job not found."},
+						"error":      map[string]any{"type": "string", "description": "HTTP status text, e.g. Not Found."},
+						"statusCode": map[string]any{"type": "integer"},
 					},
+					"required": []string{"message", "error", "statusCode"},
 				},
 			},
 		},

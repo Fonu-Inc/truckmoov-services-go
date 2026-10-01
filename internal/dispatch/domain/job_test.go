@@ -236,3 +236,46 @@ func TestJob_Assign_RequiresDriverOrVehicle(t *testing.T) {
 		t.Fatal("expected an error when neither driver nor vehicle is sent")
 	}
 }
+
+func TestJob_PatchDetails_KeepsFieldsNotSent(t *testing.T) {
+	job := validJobFixture(t)
+	deadline := job.UpdatedAt.Add(48 * time.Hour)
+	job.Deadline = &deadline
+	weight := 8500.0
+
+	patched, err := job.PatchDetails(JobDetailsPatch{LoadWeightKg: &weight}, job.UpdatedAt, "tl-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if patched.LoadWeightKg != 8500 {
+		t.Fatalf("expected weight 8500, got %v", patched.LoadWeightKg)
+	}
+	if patched.Pickup.Address != "Apapa Port" || patched.Dropoff.Address != "Lekki Free Zone" {
+		t.Fatalf("expected stops kept, got %q/%q", patched.Pickup.Address, patched.Dropoff.Address)
+	}
+	if patched.Deadline == nil || !patched.Deadline.Equal(deadline) {
+		t.Fatalf("expected deadline kept, got %v", patched.Deadline)
+	}
+}
+
+func TestJob_PatchDetails_ClearsDeadline(t *testing.T) {
+	job := validJobFixture(t)
+	deadline := job.UpdatedAt.Add(48 * time.Hour)
+	job.Deadline = &deadline
+
+	patched, err := job.PatchDetails(JobDetailsPatch{ClearDeadline: true}, job.UpdatedAt, "tl-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if patched.Deadline != nil {
+		t.Fatalf("expected deadline cleared, got %v", patched.Deadline)
+	}
+}
+
+func TestJob_PatchDetails_StillRejectsBlankPickup(t *testing.T) {
+	job := validJobFixture(t)
+
+	if _, err := job.PatchDetails(JobDetailsPatch{Pickup: &JobStop{Address: " "}}, job.UpdatedAt, "tl-1"); err == nil {
+		t.Fatal("expected an error when pickup is sent blank")
+	}
+}
