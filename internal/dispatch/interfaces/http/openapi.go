@@ -177,7 +177,7 @@ func dispatchOpenAPISpec() map[string]any {
 					"operationId": "listJobs",
 					"description": "Returns dispatch jobs for the authenticated tenant. Supports simple filtering for the Dispatch Center page.",
 					"parameters": []map[string]any{
-						{"name": "status", "in": "query", "schema": map[string]any{"type": "string", "enum": []string{"all", "pending", "created", "assigned", "in_progress", "en-route", "arrived", "loaded", "completed", "delivered", "cancelled"}}},
+						{"name": "status", "in": "query", "description": "A raw status, or an aggregate: pending = created; in_progress = en-route, arrived, loaded; completed = delivered. Assigned jobs are only under assigned.", "schema": map[string]any{"type": "string", "enum": []string{"all", "pending", "created", "assigned", "in_progress", "en-route", "arrived", "loaded", "completed", "delivered", "cancelled"}}},
 						{"name": "query", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "driver_id", "in": "query", "schema": map[string]any{"type": "string"}},
 						{"name": "vehicle_id", "in": "query", "schema": map[string]any{"type": "string"}},
@@ -879,7 +879,8 @@ func dispatchOpenAPISpec() map[string]any {
 					},
 				},
 				"AssignJobRequest": map[string]any{
-					"type": "object",
+					"type":        "object",
+					"description": "Send driver_id, vehicle_id or both. A side not sent keeps its current value. The job becomes assigned once it has a driver; a vehicle alone leaves its status unchanged.",
 					"properties": map[string]any{
 						"driver_id":    map[string]any{"type": "string"},
 						"driver_phone": map[string]any{"type": "string", "description": "Persisted WhatsApp phone for the assigned driver."},
@@ -887,7 +888,10 @@ func dispatchOpenAPISpec() map[string]any {
 						"vehicle_id":   map[string]any{"type": "string"},
 						"reason":       map[string]any{"type": "string"},
 					},
-					"required": []string{"driver_id", "vehicle_id"},
+					"anyOf": []any{
+						map[string]any{"required": []string{"driver_id"}},
+						map[string]any{"required": []string{"vehicle_id"}},
+					},
 				},
 				"CancelJobRequest": map[string]any{
 					"type": "object",

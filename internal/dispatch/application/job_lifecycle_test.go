@@ -378,15 +378,24 @@ func TestJobLifecycleUseCase_ListJobsSupportsFilters(t *testing.T) {
 	}
 
 	list, err = useCase.ListJobs(context.Background(), "", ListJobsFilter{
-		Status:    "in_progress",
+		Status:    "assigned",
 		VehicleID: "vehicle-2",
 		DriverID:  "driver-2",
 	})
 	if err != nil {
-		t.Fatalf("list jobs with in_progress failed: %v", err)
+		t.Fatalf("list jobs with assigned failed: %v", err)
 	}
 	if len(list) != 1 || list[0].ID != "job-b" {
 		t.Fatalf("expected assigned job-b, got %#v", list)
+	}
+
+	// Matches the summary, which counts an assigned job as assigned.
+	list, err = useCase.ListJobs(context.Background(), "", ListJobsFilter{Status: "in_progress"})
+	if err != nil {
+		t.Fatalf("list jobs with in_progress failed: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("expected in_progress to exclude assigned jobs, got %#v", list)
 	}
 }
 
@@ -846,5 +855,46 @@ func TestJobLifecycleUseCase_CreateJobWithStops(t *testing.T) {
 	}
 	if len(saved.Stops) != 2 || saved.Stops[0].Address != "Ojota Junction" || saved.Stops[1].Address != "Maryland" {
 		t.Fatalf("expected saved job to have 2 stops, got %#v", saved.Stops)
+	}
+}
+
+func TestJobLifecycleUseCase_AssignVehicleThenDriver(t *testing.T) {
+	emitter := &lifecycleEmitter{}
+	notifier := &lifecycleNotifier{}
+	useCase := NewJobLifecycleUseCase(
+		newLifecycleRepository(),
+		emitter,
+		notifier,
+		lifecycleClock{now: time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)},
+		&lifecycleID{},
+		"default",
+	)
+	job, err := useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:   "job-1",
+		Pickup:  domain.JobStop{Address: "Apapa Port"},
+		Dropoff: domain.JobStop{Address: "Lekki Free Zone"},
+	})
+	if err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+
+	// No driver to tell yet, so nothing is announced.
+	job, err = useCase.AssignJob(context.Background(), AssignJobCommand{JobID: job.ID, VehicleID: "vehicle-1"})
+	if err != nil {
+		t.Fatalf("assign vehicle failed: %v", err)
+	}
+	if job.Status != domain.StatusCreated || notifier.calls != 0 || len(emitter.commands) != 0 {
+		t.Fatalf("expected a silent vehicle-only assign, got status=%q notified=%d events=%d", job.Status, notifier.calls, len(emitter.commands))
+	}
+
+	job, err = useCase.AssignJob(context.Background(), AssignJobCommand{JobID: job.ID, DriverID: "driver-1"})
+	if err != nil {
+		t.Fatalf("assign driver failed: %v", err)
+	}
+	if job.Status != domain.StatusAssigned || job.AssignedVehicleID != "vehicle-1" {
+		t.Fatalf("expected assigned with vehicle kept, got status=%q vehicle=%q", job.Status, job.AssignedVehicleID)
+	}
+	if notifier.calls != 1 || len(emitter.commands) != 1 {
+		t.Fatalf("expected one notification and one event, got notified=%d events=%d", notifier.calls, len(emitter.commands))
 	}
 }

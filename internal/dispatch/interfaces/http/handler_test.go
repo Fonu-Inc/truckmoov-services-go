@@ -251,7 +251,7 @@ func TestHandler_ListJobsContract(t *testing.T) {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, assignRes.Code, assignRes.Body.String())
 	}
 
-	res := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs?status=in_progress&query=victoria&vehicle_id=vehicle-2&driver_id=driver-2", "")
+	res := dispatchRequest(t, mux, http.MethodGet, "/dispatch/jobs?status=assigned&query=victoria&vehicle_id=vehicle-2&driver_id=driver-2", "")
 	if res.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d body=%s", http.StatusOK, res.Code, res.Body.String())
 	}

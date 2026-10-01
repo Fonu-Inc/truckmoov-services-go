@@ -350,6 +350,9 @@ func (u *JobLifecycleUseCase) AssignJob(ctx context.Context, command AssignJobCo
 	if err := u.repository.Save(updatedJob); err != nil {
 		return domain.Job{}, fmt.Errorf("save assigned job: %w", err)
 	}
+	if updatedJob.AssignedDriverID == "" {
+		return updatedJob, nil
+	}
 
 	u.emitStatusChanged(ctx, PublishJobStatusChangedCommand{
 		TenantID:          updatedJob.TenantID,
@@ -748,8 +751,7 @@ func buildJobStatusMatcher(raw string) (func(domain.JobStatus) bool, error) {
 		return func(current domain.JobStatus) bool { return current == domain.StatusCreated }, nil
 	case "in_progress", "in-progress":
 		return func(current domain.JobStatus) bool {
-			return current == domain.StatusAssigned ||
-				current == domain.StatusEnRoute ||
+			return current == domain.StatusEnRoute ||
 				current == domain.StatusArrived ||
 				current == domain.StatusLoaded
 		}, nil

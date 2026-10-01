@@ -318,11 +318,8 @@ func (j Job) Assign(driverID, driverPhone, vehicleID string, now time.Time, time
 	driverID = strings.TrimSpace(driverID)
 	driverPhone = strings.TrimSpace(driverPhone)
 	vehicleID = strings.TrimSpace(vehicleID)
-	if driverID == "" {
-		return Job{}, errors.New("driver id is required")
-	}
-	if vehicleID == "" {
-		return Job{}, errors.New("vehicle id is required")
+	if driverID == "" && vehicleID == "" {
+		return Job{}, errors.New("driver id or vehicle id is required")
 	}
 	if j.Status == StatusCancelled || j.Status == StatusDelivered {
 		return Job{}, errors.New("cannot assign a completed/cancelled job")
@@ -331,14 +328,22 @@ func (j Job) Assign(driverID, driverPhone, vehicleID string, now time.Time, time
 	updated := j
 	previousDriver := updated.AssignedDriverID
 	previousVehicle := updated.AssignedVehicleID
-	updated.AssignedDriverID = driverID
-	if driverPhone != "" {
-		updated.AssignedDriverPhone = driverPhone
-	} else if previousDriver != driverID {
-		updated.AssignedDriverPhone = ""
+	if driverID != "" {
+		updated.AssignedDriverID = driverID
+		if driverPhone != "" {
+			updated.AssignedDriverPhone = driverPhone
+		} else if previousDriver != driverID {
+			updated.AssignedDriverPhone = ""
+		}
 	}
-	updated.AssignedVehicleID = vehicleID
-	updated.Status = StatusAssigned
+	if vehicleID != "" {
+		updated.AssignedVehicleID = vehicleID
+	}
+	// Assigned means a driver has been told. A vehicle alone leaves the job
+	// waiting for one.
+	if updated.AssignedDriverID != "" {
+		updated.Status = StatusAssigned
+	}
 	updated.UpdatedAt = now.UTC()
 
 	eventType := "job_assigned"
@@ -354,9 +359,9 @@ func (j Job) Assign(driverID, driverPhone, vehicleID string, now time.Time, time
 		Summary:    summary,
 		OccurredAt: now.UTC(),
 		Metadata: map[string]string{
-			"driver_id":           driverID,
+			"driver_id":           updated.AssignedDriverID,
 			"driver_phone":        updated.AssignedDriverPhone,
-			"vehicle_id":          vehicleID,
+			"vehicle_id":          updated.AssignedVehicleID,
 			"previous_driver_id":  previousDriver,
 			"previous_vehicle_id": previousVehicle,
 		},

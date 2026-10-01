@@ -175,3 +175,64 @@ func TestNormalizeStops_FiltersAndTrims(t *testing.T) {
 		t.Errorf("expected lat/lng-only stop kept, got %#v", coordsOnly)
 	}
 }
+
+func TestJob_Assign_VehicleAloneKeepsJobWaitingForDriver(t *testing.T) {
+	job := validJobFixture(t)
+
+	assigned, err := job.Assign("", "", "vehicle-1", job.UpdatedAt, "tl-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assigned.AssignedVehicleID != "vehicle-1" || assigned.AssignedDriverID != "" {
+		t.Fatalf("expected vehicle only, got driver=%q vehicle=%q", assigned.AssignedDriverID, assigned.AssignedVehicleID)
+	}
+	if assigned.Status != StatusCreated {
+		t.Fatalf("expected status %q, got %q", StatusCreated, assigned.Status)
+	}
+}
+
+func TestJob_Assign_DriverAloneAssignsAndKeepsVehicle(t *testing.T) {
+	job := validJobFixture(t)
+	withVehicle, err := job.Assign("", "", "vehicle-1", job.UpdatedAt, "tl-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	assigned, err := withVehicle.Assign("driver-1", "+2348000000000", "", job.UpdatedAt, "tl-2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if assigned.AssignedDriverID != "driver-1" || assigned.AssignedVehicleID != "vehicle-1" {
+		t.Fatalf("expected both kept, got driver=%q vehicle=%q", assigned.AssignedDriverID, assigned.AssignedVehicleID)
+	}
+	if assigned.Status != StatusAssigned {
+		t.Fatalf("expected status %q, got %q", StatusAssigned, assigned.Status)
+	}
+}
+
+func TestJob_Assign_VehicleAloneKeepsDriverAndPhone(t *testing.T) {
+	job := validJobFixture(t)
+	withDriver, err := job.Assign("driver-1", "+2348000000000", "", job.UpdatedAt, "tl-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	reassigned, err := withDriver.Assign("", "", "vehicle-2", job.UpdatedAt, "tl-2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reassigned.AssignedDriverID != "driver-1" || reassigned.AssignedDriverPhone != "+2348000000000" {
+		t.Fatalf("expected driver kept, got driver=%q phone=%q", reassigned.AssignedDriverID, reassigned.AssignedDriverPhone)
+	}
+	if reassigned.AssignedVehicleID != "vehicle-2" {
+		t.Fatalf("expected vehicle-2, got %q", reassigned.AssignedVehicleID)
+	}
+}
+
+func TestJob_Assign_RequiresDriverOrVehicle(t *testing.T) {
+	job := validJobFixture(t)
+
+	if _, err := job.Assign(" ", "", " ", job.UpdatedAt, "tl-1"); err == nil {
+		t.Fatal("expected an error when neither driver nor vehicle is sent")
+	}
+}
