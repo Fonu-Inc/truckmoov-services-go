@@ -37,11 +37,12 @@ func alertHarness(setting *AlertSetting, err error) (*DispatchAlertUseCase, *fak
 		"system",
 	)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return NewDispatchAlertUseCase(&stubAlertSettings{setting: setting, err: err}, send, logger), provider, charger
+	return NewDispatchAlertUseCase(&stubAlertSettings{setting: setting, err: err}, send, newFakeEventClaims(), logger), provider, charger
 }
 
 func alertEvent(severity string) eventbus.EventEnvelope {
 	return eventbus.EventEnvelope{
+		ID:       "evt-alert-1",
 		TenantID: "system",
 		Data: map[string]any{
 			"alert_type": "security_alerts",

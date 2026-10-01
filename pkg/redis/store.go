@@ -48,6 +48,15 @@ func (s *Store) SetEX(key string, value []byte, ttlSeconds int) error {
 	return err
 }
 
+// SetNX stores the value only when the key is absent and reports whether it did.
+func (s *Store) SetNX(key string, value []byte, ttlSeconds int) (bool, error) {
+	reply, err := s.do("SET", key, string(value), "EX", strconv.Itoa(ttlSeconds), "NX")
+	if err != nil {
+		return false, err
+	}
+	return reply != nil, nil
+}
+
 func (s *Store) Get(key string) ([]byte, bool, error) {
 	reply, err := s.do("GET", key)
 	if err != nil {

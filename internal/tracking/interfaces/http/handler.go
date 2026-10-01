@@ -47,6 +47,12 @@ type Handler struct {
 	gpsAPIKey                   string
 	activityPublisher           activityPublisher
 	wsBridge                    *trackingws.Bridge
+	gate                        *application.IngestGate
+}
+
+func (h *Handler) WithGate(gate *application.IngestGate) *Handler {
+	h.gate = gate
+	return h
 }
 
 func NewHandler(
@@ -82,6 +88,7 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 	routes.HandleFunc("/tracking/vehicles/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.tracking"), h.vehiclesResource)
 	routes.HandleFunc("/tracking/devices/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.devices"), h.deviceResource)
 	routes.HandleFunc("/tracking/ws", []httpx.Audience{httpx.Admin}, httpx.On("admin.devices"), h.wsBridge.ServeHTTP)
+	routes.HandleFunc("/tracking/internal/gate/blocked-devices", []httpx.Audience{httpx.Service}, httpx.None(), h.blockedDevices)
 	routes.HandleFunc("/health", []httpx.Audience{httpx.Public}, httpx.None(), h.health)
 }
 
@@ -367,4 +374,17 @@ func (h *Handler) publishActivity(r *http.Request, command activitylog.PublishCo
 		}
 	}
 	_ = h.activityPublisher.Publish(r.Context(), command)
+}
+
+func (h *Handler) blockedDevices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	claims, ok := httpx.ClaimsFromRequest(r)
+	if !ok || claims == nil || claims.Service != "auth" {
+		http.NotFound(w, r)
+		return
+	}
+	respondJSON(w, http.StatusOK, h.gate.BlockedDevices())
 }

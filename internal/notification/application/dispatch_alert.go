@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/truckmoov/services-go/internal/notification/domain"
 	"github.com/truckmoov/services-go/pkg/eventbus"
@@ -65,15 +66,17 @@ func IsKnownAlertType(alertType string) bool {
 type DispatchAlertUseCase struct {
 	settings AlertSettingsReader
 	send     *SendMessageUseCase
+	claims   EventClaimStore
 	log      *slog.Logger
 }
 
 func NewDispatchAlertUseCase(
 	settings AlertSettingsReader,
 	send *SendMessageUseCase,
+	claims EventClaimStore,
 	log *slog.Logger,
 ) *DispatchAlertUseCase {
-	return &DispatchAlertUseCase{settings: settings, send: send, log: log}
+	return &DispatchAlertUseCase{settings: settings, send: send, claims: claims, log: log}
 }
 
 func (u *DispatchAlertUseCase) Handle(ctx context.Context, envelope eventbus.EventEnvelope) error {
@@ -81,6 +84,11 @@ func (u *DispatchAlertUseCase) Handle(ctx context.Context, envelope eventbus.Eve
 	severity, _ := envelope.Data["severity"].(string)
 	subject, _ := envelope.Data["subject"].(string)
 	body, _ := envelope.Data["body"].(string)
+
+	if envelope.ID == "" {
+		u.log.Warn("alert_without_id", "alert_type", alertType)
+		return nil
+	}
 
 	if subject == "" || !IsKnownAlertType(alertType) {
 		// Not retried: an unrecognised type can never become valid, and the
@@ -120,15 +128,20 @@ func (u *DispatchAlertUseCase) Handle(ctx context.Context, envelope eventbus.Eve
 	var failures int
 	for _, recipient := range setting.Recipients {
 		for _, channel := range setting.Channels {
-			if _, sendErr := u.send.Execute(ctx, SendMessageCommand{
+			key := strings.Join([]string{"alert", envelope.ID, recipient, channel}, "|")
+			_, sendErr := sendOnce(ctx, u.claims, key, func() error {
 				// Literal, not taken from the envelope: a platform alert is the
 				// platform's own cost whatever the payload claims.
-				TenantID:         SystemTenantID,
-				Channel:          channel,
-				Recipient:        recipient,
-				Content:          content,
-				NotificationType: domain.NotificationTypeGeneric,
-			}); sendErr != nil {
+				_, err := u.send.Execute(ctx, SendMessageCommand{
+					TenantID:         SystemTenantID,
+					Channel:          channel,
+					Recipient:        recipient,
+					Content:          content,
+					NotificationType: domain.NotificationTypeGeneric,
+				})
+				return err
+			})
+			if sendErr != nil {
 				// One unreachable recipient must not stop the others being told.
 				failures++
 				u.log.Warn("alert_send_failed",

@@ -68,7 +68,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	bus, err := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, eventbus.Credentials{User: cfg.NATSUser, Password: cfg.NATSPassword}, log)
+	bus, err := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, eventbus.Credentials{User: cfg.NATSUser, Password: cfg.NATSPassword}, log, eventbus.WithSigningSecret(cfg.EventSigningSecret))
 	if err != nil {
 		log.Error("eventbus_init_failed", "error", err.Error())
 		os.Exit(1)
@@ -249,21 +249,25 @@ func main() {
 		log.Error("event_signing_secret_unset", "message", "set EVENT_SIGNING_SECRET; every notification.send event will be rejected until then")
 	}
 	consumeNotificationUseCase := application.NewConsumeNotificationUseCase(sendMessageUseCase, cfg.EventSigningSecret, log)
-	consumeJobOfferNotificationUseCase := application.NewConsumeJobOfferNotificationUseCase(sendMessageUseCase, log)
-	dispatchAlertUseCase := application.NewDispatchAlertUseCase(alertSettingsReader, sendMessageUseCase, log)
+	verified := func(handler eventbus.Handler) eventbus.Handler {
+		return eventbus.Verified(handler, cfg.EventSigningSecret, eventbus.VerifyOptions{AcceptUnsigned: cfg.EventAcceptUnsigned}, log)
+	}
+	eventClaims := infrastructure.NewRedisEventClaims(redisClient)
+	consumeJobOfferNotificationUseCase := application.NewConsumeJobOfferNotificationUseCase(sendMessageUseCase, eventClaims, log)
+	dispatchAlertUseCase := application.NewDispatchAlertUseCase(alertSettingsReader, sendMessageUseCase, eventClaims, log)
 	// Platform alerts ride the system tenant, so they are a separate subject
 	// from a tenant's own notifications and a separate consumer.
-	if _, alertSubErr := bus.Subscribe(ctx, "tm.system.alert.raised", "platform-alerts", dispatchAlertUseCase.Handle); alertSubErr != nil {
+	if _, alertSubErr := bus.Subscribe(ctx, "tm.system.alert.raised", "platform-alerts", verified(dispatchAlertUseCase.Handle)); alertSubErr != nil {
 		log.Error("platform_alert_subscribe_failed", "error", alertSubErr)
 	}
 
 	if _, subErr := bus.Subscribe(ctx, "tm.*.notification.send", "notification-send", consumeNotificationUseCase.Handle); subErr != nil {
 		log.Warn("notification_subscribe_failed", "error", subErr.Error())
 	}
-	if _, subErr := bus.Subscribe(ctx, "tm.*.job.offer.created", "job-offer-created-notifications", consumeJobOfferNotificationUseCase.Handle); subErr != nil {
+	if _, subErr := bus.Subscribe(ctx, "tm.*.job.offer.created", "job-offer-created-notifications", verified(consumeJobOfferNotificationUseCase.Handle)); subErr != nil {
 		log.Error("job_offer_created_subscribe_failed", "error", subErr.Error())
 	}
-	if _, subErr := bus.Subscribe(ctx, "tm.*.job.offer.responded", "job-offer-responded-notifications", consumeJobOfferNotificationUseCase.Handle); subErr != nil {
+	if _, subErr := bus.Subscribe(ctx, "tm.*.job.offer.responded", "job-offer-responded-notifications", verified(consumeJobOfferNotificationUseCase.Handle)); subErr != nil {
 		log.Error("job_offer_responded_subscribe_failed", "error", subErr.Error())
 	}
 
@@ -350,6 +354,14 @@ func main() {
 	)
 
 	accessClient := identity.NewAccessClient(cfg.AuthServiceURL, serviceCaller)
+	handler = handler.WithPlatformInbox(wirePlatformMessaging(
+		ctx,
+		platformMessagingWiring{bus: bus, verified: verified, log: log, clock: clock, ids: idGenerator},
+		conversationRepository,
+		sendWhatsAppTextMessageUseCase,
+		handleWhatsAppWebhookUseCase,
+		accessClient,
+	))
 	if broadcaster, ok := bus.(eventbus.Broadcaster); ok {
 		if _, subErr := broadcaster.SubscribeEveryInstance(identity.AccessChangedSubject, func(_ context.Context, e eventbus.EventEnvelope) error {
 			if userID, ok := e.Data["userId"].(string); ok {

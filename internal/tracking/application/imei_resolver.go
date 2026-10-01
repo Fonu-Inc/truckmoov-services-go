@@ -8,6 +8,7 @@ type DeviceIdentity struct {
 	TenantID    string `json:"tenant_id"`
 	VehicleUUID string `json:"vehicle_uuid"`
 	DeviceID    string `json:"device_id"`
+	Suspended   bool   `json:"suspended,omitempty"`
 }
 
 // IMEIResolver caches fleet device-identity events so ingest can resolve an

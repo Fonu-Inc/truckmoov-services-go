@@ -57,7 +57,7 @@ func main() {
 		_ = shutdownTelemetry(context.Background())
 	}()
 
-	bus, err := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, eventbus.Credentials{User: cfg.NATSUser, Password: cfg.NATSPassword}, log)
+	bus, err := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, eventbus.Credentials{User: cfg.NATSUser, Password: cfg.NATSPassword}, log, eventbus.WithSigningSecret(cfg.EventSigningSecret))
 	if err != nil {
 		log.Error("eventbus_init_failed", "error", err.Error())
 		os.Exit(1)

@@ -36,7 +36,9 @@ func (u *ConsumeDeviceIdentityUseCase) Handle(_ context.Context, envelope eventb
 		// is fine, ingest falls back to IMEI keying until a vehicle is attached.
 		deviceID, _ := envelope.Data["device_id"].(string)
 		vehicleID, _ := envelope.Data["vehicle_id"].(string)
+		suspended, _ := envelope.Data["suspended"].(bool)
 		return u.resolver.Upsert(DeviceIdentity{
+			Suspended:   suspended,
 			IMEI:        imei,
 			TenantID:    envelope.TenantID,
 			VehicleUUID: strings.TrimSpace(vehicleID),

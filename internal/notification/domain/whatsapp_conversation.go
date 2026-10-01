@@ -18,6 +18,8 @@ type WhatsAppConversation struct {
 	LastMessagePreview    string     `json:"last_message_preview,omitempty"`
 	LastMessageDirection  string     `json:"last_message_direction,omitempty"`
 	LastMessageType       string     `json:"last_message_type,omitempty"`
+	LastReadAt            *time.Time `json:"-"`
+	UnreadCount           int        `json:"-"`
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
 }

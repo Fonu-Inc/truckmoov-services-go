@@ -12,6 +12,7 @@ type WhatsAppConversationMessage struct {
 	TenantID          string         `json:"tenant_id"`
 	ConversationID    string         `json:"conversation_id"`
 	ProviderMessageID string         `json:"provider_message_id,omitempty"`
+	ClientMessageID   string         `json:"client_message_id,omitempty"`
 	Direction         string         `json:"direction"`
 	MessageType       string         `json:"message_type"`
 	Status            string         `json:"status,omitempty"`

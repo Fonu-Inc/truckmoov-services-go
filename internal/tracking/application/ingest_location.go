@@ -55,6 +55,7 @@ type IngestLocationUseCase struct {
 	telemetry      TelemetryConfig
 	resolver       IMEIResolver
 	telemetryStore TelemetryStore
+	gate           *IngestGate
 }
 
 func NewIngestLocationUseCase(
@@ -81,44 +82,59 @@ func NewIngestLocationUseCase(
 	}
 }
 
+func (u *IngestLocationUseCase) WithGate(gate *IngestGate) *IngestLocationUseCase {
+	u.gate = gate
+	return u
+}
+
+type resolvedIdentity struct {
+	tenantID  string
+	vehicleID string
+	deviceID  string
+	known     *DeviceIdentity
+}
+
 // resolveIdentity rekeys an IMEI-bearing command onto the canonical fleet
 // tenant/vehicle/device. When the IMEI is unknown (resolver miss or cache cold)
 // it falls back to IMEI keying so telemetry still flows — fixing the prior bug
 // where the IMEI was stuffed into both vehicle_id and device_id unconditionally.
-func (u *IngestLocationUseCase) resolveIdentity(command IngestLocationCommand) (tenantID, vehicleID, deviceID string) {
-	tenantID = command.TenantID
-	vehicleID = command.VehicleID
-	deviceID = command.DeviceID
+func (u *IngestLocationUseCase) resolveIdentity(command IngestLocationCommand) resolvedIdentity {
+	resolved := resolvedIdentity{tenantID: command.TenantID, vehicleID: command.VehicleID, deviceID: command.DeviceID}
 
 	if command.IMEI != "" {
-		deviceID = command.IMEI
-		vehicleID = command.IMEI
+		resolved.deviceID = command.IMEI
+		resolved.vehicleID = command.IMEI
 		if u.resolver != nil {
 			if identity, err := u.resolver.Resolve(command.IMEI); err == nil && identity != nil {
+				resolved.known = identity
 				if identity.TenantID != "" {
-					tenantID = identity.TenantID
+					resolved.tenantID = identity.TenantID
 				}
 				if identity.DeviceID != "" {
-					deviceID = identity.DeviceID
+					resolved.deviceID = identity.DeviceID
 				}
 				if identity.VehicleUUID != "" {
-					vehicleID = identity.VehicleUUID
+					resolved.vehicleID = identity.VehicleUUID
 				}
 			}
 		}
 	}
 
-	if tenantID == "" {
-		tenantID = u.defaultTenant
+	if resolved.tenantID == "" {
+		resolved.tenantID = u.defaultTenant
 	}
-	return tenantID, vehicleID, deviceID
+	return resolved
 }
 
 func (u *IngestLocationUseCase) Execute(
 	ctx context.Context,
 	command IngestLocationCommand,
 ) (IngestLocationResult, error) {
-	tenantID, vehicleID, deviceID := u.resolveIdentity(command)
+	resolved := u.resolveIdentity(command)
+	if reason := u.gate.Evaluate(resolved.tenantID, resolved.known, command.IMEI); reason != "" {
+		return IngestLocationResult{Skipped: true, SkipReason: reason}, nil
+	}
+	tenantID, vehicleID, deviceID := resolved.tenantID, resolved.vehicleID, resolved.deviceID
 
 	fixTime := command.FixTime
 	if fixTime == "" {

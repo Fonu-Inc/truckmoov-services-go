@@ -11,6 +11,7 @@ import (
 
 	"github.com/truckmoov/services-go/internal/notification/domain"
 	"github.com/truckmoov/services-go/pkg/activitylog"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
 const whatsAppConversationWindow = 24 * time.Hour
@@ -114,6 +115,9 @@ type HandleWhatsAppWebhookUseCase struct {
 	// Optional. Campaign recipients are updated from the same receipts, so a
 	// deployment without campaigns wired up simply skips it.
 	campaignReceipts *ApplyCampaignReceiptUseCase
+	// Optional. Streams the platform number's inbox to staff; nil for a
+	// deployment without the messaging center.
+	platform *PlatformMessagingNotifier
 	// Optional. Without both set, an inbound photo is logged as a message like
 	// any other and never becomes a waybill.
 	mediaDownloader WhatsAppMediaDownloader
@@ -124,6 +128,14 @@ type HandleWhatsAppWebhookUseCase struct {
 // recipients as well as to conversations and the outbox.
 func (u *HandleWhatsAppWebhookUseCase) WithCampaignReceipts(receipts *ApplyCampaignReceiptUseCase) *HandleWhatsAppWebhookUseCase {
 	u.campaignReceipts = receipts
+	return u
+}
+
+// WithPlatformMessaging makes the platform number's traffic reach the staff
+// inbox: unknown senders open a conversation, and every inbound message and
+// delivery receipt is pushed live.
+func (u *HandleWhatsAppWebhookUseCase) WithPlatformMessaging(notifier *PlatformMessagingNotifier) *HandleWhatsAppWebhookUseCase {
+	u.platform = notifier
 	return u
 }
 
@@ -206,37 +218,15 @@ func (u *SendWhatsAppTextMessageUseCase) Execute(ctx context.Context, command Se
 		return domain.OutboxMessage{}, domain.WhatsAppConversation{}, domain.WhatsAppConversationMessage{}, err
 	}
 
-	now := u.clock.Now()
-	outboxMessage, err := domain.NewOutboxMessage(domain.OutboxMessage{
-		ID:        u.idGenerator.New("msg"),
-		TenantID:  tenantID,
-		Channel:   "whatsapp",
-		Recipient: normalizeConversationPhone(command.Recipient),
-		Content:   strings.TrimSpace(command.Message),
-		Status:    domain.StatusQueued,
-		Retries:   0,
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
+	outboxMessage, err := u.queueOutbox(tenantID, command.Recipient, command.Message)
 	if err != nil {
-		return domain.OutboxMessage{}, domain.WhatsAppConversation{}, domain.WhatsAppConversationMessage{}, fmt.Errorf("build outbox message: %w", err)
+		return domain.OutboxMessage{}, domain.WhatsAppConversation{}, domain.WhatsAppConversationMessage{}, err
 	}
-	if err := u.repository.Save(outboxMessage); err != nil {
-		return domain.OutboxMessage{}, domain.WhatsAppConversation{}, domain.WhatsAppConversationMessage{}, fmt.Errorf("save queued outbox message: %w", err)
+	delivery, err := u.deliver(ctx, tenantID, outboxMessage, command.Recipient, command.Message)
+	if err != nil {
+		return domain.OutboxMessage{}, domain.WhatsAppConversation{}, domain.WhatsAppConversationMessage{}, err
 	}
-
-	result, sendErr := u.provider.SendText(ctx, tenantID, command.Recipient, command.Message)
-	if sendErr != nil {
-		outboxMessage = outboxMessage.MarkFailed(u.clock.Now())
-	} else {
-		outboxMessage = outboxMessage.MarkSent(result.Status, result.MessageID, u.clock.Now())
-	}
-	if err := u.repository.Save(outboxMessage); err != nil {
-		return domain.OutboxMessage{}, domain.WhatsAppConversation{}, domain.WhatsAppConversationMessage{}, fmt.Errorf("save delivered outbox message: %w", err)
-	}
-	if publishErr := publishNotificationDeliveryEvent(ctx, u.eventPublisher, u.idGenerator, u.clock, outboxMessage, sendErr); publishErr != nil {
-		// best effort
-	}
+	outboxMessage, result, sendErr := delivery.Outbox, delivery.Result, delivery.SendErr
 	if sendErr != nil {
 		return outboxMessage, conversation, domain.WhatsAppConversationMessage{}, sendErr
 	}
@@ -259,6 +249,52 @@ func (u *SendWhatsAppTextMessageUseCase) Execute(ctx context.Context, command Se
 	}
 
 	return outboxMessage, updatedConversation, conversationMessage, nil
+}
+
+func (u *SendWhatsAppTextMessageUseCase) queueOutbox(tenantID, recipient, message string) (domain.OutboxMessage, error) {
+	now := u.clock.Now()
+	outboxMessage, err := domain.NewOutboxMessage(domain.OutboxMessage{
+		ID:        u.idGenerator.New("msg"),
+		TenantID:  tenantID,
+		Channel:   "whatsapp",
+		Recipient: normalizeConversationPhone(recipient),
+		Content:   strings.TrimSpace(message),
+		Status:    domain.StatusQueued,
+		Retries:   0,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		return domain.OutboxMessage{}, fmt.Errorf("build outbox message: %w", err)
+	}
+	if err := u.repository.Save(outboxMessage); err != nil {
+		return domain.OutboxMessage{}, fmt.Errorf("save queued outbox message: %w", err)
+	}
+	return outboxMessage, nil
+}
+
+type textDelivery struct {
+	Outbox  domain.OutboxMessage
+	Result  domain.WhatsAppSendResult
+	SendErr error
+}
+
+// deliver sends through the provider and records the outcome on the outbox. A
+// provider failure is in SendErr; the returned error is a storage failure.
+func (u *SendWhatsAppTextMessageUseCase) deliver(ctx context.Context, tenantID string, outboxMessage domain.OutboxMessage, recipient, message string) (textDelivery, error) {
+	result, sendErr := u.provider.SendText(ctx, tenantID, recipient, message)
+	if sendErr != nil {
+		outboxMessage = outboxMessage.MarkFailed(u.clock.Now())
+	} else {
+		outboxMessage = outboxMessage.MarkSent(result.Status, result.MessageID, u.clock.Now())
+	}
+	if err := u.repository.Save(outboxMessage); err != nil {
+		return textDelivery{}, fmt.Errorf("save delivered outbox message: %w", err)
+	}
+	if publishErr := publishNotificationDeliveryEvent(ctx, u.eventPublisher, u.idGenerator, u.clock, outboxMessage, sendErr); publishErr != nil {
+		// best effort
+	}
+	return textDelivery{Outbox: outboxMessage, Result: result, SendErr: sendErr}, nil
 }
 
 func (u *SendWhatsAppMediaMessageUseCase) Execute(ctx context.Context, command SendWhatsAppMediaMessageCommand) (domain.OutboxMessage, domain.WhatsAppConversation, domain.WhatsAppConversationMessage, error) {
@@ -441,6 +477,12 @@ func (u *HandleWhatsAppWebhookUseCase) Execute(ctx context.Context, command Hand
 					return processed, err
 				}
 				if !ok {
+					conversation, ok, err = u.openSystemConversation(ctx, strings.TrimSpace(change.Value.Metadata.PhoneNumberID), message)
+					if err != nil {
+						return processed, err
+					}
+				}
+				if !ok {
 					continue
 				}
 
@@ -501,6 +543,8 @@ func (u *HandleWhatsAppWebhookUseCase) Execute(ctx context.Context, command Hand
 				} else if strings.EqualFold(mediaType, "image") && strings.TrimSpace(mediaID) != "" {
 					u.captureWaybillFromMessage(ctx, savedConversation.TenantID, mediaID, fromPhone, receivedAt)
 				}
+				u.platform.MessageCreated(ctx, messageRecord)
+				u.platform.ConversationUpdated(ctx, savedConversation)
 				u.publishActivity(ctx, activitylog.PublishCommand{
 					TenantID:   savedConversation.TenantID,
 					Service:    "notification",
@@ -653,7 +697,14 @@ func (u *HandleWhatsAppWebhookUseCase) applyWebhookStatus(ctx context.Context, s
 	if existingMessage, ok, err := u.repository.FindMessageByProviderMessageID(ctx, providerMessageID); err != nil {
 		return 0, err
 	} else if ok {
+		previousStatus := inboxStatus(existingMessage)
 		existingMessage.Status = normalizedStatus
+		if u.platform.Covers(existingMessage.TenantID) {
+			existingMessage.Status = advancedStatus(previousStatus, platformReceiptStatus(status.Status))
+			if existingMessage.Status == "failed" {
+				statusPayload["error"] = errorPayload(ErrorCodeSendFailed, "")
+			}
+		}
 		existingMessage.Payload = mergeAnyMap(existingMessage.Payload, statusPayload)
 		existingMessage.UpdatedAt = receivedAt.UTC()
 		savedMessage, err := u.repository.SaveMessage(ctx, existingMessage)
@@ -662,6 +713,9 @@ func (u *HandleWhatsAppWebhookUseCase) applyWebhookStatus(ctx context.Context, s
 		}
 		conversationMessage = &savedMessage
 		handled = true
+		if inboxStatus(savedMessage) != previousStatus {
+			u.announceStatus(ctx, savedMessage)
+		}
 	}
 
 	if outboxMessage, ok := u.outboxRepository.FindByProviderMessageID(providerMessageID); ok {
@@ -684,6 +738,49 @@ func (u *HandleWhatsAppWebhookUseCase) applyWebhookStatus(ctx context.Context, s
 		return 1, nil
 	}
 	return 0, nil
+}
+
+func (u *HandleWhatsAppWebhookUseCase) announceStatus(ctx context.Context, message domain.WhatsAppConversationMessage) {
+	if !u.platform.Covers(message.TenantID) {
+		return
+	}
+	u.platform.MessageStatus(ctx, message)
+	if conversation, ok, err := u.repository.FindConversationByTenantAndID(ctx, message.TenantID, message.ConversationID); err == nil && ok {
+		u.platform.ConversationUpdated(ctx, conversation)
+	}
+}
+
+// openSystemConversation starts a conversation for a sender who has never
+// written to the platform number. Tenants' numbers keep dropping unknown
+// senders.
+func (u *HandleWhatsAppWebhookUseCase) openSystemConversation(ctx context.Context, phoneNumberID string, message whatsAppWebhookMessage) (domain.WhatsAppConversation, bool, error) {
+	phone := normalizeConversationPhone(message.From)
+	if u.platform == nil || u.accountRepository == nil || phoneNumberID == "" || phone == "" {
+		return domain.WhatsAppConversation{}, false, nil
+	}
+	account, ok, err := u.accountRepository.FindAccountByPhoneNumberID(ctx, phoneNumberID)
+	if err != nil || !ok || account.TenantID != identity.SystemTenantID {
+		return domain.WhatsAppConversation{}, false, err
+	}
+	now := parseWebhookTimestamp(message.Timestamp, u.clock.Now())
+	return domain.WhatsAppConversation{
+		ID:          u.idGenerator.New("wac"),
+		TenantID:    identity.SystemTenantID,
+		DriverPhone: phone,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}, true, nil
+}
+
+// platformReceiptStatus keeps read distinct from delivered, which the shared
+// receipt normalisation folds together.
+func platformReceiptStatus(raw string) string {
+	switch status := strings.ToLower(strings.TrimSpace(raw)); status {
+	case "undelivered":
+		return "failed"
+	default:
+		return status
+	}
 }
 
 type jobInstructionFallbackContent struct {
@@ -1026,32 +1123,7 @@ func requireOpenConversation(ctx context.Context, repository WhatsAppConversatio
 
 func recordOutboundConversationMessage(ctx context.Context, repository WhatsAppConversationRepository, clock Clock, idGenerator IDGenerator, params outboundConversationMessageParams) (domain.WhatsAppConversation, domain.WhatsAppConversationMessage, error) {
 	now := clock.Now().UTC()
-	conversation := params.Conversation
-	if strings.TrimSpace(conversation.ID) == "" {
-		conversation = domain.WhatsAppConversation{
-			ID:          idGenerator.New("wac"),
-			TenantID:    strings.TrimSpace(params.TenantID),
-			DriverPhone: normalizeConversationPhone(params.Recipient),
-			CreatedAt:   now,
-		}
-	}
-	if conversation.CreatedAt.IsZero() {
-		conversation.CreatedAt = now
-	}
-	if strings.TrimSpace(params.DriverName) != "" {
-		conversation.DriverName = strings.TrimSpace(params.DriverName)
-	}
-	conversation.TenantID = strings.TrimSpace(params.TenantID)
-	conversation.DriverPhone = normalizeConversationPhone(params.Recipient)
-	conversation.LastOutboundMessageAt = timePointer(now)
-	conversation.LastMessageAt = timePointer(now)
-	conversation.LastMessageDirection = domain.WhatsAppDirectionOutbound
-	conversation.LastMessageType = strings.TrimSpace(params.MessageType)
-	conversation.LastMessagePreview = buildConversationPreview(params.MessageType, params.Text, params.TemplateName, params.Caption)
-	if params.SentTemplate {
-		conversation.LastTemplateSentAt = timePointer(now)
-	}
-	conversation.UpdatedAt = now
+	conversation := applyOutboundToConversation(params, now, idGenerator)
 
 	savedConversation, err := repository.SaveConversation(ctx, conversation)
 	if err != nil {
@@ -1081,6 +1153,38 @@ func recordOutboundConversationMessage(ctx context.Context, repository WhatsAppC
 		return domain.WhatsAppConversation{}, domain.WhatsAppConversationMessage{}, err
 	}
 	return savedConversation, messageRecord, nil
+}
+
+// applyOutboundToConversation updates the conversation summary for a message
+// just sent, creating the conversation when it does not exist yet.
+func applyOutboundToConversation(params outboundConversationMessageParams, now time.Time, idGenerator IDGenerator) domain.WhatsAppConversation {
+	conversation := params.Conversation
+	if strings.TrimSpace(conversation.ID) == "" {
+		conversation = domain.WhatsAppConversation{
+			ID:          idGenerator.New("wac"),
+			TenantID:    strings.TrimSpace(params.TenantID),
+			DriverPhone: normalizeConversationPhone(params.Recipient),
+			CreatedAt:   now,
+		}
+	}
+	if conversation.CreatedAt.IsZero() {
+		conversation.CreatedAt = now
+	}
+	if strings.TrimSpace(params.DriverName) != "" {
+		conversation.DriverName = strings.TrimSpace(params.DriverName)
+	}
+	conversation.TenantID = strings.TrimSpace(params.TenantID)
+	conversation.DriverPhone = normalizeConversationPhone(params.Recipient)
+	conversation.LastOutboundMessageAt = timePointer(now)
+	conversation.LastMessageAt = timePointer(now)
+	conversation.LastMessageDirection = domain.WhatsAppDirectionOutbound
+	conversation.LastMessageType = strings.TrimSpace(params.MessageType)
+	conversation.LastMessagePreview = buildConversationPreview(params.MessageType, params.Text, params.TemplateName, params.Caption)
+	if params.SentTemplate {
+		conversation.LastTemplateSentAt = timePointer(now)
+	}
+	conversation.UpdatedAt = now
+	return conversation
 }
 
 func conversationMatchesQuery(conversation domain.WhatsAppConversation, needle string) bool {

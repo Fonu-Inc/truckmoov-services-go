@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/truckmoov/services-go/internal/notification/domain"
 )
+
+var errDuplicateClientMessageID = errors.New("client message id already used")
 
 const whatsappConversationSchema = `
 CREATE TABLE IF NOT EXISTS whatsapp_conversations (
@@ -63,6 +66,13 @@ CREATE TABLE IF NOT EXISTS whatsapp_conversation_messages (
 
 CREATE INDEX IF NOT EXISTS idx_whatsapp_conversation_messages_tenant_conversation_created_at
     ON whatsapp_conversation_messages (tenant_id, conversation_id, created_at ASC);
+
+ALTER TABLE whatsapp_conversations ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMPTZ NULL;
+ALTER TABLE whatsapp_conversation_messages ADD COLUMN IF NOT EXISTS client_message_id TEXT NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_whatsapp_conversation_messages_tenant_client_message_id
+    ON whatsapp_conversation_messages (tenant_id, client_message_id)
+    WHERE client_message_id IS NOT NULL;
 `
 
 type PostgresWhatsAppConversationRepository struct {
@@ -124,6 +134,7 @@ RETURNING
     last_message_preview,
     last_message_direction,
     last_message_type,
+    last_read_at,
     created_at,
     updated_at
 `,
@@ -147,7 +158,7 @@ RETURNING
 
 func (r *PostgresWhatsAppConversationRepository) FindConversationByTenantAndID(ctx context.Context, tenantID, id string) (domain.WhatsAppConversation, bool, error) {
 	row := r.db.QueryRowContext(ctx, `
-SELECT id, tenant_id, driver_phone, driver_name, last_inbound_message_at, last_outbound_message_at, last_template_sent_at, window_expires_at, last_message_at, last_message_preview, last_message_direction, last_message_type, created_at, updated_at
+SELECT id, tenant_id, driver_phone, driver_name, last_inbound_message_at, last_outbound_message_at, last_template_sent_at, window_expires_at, last_message_at, last_message_preview, last_message_direction, last_message_type, last_read_at, created_at, updated_at
 FROM whatsapp_conversations
 WHERE tenant_id = $1 AND id = $2
 `, strings.TrimSpace(tenantID), strings.TrimSpace(id))
@@ -163,7 +174,7 @@ WHERE tenant_id = $1 AND id = $2
 
 func (r *PostgresWhatsAppConversationRepository) FindConversationByTenantAndDriverPhone(ctx context.Context, tenantID, driverPhone string) (domain.WhatsAppConversation, bool, error) {
 	row := r.db.QueryRowContext(ctx, `
-SELECT id, tenant_id, driver_phone, driver_name, last_inbound_message_at, last_outbound_message_at, last_template_sent_at, window_expires_at, last_message_at, last_message_preview, last_message_direction, last_message_type, created_at, updated_at
+SELECT id, tenant_id, driver_phone, driver_name, last_inbound_message_at, last_outbound_message_at, last_template_sent_at, window_expires_at, last_message_at, last_message_preview, last_message_direction, last_message_type, last_read_at, created_at, updated_at
 FROM whatsapp_conversations
 WHERE tenant_id = $1 AND driver_phone = $2
 `, strings.TrimSpace(tenantID), strings.TrimSpace(driverPhone))
@@ -179,7 +190,7 @@ WHERE tenant_id = $1 AND driver_phone = $2
 
 func (r *PostgresWhatsAppConversationRepository) FindMostRecentConversationByTenantAndDriverPhone(ctx context.Context, tenantID, driverPhone string) (domain.WhatsAppConversation, bool, error) {
 	row := r.db.QueryRowContext(ctx, `
-SELECT id, tenant_id, driver_phone, driver_name, last_inbound_message_at, last_outbound_message_at, last_template_sent_at, window_expires_at, last_message_at, last_message_preview, last_message_direction, last_message_type, created_at, updated_at
+SELECT id, tenant_id, driver_phone, driver_name, last_inbound_message_at, last_outbound_message_at, last_template_sent_at, window_expires_at, last_message_at, last_message_preview, last_message_direction, last_message_type, last_read_at, created_at, updated_at
 FROM whatsapp_conversations
 WHERE tenant_id = $1 AND driver_phone = $2
 ORDER BY updated_at DESC
@@ -196,7 +207,7 @@ LIMIT 1
 }
 func (r *PostgresWhatsAppConversationRepository) ListConversationsByTenant(ctx context.Context, tenantID string) ([]domain.WhatsAppConversation, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, tenant_id, driver_phone, driver_name, last_inbound_message_at, last_outbound_message_at, last_template_sent_at, window_expires_at, last_message_at, last_message_preview, last_message_direction, last_message_type, created_at, updated_at
+SELECT id, tenant_id, driver_phone, driver_name, last_inbound_message_at, last_outbound_message_at, last_template_sent_at, window_expires_at, last_message_at, last_message_preview, last_message_direction, last_message_type, last_read_at, created_at, updated_at
 FROM whatsapp_conversations
 WHERE tenant_id = $1
 ORDER BY COALESCE(last_message_at, created_at) DESC, updated_at DESC
@@ -229,6 +240,7 @@ INSERT INTO whatsapp_conversation_messages (
     tenant_id,
     conversation_id,
     provider_message_id,
+    client_message_id,
     direction,
     message_type,
     status,
@@ -246,7 +258,7 @@ INSERT INTO whatsapp_conversation_messages (
     created_at,
     updated_at
 ) VALUES (
-    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
 )
 ON CONFLICT (provider_message_id) DO UPDATE SET
     status = EXCLUDED.status,
@@ -257,6 +269,7 @@ RETURNING
     tenant_id,
     conversation_id,
     provider_message_id,
+    client_message_id,
     direction,
     message_type,
     status,
@@ -278,6 +291,7 @@ RETURNING
 		strings.TrimSpace(message.TenantID),
 		strings.TrimSpace(message.ConversationID),
 		providerMessageID,
+		nullableString(message.ClientMessageID),
 		strings.TrimSpace(message.Direction),
 		strings.TrimSpace(message.MessageType),
 		strings.TrimSpace(message.Status),
@@ -300,7 +314,7 @@ RETURNING
 
 func (r *PostgresWhatsAppConversationRepository) ListMessagesByConversation(ctx context.Context, tenantID, conversationID string) ([]domain.WhatsAppConversationMessage, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, tenant_id, conversation_id, provider_message_id, direction, message_type, status, sender_role, sender_subject, from_phone, to_phone, text_content, template_name, media_type, media_id, media_link, caption, raw_payload, created_at, updated_at
+SELECT id, tenant_id, conversation_id, provider_message_id, client_message_id, direction, message_type, status, sender_role, sender_subject, from_phone, to_phone, text_content, template_name, media_type, media_id, media_link, caption, raw_payload, created_at, updated_at
 FROM whatsapp_conversation_messages
 WHERE tenant_id = $1 AND conversation_id = $2
 ORDER BY created_at ASC, updated_at ASC
@@ -327,7 +341,7 @@ func (r *PostgresWhatsAppConversationRepository) FindMessageByProviderMessageID(
 		return domain.WhatsAppConversationMessage{}, false, nil
 	}
 	row := r.db.QueryRowContext(ctx, `
-SELECT id, tenant_id, conversation_id, provider_message_id, direction, message_type, status, sender_role, sender_subject, from_phone, to_phone, text_content, template_name, media_type, media_id, media_link, caption, raw_payload, created_at, updated_at
+SELECT id, tenant_id, conversation_id, provider_message_id, client_message_id, direction, message_type, status, sender_role, sender_subject, from_phone, to_phone, text_content, template_name, media_type, media_id, media_link, caption, raw_payload, created_at, updated_at
 FROM whatsapp_conversation_messages
 WHERE provider_message_id = $1
 `, trimmed)
@@ -350,6 +364,7 @@ func scanConversation(scanner sqlScanner) (domain.WhatsAppConversation, error) {
 	var lastTemplate sql.NullTime
 	var windowExpires sql.NullTime
 	var lastMessage sql.NullTime
+	var lastRead sql.NullTime
 	if err := scanner.Scan(
 		&conversation.ID,
 		&conversation.TenantID,
@@ -363,6 +378,7 @@ func scanConversation(scanner sqlScanner) (domain.WhatsAppConversation, error) {
 		&conversation.LastMessagePreview,
 		&conversation.LastMessageDirection,
 		&conversation.LastMessageType,
+		&lastRead,
 		&conversation.CreatedAt,
 		&conversation.UpdatedAt,
 	); err != nil {
@@ -373,6 +389,7 @@ func scanConversation(scanner sqlScanner) (domain.WhatsAppConversation, error) {
 	conversation.LastTemplateSentAt = timePtr(lastTemplate)
 	conversation.WindowExpiresAt = timePtr(windowExpires)
 	conversation.LastMessageAt = timePtr(lastMessage)
+	conversation.LastReadAt = timePtr(lastRead)
 	conversation.CreatedAt = conversation.CreatedAt.UTC()
 	conversation.UpdatedAt = conversation.UpdatedAt.UTC()
 	return conversation, nil
@@ -381,12 +398,14 @@ func scanConversation(scanner sqlScanner) (domain.WhatsAppConversation, error) {
 func scanConversationMessage(scanner sqlScanner) (domain.WhatsAppConversationMessage, error) {
 	var message domain.WhatsAppConversationMessage
 	var providerMessageID sql.NullString
+	var clientMessageID sql.NullString
 	var payload []byte
 	if err := scanner.Scan(
 		&message.ID,
 		&message.TenantID,
 		&message.ConversationID,
 		&providerMessageID,
+		&clientMessageID,
 		&message.Direction,
 		&message.MessageType,
 		&message.Status,
@@ -407,6 +426,7 @@ func scanConversationMessage(scanner sqlScanner) (domain.WhatsAppConversationMes
 		return domain.WhatsAppConversationMessage{}, err
 	}
 	message.ProviderMessageID = providerMessageID.String
+	message.ClientMessageID = clientMessageID.String
 	if len(payload) > 0 {
 		_ = json.Unmarshal(payload, &message.Payload)
 	}
@@ -446,6 +466,7 @@ type InMemoryWhatsAppConversationRepository struct {
 	byTenantPhone    map[string]string
 	messages         map[string]domain.WhatsAppConversationMessage
 	providerMessages map[string]string
+	clientMessages   map[string]string
 }
 
 func NewInMemoryWhatsAppConversationRepository() *InMemoryWhatsAppConversationRepository {
@@ -454,6 +475,7 @@ func NewInMemoryWhatsAppConversationRepository() *InMemoryWhatsAppConversationRe
 		byTenantPhone:    map[string]string{},
 		messages:         map[string]domain.WhatsAppConversationMessage{},
 		providerMessages: map[string]string{},
+		clientMessages:   map[string]string{},
 	}
 }
 
@@ -493,6 +515,9 @@ func (r *InMemoryWhatsAppConversationRepository) SaveConversation(_ context.Cont
 		}
 		if strings.TrimSpace(conversation.LastMessageType) == "" {
 			conversation.LastMessageType = existing.LastMessageType
+		}
+		if conversation.LastReadAt == nil {
+			conversation.LastReadAt = cloneTime(existing.LastReadAt)
 		}
 		if conversation.CreatedAt.IsZero() {
 			conversation.CreatedAt = existing.CreatedAt
@@ -582,6 +607,12 @@ func (r *InMemoryWhatsAppConversationRepository) SaveMessage(_ context.Context, 
 			message.ID = existing.ID
 		}
 	}
+	if clientKey := clientMessageKey(message.TenantID, message.ClientMessageID); message.ClientMessageID != "" {
+		if existingID, taken := r.clientMessages[clientKey]; taken && existingID != message.ID {
+			return domain.WhatsAppConversationMessage{}, errDuplicateClientMessageID
+		}
+		r.clientMessages[clientKey] = message.ID
+	}
 	r.messages[message.ID] = cloneConversationMessage(message)
 	if strings.TrimSpace(message.ProviderMessageID) != "" {
 		r.providerMessages[strings.TrimSpace(message.ProviderMessageID)] = message.ID
@@ -625,6 +656,7 @@ func cloneConversation(conversation domain.WhatsAppConversation) domain.WhatsApp
 	conversation.LastTemplateSentAt = cloneTime(conversation.LastTemplateSentAt)
 	conversation.WindowExpiresAt = cloneTime(conversation.WindowExpiresAt)
 	conversation.LastMessageAt = cloneTime(conversation.LastMessageAt)
+	conversation.LastReadAt = cloneTime(conversation.LastReadAt)
 	return conversation
 }
 

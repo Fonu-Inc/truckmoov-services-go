@@ -181,6 +181,7 @@ type Handler struct {
 	sendCampaignUseCase                     *application.SendCampaignUseCase
 	listCampaignsUseCase                    *application.ListCampaignsUseCase
 	suppressRecipientUseCase                *application.SuppressRecipientUseCase
+	platformInbox                           *application.PlatformInboxQueries
 }
 
 // WithCampaigns attaches the campaign use cases.
@@ -259,6 +260,8 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 	routes.HandleFunc("/notify/messages/retry/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.retryMessage)
 	routes.HandleFunc("/notify/system/whatsapp/settings", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppSettings)
 	routes.HandleFunc("/notify/system/whatsapp/settings/", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppSettingsByPath)
+	routes.HandleFunc("/notify/system/whatsapp/conversations", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppConversations)
+	routes.HandleFunc("/notify/system/whatsapp/conversations/", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppConversationByPath)
 	routes.HandleFunc("/notify/system/whatsapp/templates", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppTemplates)
 	routes.HandleFunc("/notify/whatsapp/settings", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.whatsAppSettings)
 	routes.HandleFunc("/notify/whatsapp/settings/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.whatsAppSettingsByPath)

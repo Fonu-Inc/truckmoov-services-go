@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/truckmoov/services-go/internal/tracking/application"
@@ -54,7 +57,7 @@ func main() {
 		_ = shutdownTelemetry(context.Background())
 	}()
 
-	bus, err := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, eventbus.Credentials{User: cfg.NATSUser, Password: cfg.NATSPassword}, log)
+	bus, err := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, eventbus.Credentials{User: cfg.NATSUser, Password: cfg.NATSPassword}, log, eventbus.WithSigningSecret(cfg.EventSigningSecret))
 	if err != nil {
 		log.Error("eventbus_init_failed", "error", err.Error())
 		os.Exit(1)
@@ -96,7 +99,7 @@ func main() {
 
 	// Keep the IMEI→{tenant,vehicle,device} cache fresh from fleet's identity events.
 	consumeDeviceIdentity := application.NewConsumeDeviceIdentityUseCase(imeiResolver, log)
-	if _, subErr := bus.Subscribe(ctx, "tm.*.device.identity.changed", "tracking-device-identity", consumeDeviceIdentity.Handle); subErr != nil {
+	if _, subErr := bus.Subscribe(ctx, "tm.*.device.identity.changed", "tracking-device-identity", eventbus.Verified(consumeDeviceIdentity.Handle, cfg.EventSigningSecret, eventbus.VerifyOptions{AcceptUnsigned: cfg.EventAcceptUnsigned}, log)); subErr != nil {
 		log.Warn("device_identity_subscribe_failed", "error", subErr.Error())
 	}
 
@@ -105,6 +108,16 @@ func main() {
 	consumeSIMChanged := application.NewConsumeSIMChangedUseCase(simResolver, log)
 	if _, subErr := bus.Subscribe(ctx, "tm.*.sim.changed", "tracking-sim-changed", consumeSIMChanged.Handle); subErr != nil {
 		log.Warn("sim_changed_subscribe_failed", "error", subErr.Error())
+	}
+
+	gate, suspensionSync, gateMetrics := buildGate(cfg, serviceCaller, redisClient, imeiResolver, clock, log)
+	if gate != nil {
+		consumeTenantSuspension := application.NewConsumeTenantSuspensionUseCase(gate)
+		subscribeTenantSuspension(bus, consumeTenantSuspension, cfg.EventSigningSecret, eventbus.VerifyOptions{AcceptUnsigned: cfg.EventAcceptUnsigned}, log)
+		if loadErr := suspensionSync.LoadInitial(ctx, 3, time.Second); loadErr != nil {
+			log.Error("suspension_initial_load_failed", "error", loadErr.Error())
+		}
+		go suspensionSync.Run(ctx, time.Duration(max(cfg.TrackingGateReloadSeconds, 5))*time.Second)
 	}
 
 	ingestLocationUseCase := application.NewIngestLocationUseCase(
@@ -120,7 +133,7 @@ func main() {
 		},
 		imeiResolver,
 		telemetryStore,
-	)
+	).WithGate(gate)
 	publishAlertUseCase := application.NewPublishAlertUseCase(
 		eventPublisher,
 		clock,
@@ -146,7 +159,7 @@ func main() {
 		)
 	}
 
-	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, deviceTelemetryQueryUseCase, cfg.GPSAPIKey, userTokens, activityPublisher)
+	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, deviceTelemetryQueryUseCase, cfg.GPSAPIKey, userTokens, activityPublisher).WithGate(gate)
 	accessClient := identity.NewAccessClient(cfg.AuthServiceURL, serviceCaller)
 	if broadcaster, ok := bus.(eventbus.Broadcaster); ok {
 		if _, subErr := broadcaster.SubscribeEveryInstance(identity.AccessChangedSubject, func(_ context.Context, e eventbus.EventEnvelope) error {
@@ -163,11 +176,21 @@ func main() {
 	handler.RegisterRoutes(routes)
 
 	metrics := httpx.NewMetrics(cfg.ServiceName)
-	routes.Handle("/metrics", []httpx.Audience{httpx.Public}, httpx.None(), metrics.Handler())
+	metricsHandler := metrics.Handler()
+	if gateMetrics != nil {
+		metricsHandler = gateMetrics.Handler(metricsHandler)
+	}
+	routes.Handle("/metrics", []httpx.Audience{httpx.Public}, httpx.None(), metricsHandler)
 
 	readiness := httpx.ReadinessHandler("tracking",
 		httpx.ReadinessCheck{Name: "nats", Probe: bus.Ping},
 		httpx.ReadinessCheck{Name: "redis", Probe: func(context.Context) error { return redisClient.Ping() }},
+		httpx.ReadinessCheck{Name: "suspension-gate", Probe: func(context.Context) error {
+			if !gate.Ready() {
+				return errors.New("suspension lists not loaded yet")
+			}
+			return nil
+		}},
 	)
 	routes.Handle("/ready", []httpx.Audience{httpx.Public}, httpx.None(), readiness)
 	routes.Handle("/tracking/ready", []httpx.Audience{httpx.Public}, httpx.None(), readiness)
@@ -181,6 +204,7 @@ func main() {
 	handlerWithCORS = httpx.WithRateLimit(handlerWithCORS, cfg.RateLimitRPS, cfg.RateLimitBurst)
 	handlerWithCORS = httpx.WithAuthContext(httpx.WithServiceCallers(httpx.WithCurrentAccess(handlerWithCORS, accessClient), cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
 		"fleet": "FLEET_ADMIN",
+		"auth":  "FLEET_ADMIN",
 	}), userTokens)
 	handlerWithCORS = httpx.WithErrorAlerts(handlerWithCORS, alert.NewNtfyClient(cfg.NtfyErrorTopicURL, cfg.NtfyErrorAuthToken), httpx.NewRecentRequests(3), cfg.ServiceName)
 
@@ -188,5 +212,44 @@ func main() {
 	if runErr := httpx.Run(ctx, ":"+cfg.Port, httpx.WithLogging(handlerWithCORS, log), log); runErr != nil {
 		log.Error("service_stopped", "error", runErr.Error())
 		os.Exit(1)
+	}
+}
+
+func buildGate(
+	cfg config.Config,
+	caller *identity.Caller,
+	redisClient *redisstore.Store,
+	resolver application.IMEIResolver,
+	clock application.Clock,
+	log *slog.Logger,
+) (*application.IngestGate, *application.SuspensionSync, *infrastructure.PrometheusGateMetrics) {
+	if !cfg.TrackingGateEnabled {
+		log.Warn("suspension_gate_disabled", "detail", "TRACKING_GATE_ENABLED=false; suspended customers are not blocked")
+		return nil, nil, nil
+	}
+	metrics := infrastructure.NewPrometheusGateMetrics()
+	gate := application.NewIngestGate(
+		application.GateConfig{UnknownDevicePolicy: cfg.TrackingUnknownDevicePolicy},
+		infrastructure.NewRedisSuspendedSeenStore(redisClient),
+		metrics,
+		clock,
+		log,
+	)
+	source := infrastructure.NewSuspensionSnapshotClient(cfg.AuthServiceURL, cfg.FleetServiceURL, caller)
+	index := infrastructure.NewRedisSuspendedIMEIIndex(redisClient)
+	return gate, application.NewSuspensionSync(source, gate, resolver, index, log), metrics
+}
+
+func subscribeTenantSuspension(bus eventbus.EventBus, consumer *application.ConsumeTenantSuspensionUseCase, secret string, opts eventbus.VerifyOptions, log *slog.Logger) {
+	broadcaster, ok := bus.(eventbus.Broadcaster)
+	if !ok {
+		log.Warn("tenant_suspension_events_unavailable", "detail", "event bus cannot fan out; relying on periodic reload")
+		return
+	}
+	if _, err := broadcaster.SubscribeEveryInstance("tm.*.tenant.suspended", eventbus.Verified(consumer.HandleSuspended, secret, opts, log)); err != nil {
+		log.Warn("tenant_suspended_subscribe_failed", "error", err.Error())
+	}
+	if _, err := broadcaster.SubscribeEveryInstance("tm.*.tenant.reinstated", eventbus.Verified(consumer.HandleReinstated, secret, opts, log)); err != nil {
+		log.Warn("tenant_reinstated_subscribe_failed", "error", err.Error())
 	}
 }

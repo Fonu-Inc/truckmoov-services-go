@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -21,6 +22,7 @@ type EventEnvelope struct {
 	Actor         map[string]any `json:"actor,omitempty"`
 	Data          map[string]any `json:"data"`
 	Signature     string         `json:"sig,omitempty"`
+	BusSignature  string         `json:"bsig,omitempty"`
 	// Subject is where the broker delivered the event. Set on receipt, never
 	// read from the payload.
 	Subject string `json:"-"`
@@ -44,6 +46,17 @@ type natsEventBus struct {
 	nc         *nats.Conn
 	js         nats.JetStreamContext
 	streamName string
+
+	signingSecret string
+	warnUnsigned  sync.Once
+}
+
+// Option adjusts a bus at construction. Existing callers pass none.
+type Option func(*natsEventBus)
+
+// WithSigningSecret makes Publish sign every envelope with bsig.
+func WithSigningSecret(secret string) Option {
+	return func(b *natsEventBus) { b.signingSecret = secret }
 }
 
 var invalidJetStreamNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
@@ -133,7 +146,7 @@ func errString(err error) string {
 // bounded retention. It fails loudly (returns an error) rather than silently
 // dropping events through a no-op bus — callers should treat a nil error as a
 // hard requirement and exit on failure.
-func New(ctx context.Context, natsURL, streamName string, creds Credentials, log *slog.Logger) (EventBus, error) {
+func New(ctx context.Context, natsURL, streamName string, creds Credentials, log *slog.Logger, opts ...Option) (EventBus, error) {
 	effectiveStreamName := sanitizeJetStreamName(streamName)
 	if effectiveStreamName != streamName {
 		log.Warn("nats_stream_name_sanitized", "configured_stream", streamName, "effective_stream", effectiveStreamName)
@@ -163,11 +176,32 @@ func New(ctx context.Context, natsURL, streamName string, creds Credentials, log
 
 	_ = ctx
 	log.Info("nats_eventbus_ready", "url", natsURL, "stream", effectiveStreamName)
-	return &natsEventBus{log: log, nc: nc, js: js, streamName: effectiveStreamName}, nil
+	bus := &natsEventBus{log: log, nc: nc, js: js, streamName: effectiveStreamName}
+	for _, opt := range opts {
+		opt(bus)
+	}
+	return bus, nil
+}
+
+// sign never fails the publish: an event that cannot be canonicalised goes out
+// unsigned and verified consumers refuse it.
+func (b *natsEventBus) sign(subject string, envelope EventEnvelope) EventEnvelope {
+	envelope.BusSignature = ""
+	if b.signingSecret == "" {
+		b.warnUnsigned.Do(func() { b.log.Warn("event_signing_secret_unset", "effect", "publishing unsigned events") })
+		return envelope
+	}
+	signature, err := BusSignature(b.signingSecret, subject, envelope)
+	if err != nil {
+		b.log.Warn("event_unsignable:"+envelope.Type, "subject", subject, "error", err.Error())
+		return envelope
+	}
+	envelope.BusSignature = signature
+	return envelope
 }
 
 func (b *natsEventBus) Publish(_ context.Context, subject string, envelope EventEnvelope) error {
-	payload, err := json.Marshal(envelope)
+	payload, err := json.Marshal(b.sign(subject, envelope))
 	if err != nil {
 		return fmt.Errorf("marshal event: %w", err)
 	}
@@ -196,7 +230,7 @@ func (b *natsEventBus) Subscribe(_ context.Context, subject, durable string, han
 			envelope.Subject = msg.Subject
 			if handleErr := handler(context.Background(), envelope); handleErr != nil {
 				b.log.Warn("event_handler_failed", "error", handleErr.Error(), "subject", subject)
-				_ = msg.Nak()
+				retryOrTerminate(msg, b.log, subject)
 				return
 			}
 			_ = msg.Ack()
@@ -242,6 +276,7 @@ func (b *natsEventBus) SubscribeEveryInstance(subject string, handler Handler) (
 		if json.Unmarshal(msg.Data, &envelope) != nil {
 			return
 		}
+		envelope.Subject = msg.Subject
 		if handleErr := handler(context.Background(), envelope); handleErr != nil {
 			b.log.Warn("event_handler_failed", "error", handleErr.Error(), "subject", subject)
 		}
