@@ -16,6 +16,9 @@ type SendMessageCommand struct {
 	Content   string
 	// NotificationType groups this send in the delivery log. Empty means generic.
 	NotificationType string
+	// MessageID makes the message id, and so the charge reference, stable
+	// across redeliveries. Empty means a fresh id.
+	MessageID string
 }
 
 type SendMessageUseCase struct {
@@ -62,9 +65,14 @@ func (u *SendMessageUseCase) Execute(ctx context.Context, command SendMessageCom
 		channel = "whatsapp"
 	}
 
+	messageID := command.MessageID
+	if messageID == "" {
+		messageID = u.idGenerator.New("msg")
+	}
+
 	now := u.clock.Now()
 	message, err := domain.NewOutboxMessage(domain.OutboxMessage{
-		ID:        u.idGenerator.New("msg"),
+		ID:        messageID,
 		TenantID:  tenantID,
 		Channel:   channel,
 		Recipient: command.Recipient,
@@ -86,6 +94,7 @@ func (u *SendMessageUseCase) Execute(ctx context.Context, command SendMessageCom
 	// to be able to refuse, and once the provider has accepted the message the
 	// money is spent whatever the balance says.
 	if err := u.chargeForSend(ctx, message); err != nil {
+		err = fmt.Errorf("usage charge failed: %w", err)
 		message = message.MarkFailed(u.clock.Now())
 		if saveErr := u.repository.Save(message); saveErr != nil {
 			return domain.OutboxMessage{}, fmt.Errorf("save refused outbox message: %w", saveErr)

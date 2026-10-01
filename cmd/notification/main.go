@@ -245,7 +245,10 @@ func main() {
 		idGenerator,
 	)
 
-	consumeNotificationUseCase := application.NewConsumeNotificationUseCase(sendMessageUseCase, log)
+	if cfg.EventSigningSecret == "" {
+		log.Error("event_signing_secret_unset", "message", "set EVENT_SIGNING_SECRET; every notification.send event will be rejected until then")
+	}
+	consumeNotificationUseCase := application.NewConsumeNotificationUseCase(sendMessageUseCase, cfg.EventSigningSecret, log)
 	consumeJobOfferNotificationUseCase := application.NewConsumeJobOfferNotificationUseCase(sendMessageUseCase, log)
 	dispatchAlertUseCase := application.NewDispatchAlertUseCase(alertSettingsReader, sendMessageUseCase, log)
 	// Platform alerts ride the system tenant, so they are a separate subject

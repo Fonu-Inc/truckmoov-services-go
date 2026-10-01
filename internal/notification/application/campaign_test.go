@@ -165,6 +165,19 @@ func (c *campaignRefusingCharger) Charge(context.Context, UsageCharge) error {
 	return errors.New("wallet balance does not cover this")
 }
 
+type campaignLimitedCharger struct {
+	allowed int
+	charges []UsageCharge
+}
+
+func (c *campaignLimitedCharger) Charge(_ context.Context, charge UsageCharge) error {
+	if len(c.charges) >= c.allowed {
+		return ErrInsufficientFunds
+	}
+	c.charges = append(c.charges, charge)
+	return nil
+}
+
 type campaignClock struct{ now time.Time }
 
 func (c campaignClock) Now() time.Time { return c.now }
@@ -231,7 +244,7 @@ func smsCampaign(kit *campaignKit, t *testing.T, numbers ...string) domain.Campa
 	return campaign
 }
 
-func TestCampaignChargesOnceForTheWholeRun(t *testing.T) {
+func TestCampaignChargesEachRecipientBeforeSending(t *testing.T) {
 	kit := newCampaignKit()
 	campaign := smsCampaign(kit, t, "+2348000000001", "+2348000000002", "+2348000000003")
 
@@ -241,14 +254,15 @@ func TestCampaignChargesOnceForTheWholeRun(t *testing.T) {
 		t.Fatalf("send: %v", err)
 	}
 
-	// One charge covering three messages, not three charges. Charging per
-	// message lets a tenant run out halfway through with half the drivers
-	// already messaged.
-	if len(kit.charger.charges) != 1 {
-		t.Fatalf("expected one charge, got %d", len(kit.charger.charges))
+	if len(kit.charger.charges) != 3 {
+		t.Fatalf("expected three charges, got %d", len(kit.charger.charges))
 	}
-	if kit.charger.charges[0].Quantity != 3 {
-		t.Fatalf("expected quantity 3, got %d", kit.charger.charges[0].Quantity)
+	seen := map[string]bool{}
+	for _, charge := range kit.charger.charges {
+		if charge.Quantity != 1 || seen[charge.Reference] {
+			t.Fatalf("bad or repeated charge: %+v", charge)
+		}
+		seen[charge.Reference] = true
 	}
 }
 
@@ -273,6 +287,37 @@ func TestCampaignSendsNothingWhenTheWalletRefuses(t *testing.T) {
 	}
 }
 
+func TestCampaignBillsOnlyTheRecipientsItReached(t *testing.T) {
+	kit := newCampaignKit()
+	charger := &campaignLimitedCharger{allowed: 2}
+	kit.send = NewSendCampaignUseCase(
+		kit.repo, kit.suppression, kit.provider, kit.templates, "en", charger,
+		campaignClock{now: time.Unix(1_700_000_000, 0).UTC()},
+	)
+	campaign := smsCampaign(kit, t, "+2348000000001", "+2348000000002", "+2348000000003")
+
+	_, err := kit.send.Execute(context.Background(), SendCampaignCommand{
+		TenantID: "tenant-a", CampaignID: campaign.ID,
+	})
+	if !errors.Is(err, ErrInsufficientFunds) {
+		t.Fatalf("expected a refusal, got %v", err)
+	}
+
+	if len(charger.charges) != 2 || len(kit.provider.sent) != 2 {
+		t.Fatalf("billed %d, sent %d, want 2 and 2", len(charger.charges), len(kit.provider.sent))
+	}
+	recipients, _ := kit.repo.ListRecipients(context.Background(), "tenant-a", campaign.ID)
+	queued := 0
+	for _, recipient := range recipients {
+		if recipient.State == domain.RecipientStateQueued {
+			queued++
+		}
+	}
+	if queued != 1 {
+		t.Fatalf("expected one recipient left queued, got %d", queued)
+	}
+}
+
 func TestCampaignSkipsSomeoneWhoOptedOut(t *testing.T) {
 	kit := newCampaignKit()
 	_ = kit.suppression.Suppress(context.Background(), "tenant-a", "+2348000000002", "asked to stop")
@@ -290,8 +335,8 @@ func TestCampaignSkipsSomeoneWhoOptedOut(t *testing.T) {
 		}
 	}
 	// And they are not billed for a message nobody received.
-	if kit.charger.charges[0].Quantity != 1 {
-		t.Fatalf("expected to charge for one message, got %d", kit.charger.charges[0].Quantity)
+	if len(kit.charger.charges) != 1 {
+		t.Fatalf("expected to charge for one message, got %d", len(kit.charger.charges))
 	}
 }
 
@@ -457,5 +502,46 @@ func TestCampaignCompletesOnceEveryRecipientSettles(t *testing.T) {
 	}
 	if result.Progress.Sent != 1 {
 		t.Fatalf("expected one sent, got %+v", result.Progress)
+	}
+}
+
+func chargedReferences(charges []UsageCharge) map[string]int {
+	counts := map[string]int{}
+	for _, charge := range charges {
+		counts[charge.Reference]++
+	}
+	return counts
+}
+
+func TestRetryFailedReusesTheStableChargeReference(t *testing.T) {
+	kit := newCampaignKit()
+	kit.provider.fail["+2348000000002"] = true
+	campaign := smsCampaign(kit, t, "+2348000000001", "+2348000000002")
+	command := SendCampaignCommand{TenantID: "tenant-a", CampaignID: campaign.ID}
+
+	if _, err := kit.send.Execute(context.Background(), command); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	first := chargedReferences(kit.charger.charges)
+
+	kit.provider.fail = map[string]bool{}
+	command.RetryFailedOnly = true
+	if _, err := kit.send.Execute(context.Background(), command); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+
+	for reference, count := range chargedReferences(kit.charger.charges) {
+		if _, charged := first[reference]; !charged {
+			t.Fatalf("retry produced a new reference %q", reference)
+		}
+		if count > 2 {
+			t.Fatalf("reference %q charged %d times", reference, count)
+		}
+	}
+	if len(kit.charger.charges) != 3 {
+		t.Fatalf("retry must charge only the failed recipient, got %d charges", len(kit.charger.charges))
+	}
+	if first["campaign:"+campaign.ID+":sms:cmr-2"] != 1 {
+		t.Fatalf("expected a per-recipient reference, got %v", first)
 	}
 }

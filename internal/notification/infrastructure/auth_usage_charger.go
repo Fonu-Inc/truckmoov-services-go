@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -14,6 +15,8 @@ import (
 )
 
 const chargeRequestTimeout = 5 * time.Second
+
+var ErrChargerNotConfigured = errors.New("usage charger is not configured")
 
 // AuthUsageCharger debits a tenant's wallet through the auth service, which
 // owns the wallet and the rates.
@@ -42,11 +45,10 @@ func NewAuthUsageCharger(baseURL string, caller *identity.Caller, httpClient *ht
 }
 
 func (c *AuthUsageCharger) Charge(ctx context.Context, charge application.UsageCharge) error {
-	// Not configured means charging is off in this deployment. Sends continue
-	// rather than every message failing, which is the safer default for a
-	// misconfiguration that would otherwise stop all traffic.
+	// A charger that cannot charge refuses the send. Letting it through would
+	// give away billable messages on a misconfiguration.
 	if c.baseURL == "" || c.caller == nil {
-		return nil
+		return ErrChargerNotConfigured
 	}
 
 	body, err := json.Marshal(map[string]any{
@@ -68,7 +70,7 @@ func (c *AuthUsageCharger) Charge(ctx context.Context, charge application.UsageC
 	req.Header.Set("Content-Type", "application/json")
 
 	if !c.caller.Authorize(req, "auth", identity.ActingFor{TenantID: charge.TenantID, LegacyRole: "DISPATCHER"}) {
-		return nil
+		return ErrChargerNotConfigured
 	}
 
 	response, err := c.httpClient.Do(req)

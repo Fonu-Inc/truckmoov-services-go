@@ -174,10 +174,9 @@ func NewSendCampaignUseCase(
 
 // Execute broadcasts a campaign.
 //
-// The whole run is charged once, before anything is sent. A campaign to two
-// hundred drivers over two channels is four hundred billable events, and
-// charging per message would let a tenant discover halfway through the run that
-// they could not afford it — with half the drivers already messaged.
+// The whole run is charged before anything is sent, so a tenant cannot discover
+// halfway through that they could not afford it with half the drivers already
+// messaged.
 func (u *SendCampaignUseCase) Execute(ctx context.Context, command SendCampaignCommand) (SendCampaignResult, error) {
 	campaign, found, err := u.repository.FindCampaign(ctx, command.TenantID, command.CampaignID)
 	if err != nil {
@@ -201,15 +200,9 @@ func (u *SendCampaignUseCase) Execute(ctx context.Context, command SendCampaignC
 		}, nil
 	}
 
-	if err := u.chargeForRun(ctx, campaign, pending); err != nil {
-		return SendCampaignResult{}, err
-	}
-
-	for index := range pending {
-		u.deliver(ctx, campaign, &pending[index])
-		if err := u.repository.SaveRecipient(ctx, pending[index]); err != nil {
-			return SendCampaignResult{}, fmt.Errorf("save recipient: %w", err)
-		}
+	attempted, chargeErr := u.deliverAll(ctx, campaign, pending)
+	if chargeErr != nil && attempted == 0 {
+		return SendCampaignResult{}, chargeErr
 	}
 
 	updated, err := u.repository.ListRecipients(ctx, command.TenantID, command.CampaignID)
@@ -227,8 +220,27 @@ func (u *SendCampaignUseCase) Execute(ctx context.Context, command SendCampaignC
 	return SendCampaignResult{
 		Campaign:  saved,
 		Progress:  domain.SummarizeRecipients(updated),
-		Attempted: len(pending),
-	}, nil
+		Attempted: attempted,
+	}, chargeErr
+}
+
+// deliverAll bills and sends one recipient at a time, so only recipients
+// actually attempted are charged. A refused charge stops the run and leaves
+// the rest queued for a later run.
+func (u *SendCampaignUseCase) deliverAll(
+	ctx context.Context,
+	campaign domain.Campaign,
+	pending []domain.CampaignRecipient,
+) (int, error) {
+	for index := range pending {
+		if err := u.deliver(ctx, campaign, &pending[index]); err != nil {
+			return index, err
+		}
+		if err := u.repository.SaveRecipient(ctx, pending[index]); err != nil {
+			return index, fmt.Errorf("save recipient: %w", err)
+		}
+	}
+	return len(pending), nil
 }
 
 func (u *SendCampaignUseCase) selectPending(
@@ -252,45 +264,38 @@ func (u *SendCampaignUseCase) selectPending(
 	return pending
 }
 
-// chargeForRun debits once for everything about to be sent.
-func (u *SendCampaignUseCase) chargeForRun(
+// chargeRecipient debits one billable recipient just before their send. The
+// reference is stable per recipient, so a retry or replay never charges twice.
+func (u *SendCampaignUseCase) chargeRecipient(
 	ctx context.Context,
 	campaign domain.Campaign,
-	pending []domain.CampaignRecipient,
+	recipient domain.CampaignRecipient,
 ) error {
-	if u.usageCharger == nil {
+	if u.usageCharger == nil || !IsBillable(recipient.Channel) {
 		return nil
 	}
-
-	perChannel := map[string]int{}
-	for _, recipient := range pending {
-		if IsBillable(recipient.Channel) {
-			perChannel[recipient.Channel]++
-		}
-	}
-
-	for channel, quantity := range perChannel {
-		err := u.usageCharger.Charge(ctx, UsageCharge{
-			TenantID: campaign.TenantID,
-			Channel:  channel,
-			Quantity: quantity,
-			Reason:   fmt.Sprintf("campaign %s over %s", campaign.Name, channel),
-			// The campaign and channel together, so replaying the same run does
-			// not charge twice.
-			Reference: fmt.Sprintf("campaign:%s:%s", campaign.ID, channel),
-		})
-		if err != nil {
-			return fmt.Errorf("charge campaign run: %w", err)
-		}
+	err := u.usageCharger.Charge(ctx, UsageCharge{
+		TenantID:  campaign.TenantID,
+		Channel:   recipient.Channel,
+		Quantity:  1,
+		Reason:    fmt.Sprintf("campaign %s over %s", campaign.Name, recipient.Channel),
+		Reference: campaignChargeReference(campaign.ID, recipient),
+	})
+	if err != nil {
+		return fmt.Errorf("charge campaign recipient: %w", err)
 	}
 	return nil
+}
+
+func campaignChargeReference(campaignID string, recipient domain.CampaignRecipient) string {
+	return fmt.Sprintf("campaign:%s:%s:%s", campaignID, recipient.Channel, recipient.ID)
 }
 
 func (u *SendCampaignUseCase) deliver(
 	ctx context.Context,
 	campaign domain.Campaign,
 	recipient *domain.CampaignRecipient,
-) {
+) error {
 	now := u.clock.Now()
 	recipient.UpdatedAt = now
 
@@ -300,14 +305,18 @@ func (u *SendCampaignUseCase) deliver(
 	if err == nil && suppressed {
 		recipient.State = domain.RecipientStateSuppressed
 		recipient.FailureReason = "recipient opted out"
-		return
+		return nil
+	}
+
+	if err := u.chargeRecipient(ctx, campaign, *recipient); err != nil {
+		return err
 	}
 
 	providerMessageID, sendErr := u.send(ctx, campaign, *recipient)
 	if sendErr != nil {
 		recipient.State = domain.RecipientStateFailed
 		recipient.FailureReason = sendErr.Error()
-		return
+		return nil
 	}
 
 	recipient.State = domain.RecipientStateSent
@@ -317,6 +326,7 @@ func (u *SendCampaignUseCase) deliver(
 	// sent rather than progressing to delivered.
 	recipient.ProviderMessageID = providerMessageID
 	recipient.SentAt = &now
+	return nil
 }
 
 func (u *SendCampaignUseCase) send(

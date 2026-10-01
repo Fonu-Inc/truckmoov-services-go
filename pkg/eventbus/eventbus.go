@@ -20,6 +20,10 @@ type EventEnvelope struct {
 	CorrelationID string         `json:"correlation_id,omitempty"`
 	Actor         map[string]any `json:"actor,omitempty"`
 	Data          map[string]any `json:"data"`
+	Signature     string         `json:"sig,omitempty"`
+	// Subject is where the broker delivered the event. Set on receipt, never
+	// read from the payload.
+	Subject string `json:"-"`
 }
 
 type Handler func(ctx context.Context, envelope EventEnvelope) error
@@ -189,6 +193,7 @@ func (b *natsEventBus) Subscribe(_ context.Context, subject, durable string, han
 				return
 			}
 
+			envelope.Subject = msg.Subject
 			if handleErr := handler(context.Background(), envelope); handleErr != nil {
 				b.log.Warn("event_handler_failed", "error", handleErr.Error(), "subject", subject)
 				_ = msg.Nak()
