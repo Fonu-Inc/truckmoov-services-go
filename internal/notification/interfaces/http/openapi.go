@@ -1,6 +1,10 @@
 package notificationhttp
 
-import "net/http"
+import (
+	"net/http"
+
+	httpx "github.com/truckmoov/services-go/pkg/http"
+)
 
 const notificationSwaggerUIHTML = `<!doctype html>
 <html lang="en">
@@ -29,22 +33,20 @@ const notificationSwaggerUIHTML = `<!doctype html>
 
 func (h *Handler) docsUI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(notificationSwaggerUIHTML))
+	httpx.WriteHTML(w, notificationSwaggerUIHTML)
 }
 
 func (h *Handler) docsOpenAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	respondJSON(w, http.StatusOK, notificationOpenAPISpec())
+	httpx.WriteDocument(w, notificationOpenAPISpec())
 }
 
 func notificationOpenAPISpec() map[string]any {
@@ -66,7 +68,7 @@ func notificationOpenAPISpec() map[string]any {
 		"required": true,
 		"schema":   map[string]any{"type": "string"},
 	}
-	return map[string]any{
+	return httpx.ApplyContract(map[string]any{
 		"openapi": "3.0.3",
 		"info": map[string]any{
 			"title":       "Notification Service API",
@@ -787,15 +789,9 @@ func notificationOpenAPISpec() map[string]any {
 						"data":    map[string]any{"$ref": "#/components/schemas/WebhookAck"},
 					},
 				},
-				"ErrorResponse": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"error": map[string]any{"type": "string"},
-					},
-				},
 			},
 		},
-	}
+	})
 }
 
 func openAPIJSONResponse(description string, schema any) map[string]any {

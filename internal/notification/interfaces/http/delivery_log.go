@@ -8,6 +8,7 @@ import (
 
 	"github.com/truckmoov/services-go/internal/notification/application"
 	"github.com/truckmoov/services-go/internal/notification/domain"
+	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
 type deliveryLogEntryResponse struct {
@@ -38,13 +39,13 @@ type deliveryLogPageResponse struct {
 // read another tenant's log by asking for it.
 func (h *Handler) listDeliveryLog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, notificationAuthMessage(authStatus))
 		return
 	}
 
@@ -57,11 +58,11 @@ func (h *Handler) listDeliveryLog(w http.ResponseWriter, r *http.Request) {
 		Offset:           parsePositiveInt(query.Get("offset")),
 	})
 	if err != nil {
-		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", buildDeliveryLogPageResponse(page))
+	httpx.WriteSuccess(w, http.StatusOK, "success", buildDeliveryLogPageResponse(page))
 }
 
 func buildDeliveryLogPageResponse(page application.DeliveryLogPage) deliveryLogPageResponse {

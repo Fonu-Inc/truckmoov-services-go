@@ -27,18 +27,18 @@ func (h *Handler) whatsAppSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		h.getWhatsAppSettings(w, r)
 	default:
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (h *Handler) whatsAppSettingsByPath(w http.ResponseWriter, r *http.Request) {
 	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/notify/whatsapp/settings/"), "/")
 	if trimmed == "" {
-		respondEnvelope(w, http.StatusNotFound, "not found", nil)
+		httpx.WriteError(w, http.StatusNotFound, "not found")
 		return
 	}
 	if r.Method != http.MethodDelete {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	h.disconnectWhatsAppSettings(w, r, trimmed)
@@ -47,7 +47,7 @@ func (h *Handler) whatsAppSettingsByPath(w http.ResponseWriter, r *http.Request)
 func (h *Handler) connectWhatsAppSettings(w http.ResponseWriter, r *http.Request) {
 	tenantID, authStatus, ok := authenticatedWhatsAppSettingsTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, whatsAppSettingsAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, whatsAppSettingsAuthMessage(authStatus))
 		return
 	}
 	h.connectWhatsAppAccountFor(w, r, tenantID)
@@ -58,7 +58,7 @@ func (h *Handler) connectWhatsAppAccountFor(w http.ResponseWriter, r *http.Reque
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -69,11 +69,11 @@ func (h *Handler) connectWhatsAppAccountFor(w http.ResponseWriter, r *http.Reque
 		Code:              req.Code,
 	})
 	if err != nil {
-		respondEnvelope(w, http.StatusBadRequest, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", account)
+	httpx.WriteSuccess(w, http.StatusOK, "success", account)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "notification",
@@ -93,7 +93,7 @@ func (h *Handler) connectWhatsAppAccountFor(w http.ResponseWriter, r *http.Reque
 func (h *Handler) getWhatsAppSettings(w http.ResponseWriter, r *http.Request) {
 	tenantID, authStatus, ok := authenticatedWhatsAppSettingsTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, whatsAppSettingsAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, whatsAppSettingsAuthMessage(authStatus))
 		return
 	}
 	h.getWhatsAppAccountFor(w, r, tenantID)
@@ -102,21 +102,21 @@ func (h *Handler) getWhatsAppSettings(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) getWhatsAppAccountFor(w http.ResponseWriter, r *http.Request, tenantID string) {
 	account, found, err := h.getWhatsAppAccountUseCase.Execute(r.Context(), application.GetWhatsAppAccountQuery{TenantID: tenantID})
 	if err != nil {
-		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	if !found {
-		respondEnvelope(w, http.StatusNotFound, application.ErrWhatsAppAccountNotFound.Error(), nil)
+		httpx.WriteError(w, http.StatusNotFound, application.ErrWhatsAppAccountNotFound.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", account)
+	httpx.WriteSuccess(w, http.StatusOK, "success", account)
 }
 
 func (h *Handler) disconnectWhatsAppSettings(w http.ResponseWriter, r *http.Request, phoneNumberID string) {
 	tenantID, authStatus, ok := authenticatedWhatsAppSettingsTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, whatsAppSettingsAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, whatsAppSettingsAuthMessage(authStatus))
 		return
 	}
 	h.disconnectWhatsAppAccountFor(w, r, tenantID, phoneNumberID)
@@ -132,11 +132,11 @@ func (h *Handler) disconnectWhatsAppAccountFor(w http.ResponseWriter, r *http.Re
 		if err == application.ErrWhatsAppAccountNotFound {
 			status = http.StatusNotFound
 		}
-		respondEnvelope(w, status, err.Error(), nil)
+		httpx.WriteError(w, status, err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", map[string]any{"phone_number_id": strings.TrimSpace(phoneNumberID)})
+	httpx.WriteSuccess(w, http.StatusOK, "success", map[string]any{"phone_number_id": strings.TrimSpace(phoneNumberID)})
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "notification",

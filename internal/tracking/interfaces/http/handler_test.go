@@ -111,9 +111,7 @@ func TestHandler_IngestContract(t *testing.T) {
 	}
 
 	var payload map[string]any
-	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	decodeData(t, res.Body.Bytes(), &payload)
 	if payload["published"] != true {
 		t.Fatalf("expected published=true")
 	}
@@ -158,17 +156,13 @@ func TestHandler_ListVehiclesContract(t *testing.T) {
 	if listRes.Code != http.StatusOK {
 		t.Fatalf("expected status %d, got %d", http.StatusOK, listRes.Code)
 	}
-	var payload struct {
-		Vehicles []map[string]any `json:"vehicles"`
+	var vehicles []map[string]any
+	decodeData(t, listRes.Body.Bytes(), &vehicles)
+	if len(vehicles) != 1 {
+		t.Fatalf("expected 1 vehicle, got %#v", vehicles)
 	}
-	if err := json.Unmarshal(listRes.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	if len(payload.Vehicles) != 1 {
-		t.Fatalf("expected 1 vehicle, got %#v", payload.Vehicles)
-	}
-	if payload.Vehicles[0]["vehicle_id"] != "vehicle-1" {
-		t.Fatalf("unexpected vehicle id %#v", payload.Vehicles[0]["vehicle_id"])
+	if vehicles[0]["vehicle_id"] != "vehicle-1" {
+		t.Fatalf("unexpected vehicle id %#v", vehicles[0]["vehicle_id"])
 	}
 }
 
@@ -204,9 +198,7 @@ func TestHandler_VehicleHistoryContract(t *testing.T) {
 		VehicleID string           `json:"vehicle_id"`
 		History   []map[string]any `json:"history"`
 	}
-	if err := json.Unmarshal(historyRes.Body.Bytes(), &historyPayload); err != nil {
-		t.Fatalf("failed to decode history response: %v", err)
-	}
+	decodeData(t, historyRes.Body.Bytes(), &historyPayload)
 	if historyPayload.VehicleID != "vehicle-2" {
 		t.Fatalf("expected vehicle-2 returned, got %s", historyPayload.VehicleID)
 	}
@@ -330,5 +322,22 @@ func TestHandler_DocsContract(t *testing.T) {
 		if !ok || paths["/tracking/devices/{deviceId}/telemetry"] == nil {
 			t.Fatalf("openapi path %s missing device telemetry path", path)
 		}
+	}
+}
+
+func decodeData(t *testing.T, body []byte, dest any) {
+	t.Helper()
+	var envelope struct {
+		Status bool            `json:"status"`
+		Data   json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if !envelope.Status {
+		t.Fatalf("expected status=true, got %s", body)
+	}
+	if err := json.Unmarshal(envelope.Data, dest); err != nil {
+		t.Fatalf("decode data: %v", err)
 	}
 }

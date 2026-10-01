@@ -1,6 +1,10 @@
 package trackinghttp
 
-import "net/http"
+import (
+	"net/http"
+
+	httpx "github.com/truckmoov/services-go/pkg/http"
+)
 
 const swaggerUIHTML = `<!doctype html>
 <html lang="en">
@@ -29,21 +33,19 @@ const swaggerUIHTML = `<!doctype html>
 
 func (h *Handler) docsUI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(swaggerUIHTML))
+	httpx.WriteHTML(w, swaggerUIHTML)
 }
 
 func (h *Handler) docsOpenAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	respondJSON(w, http.StatusOK, trackingOpenAPISpec())
+	httpx.WriteDocument(w, trackingOpenAPISpec())
 }
 
 func trackingOpenAPISpec() map[string]any {
@@ -76,7 +78,7 @@ func trackingOpenAPISpec() map[string]any {
 	apiKeySecurity := []map[string]any{{"ApiKeyAuth": []string{}}}
 	bearerSecurity := []map[string]any{{"BearerAuth": []string{}}}
 
-	return map[string]any{
+	return httpx.ApplyContract(map[string]any{
 		"openapi": "3.0.3",
 		"info": map[string]any{
 			"title":       "Tracking Service API",
@@ -225,10 +227,8 @@ func trackingOpenAPISpec() map[string]any {
 					},
 				},
 				"VehicleListResponse": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"vehicles": map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/LatestLocation"}},
-					},
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/LatestLocation"},
 				},
 				"VehicleHistoryResponse": map[string]any{
 					"type": "object",
@@ -354,12 +354,6 @@ func trackingOpenAPISpec() map[string]any {
 						"protocol":                   map[string]any{"type": "string", "description": "Device protocol from the Traccar payload (e.g. teltonika, gt06); for direct non-Traccar adapters this is the ingest source (generic/teltonika/queclink)."},
 						"history":                    map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/FirmwareReport"}},
 						"reporting_interval_seconds": map[string]any{"type": "number", "nullable": true},
-					},
-				},
-				"ErrorResponse": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"error": map[string]any{"type": "string"},
 					},
 				},
 			},
@@ -635,5 +629,5 @@ func trackingOpenAPISpec() map[string]any {
 				},
 			},
 		},
-	}
+	})
 }

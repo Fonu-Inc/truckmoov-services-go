@@ -29,9 +29,7 @@ func WithAPIKey(next http.Handler, apiKey string) http.Handler {
 			key = r.URL.Query().Get("api_key")
 		}
 		if key != apiKey {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"invalid or missing api key"}`))
+			WriteError(w, http.StatusUnauthorized, "invalid or missing api key")
 			return
 		}
 		next.ServeHTTP(w, r)

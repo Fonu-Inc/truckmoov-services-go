@@ -125,9 +125,7 @@ func WithErrorAlerts(next http.Handler, notifier *alert.NtfyClient, recent *Rece
 				})
 
 				if !rec.wroteHeader {
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					_, _ = w.Write([]byte(`{"error":"internal server error"}`))
+					WriteError(w, http.StatusInternalServerError, "internal server error")
 				}
 			}
 		}()

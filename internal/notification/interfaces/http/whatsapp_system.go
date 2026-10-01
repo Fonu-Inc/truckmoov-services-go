@@ -19,7 +19,7 @@ const systemWhatsAppSettingsPrefix = "/notify/system/whatsapp/settings/"
 func requirePlatformMessaging(w http.ResponseWriter, r *http.Request) bool {
 	claims, ok := httpx.ClaimsFromRequest(r)
 	if !ok || claims == nil {
-		respondEnvelope(w, http.StatusUnauthorized, "authentication required", nil)
+		httpx.WriteError(w, http.StatusUnauthorized, "authentication required")
 		return false
 	}
 	needed := "admin.messaging.manage"
@@ -31,7 +31,7 @@ func requirePlatformMessaging(w http.ResponseWriter, r *http.Request) bool {
 		held = identity.RolePermissions(claims.Role, claims.TenantID)
 	}
 	if !identity.IsPlatformActor(claims.Role, claims.TenantID) || !containsPermission(held, needed) {
-		respondEnvelope(w, http.StatusForbidden, "platform messaging permission required", nil)
+		httpx.WriteError(w, http.StatusForbidden, "platform messaging permission required")
 		return false
 	}
 	return true
@@ -56,7 +56,7 @@ func (h *Handler) systemWhatsAppSettings(w http.ResponseWriter, r *http.Request)
 	case http.MethodGet:
 		h.getWhatsAppAccountFor(w, r, identity.SystemTenantID)
 	default:
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
@@ -66,11 +66,11 @@ func (h *Handler) systemWhatsAppSettingsByPath(w http.ResponseWriter, r *http.Re
 	}
 	phoneNumberID := strings.Trim(strings.TrimPrefix(r.URL.Path, systemWhatsAppSettingsPrefix), "/")
 	if phoneNumberID == "" {
-		respondEnvelope(w, http.StatusNotFound, "not found", nil)
+		httpx.WriteError(w, http.StatusNotFound, "not found")
 		return
 	}
 	if r.Method != http.MethodDelete {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	h.disconnectWhatsAppAccountFor(w, r, identity.SystemTenantID, phoneNumberID)
@@ -86,6 +86,6 @@ func (h *Handler) systemWhatsAppTemplates(w http.ResponseWriter, r *http.Request
 	case http.MethodPost:
 		h.createWhatsAppTemplateFor(w, r, identity.SystemTenantID)
 	default:
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }

@@ -53,6 +53,9 @@ type Routes struct {
 // NewRoutes refuses for real only when enforce is set; otherwise it logs
 // each request it would have refused and lets it through.
 func NewRoutes(mux *http.ServeMux, enforce bool, log *slog.Logger, report RefusalReporter) *Routes {
+	// An unknown path answers with the same JSON 404 a refusal does, so the
+	// two stay indistinguishable and the contract holds for both.
+	mux.HandleFunc("/", NotFound)
 	return &Routes{mux: mux, enforce: enforce, log: log, report: report, declared: map[string][]Audience{}, needs: map[string]Requirement{}}
 }
 
@@ -115,7 +118,7 @@ func (r *Routes) guard(audiences []Audience, need Requirement, next http.Handler
 			if r.lacksPermission(req, caller, audiences, need) {
 				r.refused(req, caller, "missing_permission", r.enforcePermissions)
 				if r.enforcePermissions {
-					http.NotFound(w, req)
+					NotFound(w, req)
 					return
 				}
 			}
@@ -135,7 +138,7 @@ func (r *Routes) guard(audiences []Audience, need Requirement, next http.Handler
 		}
 		// Exactly what the mux answers for a path it does not know: a
 		// refusal must not tell the caller that something is here.
-		http.NotFound(w, req)
+		NotFound(w, req)
 	})
 }
 
@@ -228,8 +231,7 @@ func (f *forbiddenHider) WriteHeader(status int) {
 		return
 	}
 	f.swallow = true
-	f.ResponseWriter.Header().Del("Content-Type")
-	http.NotFound(f.ResponseWriter, f.req)
+	NotFound(f.ResponseWriter, f.req)
 }
 
 func (f *forbiddenHider) Write(body []byte) (int, error) {

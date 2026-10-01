@@ -66,9 +66,7 @@ func RequireAuth(next http.Handler, verifier *identity.UserTokenVerifier) http.H
 }
 
 func writeUnauthorized(w http.ResponseWriter, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnauthorized)
-	_, _ = w.Write([]byte(`{"error":"` + message + `"}`))
+	WriteError(w, http.StatusUnauthorized, message)
 }
 
 func ClaimsFromRequest(r *http.Request) (*AuthClaims, bool) {

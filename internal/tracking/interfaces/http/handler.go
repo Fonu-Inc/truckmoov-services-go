@@ -95,7 +95,7 @@ func (h *Handler) withAPIKey(next http.Handler) http.Handler {
 			key = r.URL.Query().Get("api_key")
 		}
 		if key != h.gpsAPIKey {
-			respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or missing api key"})
+			httpx.WriteError(w, http.StatusUnauthorized, "invalid or missing api key")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -103,12 +103,12 @@ func (h *Handler) withAPIKey(next http.Handler) http.Handler {
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]any{"status": "ok", "service": "tracking"})
+	httpx.WriteSuccess(w, http.StatusOK, "ok", map[string]any{"service": "tracking"})
 }
 
 func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	h.ingestWithAdapter(w, r, genericAdapter{})
@@ -116,13 +116,13 @@ func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ingestVendor(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	vendor := strings.TrimPrefix(r.URL.Path, "/tracking/ingest/vendor/")
 	adapter, ok := resolveAdapter(vendor)
 	if !ok {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown vendor: " + vendor})
+		httpx.WriteError(w, http.StatusBadRequest, "unknown vendor: "+vendor)
 		return
 	}
 	h.ingestWithAdapter(w, r, adapter)
@@ -131,32 +131,32 @@ func (h *Handler) ingestVendor(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ingestWithAdapter(w http.ResponseWriter, r *http.Request, adapter vendorAdapter) {
 	cmd, err := adapter.decode(r)
 	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	result, err := h.ingestLocationUseCase.Execute(r.Context(), cmd)
 	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	respondJSON(w, http.StatusAccepted, result)
+	httpx.WriteOK(w, http.StatusAccepted, result)
 }
 
 func (h *Handler) alert(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, ok := h.resolveTenantID(r)
 	if !ok {
-		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authenticated tenant context is required"})
+		httpx.WriteError(w, http.StatusUnauthorized, "authenticated tenant context is required")
 		return
 	}
 
 	var req alertRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -169,11 +169,11 @@ func (h *Handler) alert(w http.ResponseWriter, r *http.Request) {
 		Details:   req.Details,
 	})
 	if err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusAccepted, result)
+	httpx.WriteOK(w, http.StatusAccepted, result)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "tracking",
@@ -194,17 +194,17 @@ func (h *Handler) alert(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listVehicles(w http.ResponseWriter, r *http.Request) {
 	if h.trackingQueryUseCase == nil {
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "tracking query is not configured"})
+		httpx.WriteError(w, http.StatusServiceUnavailable, "tracking query is not configured")
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, ok := h.resolveTenantID(r)
 	if !ok {
-		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authenticated tenant context is required"})
+		httpx.WriteError(w, http.StatusUnauthorized, "authenticated tenant context is required")
 		return
 	}
 	if rejectClientTenantQuery(w, r) {
@@ -213,10 +213,10 @@ func (h *Handler) listVehicles(w http.ResponseWriter, r *http.Request) {
 
 	locations, err := h.trackingQueryUseCase.ListLatestLocations(r.Context(), tenantID)
 	if err != nil {
-		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"vehicles": locations})
+	httpx.WriteOK(w, http.StatusOK, locations)
 }
 
 func (h *Handler) resolveTenantID(r *http.Request) (string, bool) {
@@ -230,11 +230,11 @@ func (h *Handler) resolveTenantID(r *http.Request) (string, bool) {
 func rejectClientTenantQuery(w http.ResponseWriter, r *http.Request) bool {
 	query := r.URL.Query()
 	if _, ok := query["tenant_id"]; ok {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id must not be supplied; tenant context is derived from the access token"})
+		httpx.WriteError(w, http.StatusBadRequest, "tenant_id must not be supplied; tenant context is derived from the access token")
 		return true
 	}
 	if _, ok := query["tenantId"]; ok {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "tenantId must not be supplied; tenant context is derived from the access token"})
+		httpx.WriteError(w, http.StatusBadRequest, "tenantId must not be supplied; tenant context is derived from the access token")
 		return true
 	}
 	return false
@@ -244,7 +244,7 @@ func (h *Handler) vehiclesResource(w http.ResponseWriter, r *http.Request) {
 	trimmed := strings.TrimPrefix(r.URL.Path, "/tracking/vehicles/")
 	trimmed = strings.Trim(trimmed, "/")
 	if trimmed == "" {
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		httpx.WriteError(w, http.StatusNotFound, "not found")
 		return
 	}
 
@@ -254,22 +254,22 @@ func (h *Handler) vehiclesResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+	httpx.WriteError(w, http.StatusNotFound, "not found")
 }
 
 func (h *Handler) vehicleHistory(w http.ResponseWriter, r *http.Request, vehicleID string) {
 	if h.trackingQueryUseCase == nil {
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "tracking query is not configured"})
+		httpx.WriteError(w, http.StatusServiceUnavailable, "tracking query is not configured")
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, ok := h.resolveTenantID(r)
 	if !ok {
-		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authenticated tenant context is required"})
+		httpx.WriteError(w, http.StatusUnauthorized, "authenticated tenant context is required")
 		return
 	}
 	if rejectClientTenantQuery(w, r) {
@@ -279,11 +279,11 @@ func (h *Handler) vehicleHistory(w http.ResponseWriter, r *http.Request, vehicle
 	limit := parseLimit(r.URL.Query().Get("limit"))
 	history, err := h.trackingQueryUseCase.VehicleHistory(r.Context(), tenantID, vehicleID, limit)
 	if err != nil {
-		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteOK(w, http.StatusOK, map[string]any{
 		"vehicle_id": vehicleID,
 		"history":    history,
 	})
@@ -291,17 +291,17 @@ func (h *Handler) vehicleHistory(w http.ResponseWriter, r *http.Request, vehicle
 
 func (h *Handler) deviceResource(w http.ResponseWriter, r *http.Request) {
 	if h.deviceTelemetryQueryUseCase == nil {
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "telemetry query is not configured"})
+		httpx.WriteError(w, http.StatusServiceUnavailable, "telemetry query is not configured")
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, ok := h.resolveTenantID(r)
 	if !ok {
-		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authenticated tenant context is required"})
+		httpx.WriteError(w, http.StatusUnauthorized, "authenticated tenant context is required")
 		return
 	}
 	if rejectClientTenantQuery(w, r) {
@@ -311,7 +311,7 @@ func (h *Handler) deviceResource(w http.ResponseWriter, r *http.Request) {
 	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/tracking/devices/"), "/")
 	parts := strings.Split(trimmed, "/")
 	if len(parts) != 2 || parts[0] == "" {
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		httpx.WriteError(w, http.StatusNotFound, "not found")
 		return
 	}
 
@@ -332,15 +332,15 @@ func (h *Handler) deviceResource(w http.ResponseWriter, r *http.Request) {
 	case "firmware":
 		payload, err = h.deviceTelemetryQueryUseCase.Firmware(ctx, tenantID, deviceID)
 	default:
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		httpx.WriteError(w, http.StatusNotFound, "not found")
 		return
 	}
 
 	if err != nil {
-		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	respondJSON(w, http.StatusOK, payload)
+	httpx.WriteOK(w, http.StatusOK, payload)
 }
 
 func parseLimit(value string) int {
@@ -352,12 +352,6 @@ func parseLimit(value string) int {
 		return 0
 	}
 	return limit
-}
-
-func respondJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
 }
 
 func (h *Handler) publishActivity(r *http.Request, command activitylog.PublishCommand) {

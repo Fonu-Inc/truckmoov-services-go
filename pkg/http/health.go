@@ -2,8 +2,8 @@ package httpx
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
+	"sort"
 	"time"
 )
 
@@ -42,17 +42,25 @@ func ReadinessHandler(service string, checks ...ReadinessCheck) http.HandlerFunc
 			results[check.Name] = "ok"
 		}
 
-		status := http.StatusOK
 		if !ready {
-			status = http.StatusServiceUnavailable
+			WriteError(w, http.StatusServiceUnavailable, "service not ready", failedChecks(results)...)
+			return
 		}
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ready":   ready,
+		WriteOK(w, http.StatusOK, map[string]any{
+			"ready":   true,
 			"service": service,
 			"checks":  results,
 		})
 	}
+}
+
+func failedChecks(results map[string]string) []string {
+	failed := make([]string, 0, len(results))
+	for name, result := range results {
+		if result != "ok" {
+			failed = append(failed, name+": "+result)
+		}
+	}
+	sort.Strings(failed)
+	return failed
 }

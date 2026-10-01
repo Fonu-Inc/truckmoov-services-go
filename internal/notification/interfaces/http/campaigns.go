@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/truckmoov/services-go/internal/notification/application"
+	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
 type createCampaignRequest struct {
@@ -36,18 +37,18 @@ func (h *Handler) campaigns(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		h.createCampaign(w, r)
 	default:
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (h *Handler) listCampaigns(w http.ResponseWriter, r *http.Request) {
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, notificationAuthMessage(authStatus))
 		return
 	}
 	if h.listCampaignsUseCase == nil {
-		respondEnvelope(w, http.StatusServiceUnavailable, "campaigns are not configured", nil)
+		httpx.WriteError(w, http.StatusServiceUnavailable, "campaigns are not configured")
 		return
 	}
 
@@ -60,21 +61,21 @@ func (h *Handler) listCampaigns(w http.ResponseWriter, r *http.Request) {
 		Limit:    parsePositiveInt(query.Get("limit")),
 	})
 	if err != nil {
-		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", result)
+	httpx.WriteSuccess(w, http.StatusOK, "success", result)
 }
 
 func (h *Handler) createCampaign(w http.ResponseWriter, r *http.Request) {
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, notificationAuthMessage(authStatus))
 		return
 	}
 	if h.createCampaignUseCase == nil {
-		respondEnvelope(w, http.StatusServiceUnavailable, "campaigns are not configured", nil)
+		httpx.WriteError(w, http.StatusServiceUnavailable, "campaigns are not configured")
 		return
 	}
 
@@ -87,7 +88,7 @@ func (h *Handler) createCampaign(w http.ResponseWriter, r *http.Request) {
 	if raw := strings.TrimSpace(request.ScheduledFor); raw != "" {
 		parsed, err := time.Parse(time.RFC3339, raw)
 		if err != nil {
-			respondEnvelope(w, http.StatusBadRequest, "scheduled_for must be an RFC3339 timestamp", nil)
+			httpx.WriteError(w, http.StatusBadRequest, "scheduled_for must be an RFC3339 timestamp")
 			return
 		}
 		scheduledFor = &parsed
@@ -112,11 +113,11 @@ func (h *Handler) createCampaign(w http.ResponseWriter, r *http.Request) {
 		Recipients:   recipients,
 	})
 	if err != nil {
-		respondEnvelope(w, http.StatusBadRequest, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusCreated, "success", campaign)
+	httpx.WriteSuccess(w, http.StatusCreated, "success", campaign)
 }
 
 // campaignByPath handles /notify/campaigns/{id} and /notify/campaigns/{id}/send
@@ -124,13 +125,13 @@ func (h *Handler) createCampaign(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) campaignByPath(w http.ResponseWriter, r *http.Request) {
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, notificationAuthMessage(authStatus))
 		return
 	}
 
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/notify/campaigns/"), "/")
 	if rest == "" {
-		respondEnvelope(w, http.StatusNotFound, "campaign not found", nil)
+		httpx.WriteError(w, http.StatusNotFound, "campaign not found")
 		return
 	}
 
@@ -147,33 +148,33 @@ func (h *Handler) campaignByPath(w http.ResponseWriter, r *http.Request) {
 	case (action == "send" || action == "retry") && r.Method == http.MethodPost:
 		h.sendCampaign(w, r, tenantID, campaignID, action == "retry")
 	default:
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (h *Handler) getCampaign(w http.ResponseWriter, r *http.Request, tenantID, campaignID string) {
 	if h.campaignRepository == nil {
-		respondEnvelope(w, http.StatusServiceUnavailable, "campaigns are not configured", nil)
+		httpx.WriteError(w, http.StatusServiceUnavailable, "campaigns are not configured")
 		return
 	}
 
 	campaign, found, err := h.campaignRepository.FindCampaign(r.Context(), tenantID, campaignID)
 	if err != nil {
-		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	if !found {
-		respondEnvelope(w, http.StatusNotFound, "campaign not found", nil)
+		httpx.WriteError(w, http.StatusNotFound, "campaign not found")
 		return
 	}
 
 	recipients, err := h.campaignRepository.ListRecipients(r.Context(), tenantID, campaignID)
 	if err != nil {
-		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", map[string]any{
+	httpx.WriteSuccess(w, http.StatusOK, "success", map[string]any{
 		"campaign":   campaign,
 		"recipients": recipients,
 	})
@@ -181,7 +182,7 @@ func (h *Handler) getCampaign(w http.ResponseWriter, r *http.Request, tenantID, 
 
 func (h *Handler) sendCampaign(w http.ResponseWriter, r *http.Request, tenantID, campaignID string, retryOnly bool) {
 	if h.sendCampaignUseCase == nil {
-		respondEnvelope(w, http.StatusServiceUnavailable, "campaigns are not configured", nil)
+		httpx.WriteError(w, http.StatusServiceUnavailable, "campaigns are not configured")
 		return
 	}
 
@@ -191,27 +192,27 @@ func (h *Handler) sendCampaign(w http.ResponseWriter, r *http.Request, tenantID,
 		RetryFailedOnly: retryOnly,
 	})
 	if errors.Is(err, application.ErrCampaignNotFound) {
-		respondEnvelope(w, http.StatusNotFound, "campaign not found", nil)
+		httpx.WriteError(w, http.StatusNotFound, "campaign not found")
 		return
 	}
 	if err != nil {
 		// A refused wallet is the common case and it is the tenant's to fix,
 		// so it reads as a client error rather than a provider fault.
-		respondEnvelope(w, http.StatusBadRequest, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", result)
+	httpx.WriteSuccess(w, http.StatusOK, "success", result)
 }
 
 func (h *Handler) campaignSuppressions(w http.ResponseWriter, r *http.Request) {
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, notificationAuthMessage(authStatus))
 		return
 	}
 	if h.suppressRecipientUseCase == nil {
-		respondEnvelope(w, http.StatusServiceUnavailable, "campaigns are not configured", nil)
+		httpx.WriteError(w, http.StatusServiceUnavailable, "campaigns are not configured")
 		return
 	}
 
@@ -227,25 +228,25 @@ func (h *Handler) campaignSuppressions(w http.ResponseWriter, r *http.Request) {
 	case http.MethodDelete:
 		err = h.suppressRecipientUseCase.Release(r.Context(), tenantID, request.Destination)
 	default:
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	if err != nil {
-		respondEnvelope(w, http.StatusBadRequest, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	respondEnvelope(w, http.StatusOK, "success", map[string]any{"destination": request.Destination})
+	httpx.WriteSuccess(w, http.StatusOK, "success", map[string]any{"destination": request.Destination})
 }
 
 func decodeCampaignBody(w http.ResponseWriter, r *http.Request, target any) bool {
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
-		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return false
 	}
 	if err := json.Unmarshal(payload, target); err != nil {
-		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return false
 	}
 	return true

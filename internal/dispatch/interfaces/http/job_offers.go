@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/truckmoov/services-go/internal/dispatch/application"
+	httpx "github.com/truckmoov/services-go/pkg/http"
 )
 
 type createJobOfferRequest struct {
@@ -28,13 +29,13 @@ func (h *Handler) jobOffers(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		h.createJobOffer(w, r)
 	default:
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (h *Handler) listJobOffers(w http.ResponseWriter, r *http.Request) {
 	if h.listJobOffersUseCase == nil {
-		respondError(w, http.StatusServiceUnavailable, "job offers are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "job offers are not configured")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -48,7 +49,7 @@ func (h *Handler) listJobOffers(w http.ResponseWriter, r *http.Request) {
 		role = "target"
 	}
 	if role != "target" && role != "offering" {
-		respondError(w, http.StatusBadRequest, "role must be target or offering")
+		httpx.WriteError(w, http.StatusBadRequest, "role must be target or offering")
 		return
 	}
 
@@ -60,16 +61,16 @@ func (h *Handler) listJobOffers(w http.ResponseWriter, r *http.Request) {
 		Limit:    parsePositiveIntOrZero(query.Get("limit")),
 	})
 	if err != nil {
-		respondError(w, http.StatusBadGateway, err.Error())
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": result})
+	httpx.WriteOK(w, http.StatusOK, result)
 }
 
 func (h *Handler) createJobOffer(w http.ResponseWriter, r *http.Request) {
 	if h.createJobOfferUseCase == nil {
-		respondError(w, http.StatusServiceUnavailable, "job offers are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "job offers are not configured")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -79,13 +80,13 @@ func (h *Handler) createJobOffer(w http.ResponseWriter, r *http.Request) {
 
 	var request createJobOfferRequest
 	if err := decodeJSONBody(r, &request); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	expiresAt, err := time.Parse(time.RFC3339, strings.TrimSpace(request.ExpiresAt))
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "expires_at must be an RFC3339 timestamp")
+		httpx.WriteError(w, http.StatusBadRequest, "expires_at must be an RFC3339 timestamp")
 		return
 	}
 
@@ -101,13 +102,13 @@ func (h *Handler) createJobOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusCreated, map[string]any{"status": true, "message": "success", "data": offer})
+	httpx.WriteOK(w, http.StatusCreated, offer)
 }
 
 // jobOfferByPath handles /dispatch/job-offers/{id}/accept and .../decline.
 func (h *Handler) jobOfferByPath(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -118,14 +119,14 @@ func (h *Handler) jobOfferByPath(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/dispatch/job-offers/"), "/")
 	parts := strings.Split(rest, "/")
 	if len(parts) != 2 {
-		respondError(w, http.StatusNotFound, "job offer not found")
+		httpx.WriteError(w, http.StatusNotFound, "job offer not found")
 		return
 	}
 	offerID, action := parts[0], parts[1]
 
 	var request respondToJobOfferRequest
 	if err := decodeJSONBody(r, &request); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -134,7 +135,7 @@ func (h *Handler) jobOfferByPath(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "accept":
 		if h.acceptJobOfferUseCase == nil {
-			respondError(w, http.StatusServiceUnavailable, "job offers are not configured")
+			httpx.WriteError(w, http.StatusServiceUnavailable, "job offers are not configured")
 			return
 		}
 		result, err := h.acceptJobOfferUseCase.Execute(r.Context(), command)
@@ -142,10 +143,10 @@ func (h *Handler) jobOfferByPath(w http.ResponseWriter, r *http.Request) {
 			respondJobOfferError(w, err)
 			return
 		}
-		respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": result})
+		httpx.WriteOK(w, http.StatusOK, result)
 	case "decline":
 		if h.declineJobOfferUseCase == nil {
-			respondError(w, http.StatusServiceUnavailable, "job offers are not configured")
+			httpx.WriteError(w, http.StatusServiceUnavailable, "job offers are not configured")
 			return
 		}
 		offer, err := h.declineJobOfferUseCase.Execute(r.Context(), command)
@@ -153,19 +154,19 @@ func (h *Handler) jobOfferByPath(w http.ResponseWriter, r *http.Request) {
 			respondJobOfferError(w, err)
 			return
 		}
-		respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": offer})
+		httpx.WriteOK(w, http.StatusOK, offer)
 	default:
-		respondError(w, http.StatusNotFound, "job offer not found")
+		httpx.WriteError(w, http.StatusNotFound, "job offer not found")
 	}
 }
 
 func (h *Handler) jobOfferCapacity(w http.ResponseWriter, r *http.Request) {
 	if h.activeJobCapacityUseCase == nil {
-		respondError(w, http.StatusServiceUnavailable, "job offers are not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "job offers are not configured")
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -175,22 +176,22 @@ func (h *Handler) jobOfferCapacity(w http.ResponseWriter, r *http.Request) {
 
 	capacity, err := h.activeJobCapacityUseCase.Execute(r.Context(), tenantID)
 	if err != nil {
-		respondError(w, http.StatusBadGateway, err.Error())
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": capacity})
+	httpx.WriteOK(w, http.StatusOK, capacity)
 }
 
 func respondJobOfferError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, application.ErrJobOfferNotFound), errors.Is(err, application.ErrJobNotFound):
-		respondError(w, http.StatusNotFound, err.Error())
+		httpx.WriteError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, application.ErrNotYourOffer):
-		respondError(w, http.StatusForbidden, err.Error())
+		httpx.WriteError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, application.ErrOverActiveJobCap):
-		respondError(w, http.StatusConflict, err.Error())
+		httpx.WriteError(w, http.StatusConflict, err.Error())
 	default:
-		respondError(w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 	}
 }
 

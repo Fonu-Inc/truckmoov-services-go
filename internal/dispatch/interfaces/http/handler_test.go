@@ -194,9 +194,7 @@ func TestHandler_UpdateStatusContract(t *testing.T) {
 	}
 
 	var payload map[string]any
-	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	decodeData(t, res.Body.Bytes(), &payload)
 	if payload["published"] != true {
 		t.Fatalf("expected published=true")
 	}
@@ -1043,9 +1041,7 @@ func TestHandler_OptimizeRouteSingleJobContract(t *testing.T) {
 	}
 
 	var payload application.RoutePlan
-	if err := json.Unmarshal(routeRes.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	decodeData(t, routeRes.Body.Bytes(), &payload)
 	if !payload.Feasible {
 		t.Fatalf("expected feasible route plan, got %+v", payload)
 	}
@@ -1086,9 +1082,7 @@ func TestHandler_OptimizeRouteContract(t *testing.T) {
 	}
 
 	var payload application.RoutePlan
-	if err := json.Unmarshal(routeRes.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	decodeData(t, routeRes.Body.Bytes(), &payload)
 	if !payload.Feasible {
 		t.Fatalf("expected feasible route plan, got %+v", payload)
 	}
@@ -1137,9 +1131,7 @@ func TestHandler_OptimizeRouteConstraintViolationReported(t *testing.T) {
 	}
 
 	var payload application.RoutePlan
-	if err := json.Unmarshal(routeRes.Body.Bytes(), &payload); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
+	decodeData(t, routeRes.Body.Bytes(), &payload)
 	if payload.Feasible {
 		t.Fatalf("expected infeasible route plan, got %+v", payload)
 	}
@@ -1507,7 +1499,24 @@ func TestHandler_ErrorsUseTheStandardEnvelope(t *testing.T) {
 	if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode error body: %v", err)
 	}
-	if payload["message"] != "job not found" || payload["error"] != "Not Found" || payload["statusCode"] != float64(http.StatusNotFound) {
+	if payload["status"] != false || payload["message"] != "job not found" || payload["error"] != "Not Found" || payload["statusCode"] != float64(http.StatusNotFound) {
 		t.Fatalf("unexpected error envelope: %#v", payload)
+	}
+}
+
+func decodeData(t *testing.T, body []byte, dest any) {
+	t.Helper()
+	var envelope struct {
+		Status bool            `json:"status"`
+		Data   json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if !envelope.Status {
+		t.Fatalf("expected status=true, got %s", body)
+	}
+	if err := json.Unmarshal(envelope.Data, dest); err != nil {
+		t.Fatalf("decode data: %v", err)
 	}
 }

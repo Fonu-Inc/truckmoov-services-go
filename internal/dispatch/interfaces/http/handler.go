@@ -350,7 +350,7 @@ type jobWithAssignments struct {
 }
 
 func (h *Handler) respondJob(w http.ResponseWriter, r *http.Request, status int, job domain.Job) {
-	respondJSON(w, status, map[string]any{"status": true, "message": "success", "data": h.enrichJob(r.Context(), job.TenantID, job)})
+	httpx.WriteOK(w, status, h.enrichJob(r.Context(), job.TenantID, job))
 }
 
 func nonEmpty(value string) *string {
@@ -425,12 +425,12 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]any{"status": "ok", "service": "dispatch"})
+	httpx.WriteSuccess(w, http.StatusOK, "ok", map[string]any{"service": "dispatch"})
 }
 
 func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 	if h.jobLifecycleUseCase == nil {
-		respondError(w, http.StatusServiceUnavailable, "job lifecycle is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "job lifecycle is not configured")
 		return
 	}
 
@@ -442,7 +442,7 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 		h.createJob(w, r)
 		return
 	default:
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 }
@@ -450,17 +450,17 @@ func (h *Handler) jobsCollection(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 	var req createJobRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	timeWindow, err := req.TimeWindow.toDomain()
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	deadline, err := parseTimeValue(req.Deadline)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -489,7 +489,7 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 		TimeWindow:              timeWindow,
 	})
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -521,7 +521,7 @@ func (h *Handler) resolveTenantID(r *http.Request) (string, error) {
 func (h *Handler) requireTenantID(w http.ResponseWriter, r *http.Request) (string, bool) {
 	tenantID, err := h.resolveTenantID(r)
 	if err != nil {
-		respondError(w, http.StatusUnauthorized, err.Error())
+		httpx.WriteError(w, http.StatusUnauthorized, err.Error())
 		return "", false
 	}
 	return tenantID, true
@@ -536,11 +536,11 @@ func decodeJSONBody(r *http.Request, dest any) error {
 func rejectClientTenantQuery(w http.ResponseWriter, r *http.Request) bool {
 	query := r.URL.Query()
 	if _, ok := query["tenant_id"]; ok {
-		respondError(w, http.StatusBadRequest, "tenant_id must not be supplied; tenant context is derived from the access token")
+		httpx.WriteError(w, http.StatusBadRequest, "tenant_id must not be supplied; tenant context is derived from the access token")
 		return true
 	}
 	if _, ok := query["tenantId"]; ok {
-		respondError(w, http.StatusBadRequest, "tenantId must not be supplied; tenant context is derived from the access token")
+		httpx.WriteError(w, http.StatusBadRequest, "tenantId must not be supplied; tenant context is derived from the access token")
 		return true
 	}
 	return false
@@ -571,11 +571,11 @@ func isDispatcherCapableRole(role string) bool {
 
 func (h *Handler) jobsSummary(w http.ResponseWriter, r *http.Request) {
 	if h.jobLifecycleUseCase == nil {
-		respondError(w, http.StatusServiceUnavailable, "job lifecycle is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "job lifecycle is not configured")
 		return
 	}
 	if r.Method != http.MethodGet {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	tenantID, ok := h.requireTenantID(w, r)
@@ -591,7 +591,7 @@ func (h *Handler) jobsSummary(w http.ResponseWriter, r *http.Request) {
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": summary})
+	httpx.WriteOK(w, http.StatusOK, summary)
 }
 
 func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
@@ -621,18 +621,18 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": h.enrichJobs(r.Context(), tenantID, jobs)})
+	httpx.WriteOK(w, http.StatusOK, h.enrichJobs(r.Context(), tenantID, jobs))
 }
 
 // activeJobsMap serves the live delivery map: active jobs, their stops in
 // order, and the route geometry between them.
 func (h *Handler) activeJobsMap(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if h.activeJobsMapUseCase == nil {
-		respondError(w, http.StatusServiceUnavailable, "active jobs map is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "active jobs map is not configured")
 		return
 	}
 
@@ -646,11 +646,11 @@ func (h *Handler) activeJobsMap(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.activeJobsMapUseCase.Execute(r.Context(), tenantID)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		httpx.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": result})
+	httpx.WriteOK(w, http.StatusOK, result)
 }
 
 // parseOptionalFloat returns a pointer to the parsed value, or nil when the
@@ -686,13 +686,13 @@ func parseOptionalDate(raw string) *time.Time {
 
 func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
 	if h.jobLifecycleUseCase == nil {
-		respondError(w, http.StatusServiceUnavailable, "job lifecycle is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "job lifecycle is not configured")
 		return
 	}
 
 	jobID, action, ok := parseJobResourcePath(r.URL.Path)
 	if !ok {
-		respondError(w, http.StatusNotFound, "not found")
+		httpx.WriteError(w, http.StatusNotFound, "not found")
 		return
 	}
 
@@ -706,7 +706,7 @@ func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
 		case http.MethodDelete:
 			h.deleteJob(w, r, jobID)
 		default:
-			respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+			httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	case "scheduling":
 		h.updateJobScheduling(w, r, jobID)
@@ -733,20 +733,20 @@ func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
 			requestID := strings.TrimSuffix(strings.TrimPrefix(action, "driver-status-requests/"), "/confirm")
 			requestID = strings.Trim(requestID, "/")
 			if requestID == "" {
-				respondError(w, http.StatusNotFound, "not found")
+				httpx.WriteError(w, http.StatusNotFound, "not found")
 				return
 			}
 			h.confirmDriverStatusRequest(w, r, jobID, requestID)
 			return
 		}
-		respondError(w, http.StatusNotFound, "not found")
+		httpx.WriteError(w, http.StatusNotFound, "not found")
 		return
 	}
 }
 
 func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodGet {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -766,13 +766,13 @@ func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, jobID string) {
 func (h *Handler) updateJobDetails(w http.ResponseWriter, r *http.Request, jobID string) {
 	var req updateJobDetailsRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	patch, err := req.patch()
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -818,7 +818,7 @@ func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request, jobID string
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success"})
+	httpx.WriteOK(w, http.StatusOK, nil)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -831,19 +831,19 @@ func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request, jobID string
 
 func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPatch && r.Method != http.MethodPut {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req updateJobSchedulingRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	timeWindow, err := req.TimeWindow.toDomain()
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -879,13 +879,13 @@ func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jo
 
 func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req assignJobRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -925,13 +925,13 @@ func (h *Handler) assignJob(w http.ResponseWriter, r *http.Request, jobID string
 
 func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req cancelJobRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -966,13 +966,13 @@ func (h *Handler) cancelJob(w http.ResponseWriter, r *http.Request, jobID string
 
 func (h *Handler) acknowledgeJob(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req acknowledgeJobRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1007,19 +1007,19 @@ func (h *Handler) acknowledgeJob(w http.ResponseWriter, r *http.Request, jobID s
 
 func (h *Handler) updateJobLifecycleStatus(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondError(w, authStatus, http.StatusText(authStatus))
+		httpx.WriteError(w, authStatus, http.StatusText(authStatus))
 		return
 	}
 
 	var req updateJobStatusRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1037,19 +1037,19 @@ func (h *Handler) updateJobLifecycleStatus(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) createDriverStatusRequest(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondError(w, authStatus, http.StatusText(authStatus))
+		httpx.WriteError(w, authStatus, http.StatusText(authStatus))
 		return
 	}
 
 	var req createDriverStatusRequestRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1068,14 +1068,7 @@ func (h *Handler) createDriverStatusRequest(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	respondJSON(w, http.StatusCreated, map[string]any{
-		"status":  true,
-		"message": "success",
-		"data": map[string]any{
-			"job":     job,
-			"request": request,
-		},
-	})
+	httpx.WriteOK(w, http.StatusCreated, map[string]any{"job": job, "request": request})
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -1095,22 +1088,22 @@ func (h *Handler) createDriverStatusRequest(w http.ResponseWriter, r *http.Reque
 
 func (h *Handler) confirmDriverStatusRequest(w http.ResponseWriter, r *http.Request, jobID, requestID string) {
 	if r.Method != http.MethodPost {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	claims, ok := httpx.ClaimsFromRequest(r)
 	if !ok || claims == nil {
-		respondError(w, http.StatusUnauthorized, http.StatusText(http.StatusUnauthorized))
+		httpx.WriteError(w, http.StatusUnauthorized, http.StatusText(http.StatusUnauthorized))
 		return
 	}
 	if !isDispatcherCapableRole(claims.Role) {
-		respondError(w, http.StatusForbidden, http.StatusText(http.StatusForbidden))
+		httpx.WriteError(w, http.StatusForbidden, http.StatusText(http.StatusForbidden))
 		return
 	}
 	tenantID := strings.TrimSpace(claims.TenantID)
 	if tenantID == "" {
-		respondError(w, http.StatusUnauthorized, "authenticated tenant context is required")
+		httpx.WriteError(w, http.StatusUnauthorized, "authenticated tenant context is required")
 		return
 	}
 	confirmedBy := firstNonEmptyDispatchValue(claims.Subject, claims.Email)
@@ -1126,14 +1119,7 @@ func (h *Handler) confirmDriverStatusRequest(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]any{
-		"status":  true,
-		"message": "success",
-		"data": map[string]any{
-			"job":     job,
-			"request": request,
-		},
-	})
+	httpx.WriteOK(w, http.StatusOK, map[string]any{"job": job, "request": request})
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "dispatch",
@@ -1152,7 +1138,7 @@ func (h *Handler) confirmDriverStatusRequest(w http.ResponseWriter, r *http.Requ
 
 func (h *Handler) getJobTimeline(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodGet {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
@@ -1166,25 +1152,22 @@ func (h *Handler) getJobTimeline(w http.ResponseWriter, r *http.Request, jobID s
 		respondLifecycleError(w, err)
 		return
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"status": true, "message": "success", "data": map[string]any{
-		"job_id":   jobID,
-		"timeline": timeline,
-	}})
+	httpx.WriteOK(w, http.StatusOK, map[string]any{"job_id": jobID, "timeline": timeline})
 }
 
 func (h *Handler) sendWhatsAppInstruction(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if h.sendJobInstructionUseCase == nil {
-		respondError(w, http.StatusServiceUnavailable, "job instruction sending is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "job instruction sending is not configured")
 		return
 	}
 
 	var req sendJobInstructionRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1209,21 +1192,21 @@ func (h *Handler) sendWhatsAppInstruction(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		switch {
 		case errors.Is(err, application.ErrJobNotFound):
-			respondError(w, http.StatusNotFound, err.Error())
+			httpx.WriteError(w, http.StatusNotFound, err.Error())
 		case errors.Is(err, application.ErrJobInstructionJobIDRequired),
 			errors.Is(err, application.ErrJobInstructionDriverIDRequired),
 			errors.Is(err, application.ErrJobInstructionTemplateNameRequired),
 			errors.Is(err, application.ErrJobInstructionDriverNameRequired),
 			errors.Is(err, application.ErrJobInstructionCargoRequired):
-			respondError(w, http.StatusBadRequest, err.Error())
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		case errors.Is(err, application.ErrJobInstructionJobNotAssigned),
 			errors.Is(err, application.ErrJobInstructionAssignedPhoneRequired),
 			errors.Is(err, application.ErrJobInstructionDriverMismatch),
 			errors.Is(err, application.ErrJobInstructionRecipientMismatch),
 			errors.Is(err, application.ErrJobInstructionStatusNotSendable):
-			respondError(w, http.StatusConflict, err.Error())
+			httpx.WriteError(w, http.StatusConflict, err.Error())
 		default:
-			respondError(w, http.StatusBadGateway, err.Error())
+			httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		}
 		return
 	}
@@ -1246,13 +1229,13 @@ func (h *Handler) sendWhatsAppInstruction(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) addPODAttachment(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req addPODAttachmentRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1290,13 +1273,13 @@ func (h *Handler) addPODAttachment(w http.ResponseWriter, r *http.Request, jobID
 
 func (h *Handler) addJobNote(w http.ResponseWriter, r *http.Request, jobID string) {
 	if r.Method != http.MethodPost {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req addJobNoteRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1331,13 +1314,13 @@ func (h *Handler) addJobNote(w http.ResponseWriter, r *http.Request, jobID strin
 
 func (h *Handler) updateStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req statusRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -1356,38 +1339,38 @@ func (h *Handler) updateStatus(w http.ResponseWriter, r *http.Request) {
 		Reason:            req.Reason,
 	})
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	respondJSON(w, http.StatusAccepted, result)
+	httpx.WriteOK(w, http.StatusAccepted, result)
 }
 
 func (h *Handler) optimizeRoute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	var req optimizeRouteRequest
 	if err := decodeJSONBody(r, &req); err != nil {
-		respondError(w, http.StatusBadRequest, "invalid request body")
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if h.routingUseCase == nil {
-		respondError(w, http.StatusServiceUnavailable, "routing is not configured")
+		httpx.WriteError(w, http.StatusServiceUnavailable, "routing is not configured")
 		return
 	}
 
 	tenantID, _ := h.resolveTenantID(r)
 	departureTime, err := parseTimeValue(req.DepartureTime)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	driverShift, err := req.DriverShift.toDomain()
 	if err != nil {
-		respondError(w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -1404,7 +1387,7 @@ func (h *Handler) optimizeRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, plan)
+	httpx.WriteOK(w, http.StatusOK, plan)
 }
 
 func (h *Handler) publishActivity(r *http.Request, command activitylog.PublishCommand) {
@@ -1446,11 +1429,11 @@ func parseJobResourcePath(path string) (jobID, action string, ok bool) {
 
 func respondLifecycleError(w http.ResponseWriter, err error) {
 	if err == application.ErrJobNotFound {
-		respondError(w, http.StatusNotFound, err.Error())
+		httpx.WriteError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	if err == application.ErrDriverStatusRequestNotFound {
-		respondError(w, http.StatusNotFound, err.Error())
+		httpx.WriteError(w, http.StatusNotFound, err.Error())
 		return
 	}
 	if strings.Contains(strings.ToLower(err.Error()), "already has a pending driver status request") ||
@@ -1459,10 +1442,10 @@ func respondLifecycleError(w http.ResponseWriter, err error) {
 		strings.Contains(strings.ToLower(err.Error()), "phone number does not match") ||
 		strings.Contains(strings.ToLower(err.Error()), "cannot report driver status") ||
 		strings.Contains(strings.ToLower(err.Error()), "cannot confirm driver status request") {
-		respondError(w, http.StatusConflict, err.Error())
+		httpx.WriteError(w, http.StatusConflict, err.Error())
 		return
 	}
-	respondError(w, http.StatusBadRequest, err.Error())
+	httpx.WriteError(w, http.StatusBadRequest, err.Error())
 }
 
 func (s stopRequest) toDomain() domain.JobStop {
@@ -1670,19 +1653,4 @@ func normalizeDispatchButtonParameters(primary, alternate []sendJobInstructionBu
 		})
 	}
 	return normalized
-}
-
-// The error shape every other service answers with.
-func respondError(w http.ResponseWriter, status int, message string) {
-	respondJSON(w, status, map[string]any{
-		"message":    message,
-		"error":      http.StatusText(status),
-		"statusCode": status,
-	})
-}
-
-func respondJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
 }

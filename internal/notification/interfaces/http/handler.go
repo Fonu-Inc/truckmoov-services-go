@@ -280,24 +280,24 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
-	respondJSON(w, http.StatusOK, map[string]any{"status": "ok", "service": "notification"})
+	httpx.WriteSuccess(w, http.StatusOK, "ok", map[string]any{"service": "notification"})
 }
 
 func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, ok := authenticatedTenantID(r)
 	if !ok {
-		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		httpx.WriteError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
 
 	var req sendRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -308,57 +308,55 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 		Content:   req.Content,
 	})
 
-	responseCode := http.StatusAccepted
 	if err != nil {
-		responseCode = http.StatusBadGateway
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
+		return
 	}
-	respondJSON(w, responseCode, message)
-	if err == nil {
-		h.publishActivity(r, activitylog.PublishCommand{
-			TenantID:   tenantID,
-			Service:    "notification",
-			Action:     "message.sent",
-			EntityType: "message",
-			EntityID:   message.ID,
-			Summary:    "Notification queued for delivery",
-			Metadata: map[string]any{
-				"channel":   req.Channel,
-				"recipient": req.Recipient,
-				"status":    message.Status,
-			},
-		})
-	}
+	httpx.WriteOK(w, http.StatusAccepted, message)
+	h.publishActivity(r, activitylog.PublishCommand{
+		TenantID:   tenantID,
+		Service:    "notification",
+		Action:     "message.sent",
+		EntityType: "message",
+		EntityID:   message.ID,
+		Summary:    "Notification queued for delivery",
+		Metadata: map[string]any{
+			"channel":   req.Channel,
+			"recipient": req.Recipient,
+			"status":    message.Status,
+		},
+	})
 }
 
 func (h *Handler) retryMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, ok := authenticatedTenantID(r)
 	if !ok {
-		respondJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		httpx.WriteError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
 
 	id := strings.TrimPrefix(r.URL.Path, "/notify/messages/retry/")
 	if id == "" {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "missing message id"})
+		httpx.WriteError(w, http.StatusBadRequest, "missing message id")
 		return
 	}
 
 	message, err := h.retryMessageUseCase.Execute(r.Context(), tenantID, id)
 	if err == application.ErrMessageNotFound {
-		respondJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		httpx.WriteError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
 	if err != nil {
-		respondJSON(w, http.StatusBadGateway, message)
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	respondJSON(w, http.StatusOK, message)
+	httpx.WriteOK(w, http.StatusOK, message)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   message.TenantID,
 		Service:    "notification",
@@ -376,13 +374,13 @@ func (h *Handler) retryMessage(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) createWhatsAppTemplate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, ok := authenticatedTenantID(r)
 	if !ok {
-		respondEnvelope(w, http.StatusUnauthorized, "authentication required", nil)
+		httpx.WriteError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	h.createWhatsAppTemplateFor(w, r, tenantID)
@@ -393,7 +391,7 @@ func (h *Handler) createWhatsAppTemplateFor(w http.ResponseWriter, r *http.Reque
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -410,11 +408,11 @@ func (h *Handler) createWhatsAppTemplateFor(w http.ResponseWriter, r *http.Reque
 		Components:          req.Components,
 	})
 	if err != nil {
-		respondEnvelope(w, http.StatusBadRequest, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", template)
+	httpx.WriteSuccess(w, http.StatusOK, "success", template)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "notification",
@@ -433,13 +431,13 @@ func (h *Handler) createWhatsAppTemplateFor(w http.ResponseWriter, r *http.Reque
 
 func (h *Handler) getAllWhatsAppTemplates(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, ok := authenticatedTenantID(r)
 	if !ok {
-		respondEnvelope(w, http.StatusUnauthorized, "authentication required", nil)
+		httpx.WriteError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
 
@@ -449,22 +447,22 @@ func (h *Handler) getAllWhatsAppTemplates(w http.ResponseWriter, r *http.Request
 func (h *Handler) listWhatsAppTemplatesFor(w http.ResponseWriter, r *http.Request, tenantID string) {
 	templates, err := h.listWhatsAppTemplatesUseCase.Execute(r.Context(), application.ListWhatsAppTemplatesQuery{TenantID: tenantID})
 	if err != nil {
-		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", templates)
+	httpx.WriteSuccess(w, http.StatusOK, "success", templates)
 }
 
 func (h *Handler) sendOtherTemplate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, notificationAuthMessage(authStatus))
 		return
 	}
 
@@ -472,7 +470,7 @@ func (h *Handler) sendOtherTemplate(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -504,11 +502,11 @@ func (h *Handler) sendOtherTemplate(w http.ResponseWriter, r *http.Request) {
 		default:
 			status = http.StatusBadGateway
 		}
-		respondEnvelope(w, status, err.Error(), message)
+		httpx.WriteError(w, status, err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", message)
+	httpx.WriteSuccess(w, http.StatusOK, "success", message)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "notification",
@@ -526,13 +524,13 @@ func (h *Handler) sendOtherTemplate(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) sendJobInstruction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, notificationAuthMessage(authStatus))
 		return
 	}
 
@@ -540,7 +538,7 @@ func (h *Handler) sendJobInstruction(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -584,11 +582,11 @@ func (h *Handler) sendJobInstruction(w http.ResponseWriter, r *http.Request) {
 		default:
 			status = http.StatusBadGateway
 		}
-		respondEnvelope(w, status, err.Error(), message)
+		httpx.WriteError(w, status, err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", message)
+	httpx.WriteSuccess(w, http.StatusOK, "success", message)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "notification",
@@ -608,13 +606,13 @@ func (h *Handler) sendJobInstruction(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) listWhatsAppConversations(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, notificationAuthMessage(authStatus))
 		return
 	}
 
@@ -624,7 +622,7 @@ func (h *Handler) listWhatsAppConversations(w http.ResponseWriter, r *http.Reque
 		State:    strings.TrimSpace(r.URL.Query().Get("state")),
 	})
 	if err != nil {
-		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
@@ -634,13 +632,13 @@ func (h *Handler) listWhatsAppConversations(w http.ResponseWriter, r *http.Reque
 		response = append(response, buildWhatsAppConversationResponse(conversation, now))
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", response)
+	httpx.WriteSuccess(w, http.StatusOK, "success", response)
 }
 
 func (h *Handler) whatsAppConversationByPath(w http.ResponseWriter, r *http.Request) {
 	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/notify/whatsapp/conversations/"), "/")
 	if trimmed == "" {
-		respondEnvelope(w, http.StatusNotFound, "not found", nil)
+		httpx.WriteError(w, http.StatusNotFound, "not found")
 		return
 	}
 
@@ -654,18 +652,18 @@ func (h *Handler) whatsAppConversationByPath(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	respondEnvelope(w, http.StatusNotFound, "not found", nil)
+	httpx.WriteError(w, http.StatusNotFound, "not found")
 }
 
 func (h *Handler) getWhatsAppConversation(w http.ResponseWriter, r *http.Request, conversationID string) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, notificationAuthMessage(authStatus))
 		return
 	}
 
@@ -674,22 +672,22 @@ func (h *Handler) getWhatsAppConversation(w http.ResponseWriter, r *http.Request
 		ConversationID: strings.TrimSpace(conversationID),
 	})
 	if err != nil {
-		respondEnvelope(w, whatsAppConversationErrorStatus(err), err.Error(), nil)
+		httpx.WriteError(w, whatsAppConversationErrorStatus(err), err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", buildWhatsAppConversationResponse(conversation, h.clock.Now()))
+	httpx.WriteSuccess(w, http.StatusOK, "success", buildWhatsAppConversationResponse(conversation, h.clock.Now()))
 }
 
 func (h *Handler) listWhatsAppConversationMessages(w http.ResponseWriter, r *http.Request, conversationID string) {
 	if r.Method != http.MethodGet {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, notificationAuthMessage(authStatus))
 		return
 	}
 
@@ -698,11 +696,11 @@ func (h *Handler) listWhatsAppConversationMessages(w http.ResponseWriter, r *htt
 		ConversationID: strings.TrimSpace(conversationID),
 	})
 	if err != nil {
-		respondEnvelope(w, whatsAppConversationErrorStatus(err), err.Error(), nil)
+		httpx.WriteError(w, whatsAppConversationErrorStatus(err), err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", whatsAppConversationMessagesPayload{
+	httpx.WriteSuccess(w, http.StatusOK, "success", whatsAppConversationMessagesPayload{
 		Conversation: buildWhatsAppConversationResponse(conversation, h.clock.Now()),
 		Messages:     messages,
 	})
@@ -710,13 +708,13 @@ func (h *Handler) listWhatsAppConversationMessages(w http.ResponseWriter, r *htt
 
 func (h *Handler) sendWhatsAppTextMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, notificationAuthMessage(authStatus))
 		return
 	}
 
@@ -724,7 +722,7 @@ func (h *Handler) sendWhatsAppTextMessage(w http.ResponseWriter, r *http.Request
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -734,11 +732,11 @@ func (h *Handler) sendWhatsAppTextMessage(w http.ResponseWriter, r *http.Request
 		Message:   firstNonEmpty(req.Message, req.Content),
 	})
 	if err != nil {
-		respondEnvelope(w, whatsAppConversationErrorStatus(err), err.Error(), nil)
+		httpx.WriteError(w, whatsAppConversationErrorStatus(err), err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", whatsAppConversationSendPayload{
+	httpx.WriteSuccess(w, http.StatusOK, "success", whatsAppConversationSendPayload{
 		OutboxMessage: outboxMessage,
 		Conversation:  buildWhatsAppConversationResponse(conversation, h.clock.Now()),
 		Message:       message,
@@ -760,13 +758,13 @@ func (h *Handler) sendWhatsAppTextMessage(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) sendWhatsAppMediaMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
-		respondEnvelope(w, authStatus, notificationAuthMessage(authStatus), nil)
+		httpx.WriteError(w, authStatus, notificationAuthMessage(authStatus))
 		return
 	}
 
@@ -774,7 +772,7 @@ func (h *Handler) sendWhatsAppMediaMessage(w http.ResponseWriter, r *http.Reques
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -788,11 +786,11 @@ func (h *Handler) sendWhatsAppMediaMessage(w http.ResponseWriter, r *http.Reques
 		Filename:  req.Filename,
 	})
 	if err != nil {
-		respondEnvelope(w, whatsAppConversationErrorStatus(err), err.Error(), nil)
+		httpx.WriteError(w, whatsAppConversationErrorStatus(err), err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "success", whatsAppConversationSendPayload{
+	httpx.WriteSuccess(w, http.StatusOK, "success", whatsAppConversationSendPayload{
 		OutboxMessage: outboxMessage,
 		Conversation:  buildWhatsAppConversationResponse(conversation, h.clock.Now()),
 		Message:       message,
@@ -820,13 +818,13 @@ func (h *Handler) whatsAppWebhook(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		h.handleWhatsAppWebhook(w, r)
 	default:
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
 func (h *Handler) verifyWhatsAppWebhook(w http.ResponseWriter, r *http.Request) {
 	if h.whatsAppWebhookVerifyToken == "" {
-		respondEnvelope(w, http.StatusInternalServerError, "whatsapp webhook verify token is not configured", nil)
+		httpx.WriteError(w, http.StatusInternalServerError, "whatsapp webhook verify token is not configured")
 		return
 	}
 
@@ -834,17 +832,18 @@ func (h *Handler) verifyWhatsAppWebhook(w http.ResponseWriter, r *http.Request) 
 	verifyToken := strings.TrimSpace(r.URL.Query().Get("hub.verify_token"))
 	challenge := strings.TrimSpace(r.URL.Query().Get("hub.challenge"))
 	if mode != "subscribe" || challenge == "" {
-		respondEnvelope(w, http.StatusBadRequest, "invalid webhook verification request", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid webhook verification request")
 		return
 	}
 	if verifyToken != h.whatsAppWebhookVerifyToken {
-		respondEnvelope(w, http.StatusForbidden, "invalid webhook verify token", nil)
+		httpx.WriteError(w, http.StatusForbidden, "invalid webhook verify token")
 		return
 	}
 
+	// Meta's verification handshake expects the challenge echoed as plain text.
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(challenge))
+	w.WriteHeader(http.StatusOK)      // contract:raw webhook challenge
+	_, _ = w.Write([]byte(challenge)) // contract:raw webhook challenge
 }
 
 const whatsAppSignatureHeader = "X-Hub-Signature-256"
@@ -880,27 +879,27 @@ func (h *Handler) whatsAppSignatureValid(header string, body []byte) bool {
 func (h *Handler) handleWhatsAppWebhook(w http.ResponseWriter, r *http.Request) {
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
-		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	// Before the body is parsed, not after. The signature covers these exact
 	// bytes, so any decode and re-encode would change what is being checked.
 	if !h.whatsAppSignatureValid(r.Header.Get(whatsAppSignatureHeader), payload) {
-		respondEnvelope(w, http.StatusUnauthorized, "invalid webhook signature", nil)
+		httpx.WriteError(w, http.StatusUnauthorized, "invalid webhook signature")
 		return
 	}
 	if !json.Valid(payload) {
-		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
 	processed, err := h.handleWhatsAppWebhookUseCase.Execute(r.Context(), application.HandleWhatsAppWebhookCommand{Payload: payload})
 	if err != nil {
-		respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 
-	respondEnvelope(w, http.StatusOK, "received", map[string]any{"processed": processed})
+	httpx.WriteSuccess(w, http.StatusOK, "received", map[string]any{"processed": processed})
 }
 
 // WithSMSReceipts turns on the Dotgo delivery receipt route. Until it is called
@@ -924,26 +923,26 @@ const maxSMSWebhookBytes = 1 << 20
 // the address could mark real messages failed.
 func (h *Handler) smsWebhook(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		respondJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	if !h.smsWebhookTokenValid(r.URL.Query().Get("token")) {
-		respondEnvelope(w, http.StatusUnauthorized, "invalid webhook token", nil)
+		httpx.WriteError(w, http.StatusUnauthorized, "invalid webhook token")
 		return
 	}
 	if h.handleSMSReceiptUseCase == nil {
-		respondEnvelope(w, http.StatusServiceUnavailable, "sms delivery receipts are not configured", nil)
+		httpx.WriteError(w, http.StatusServiceUnavailable, "sms delivery receipts are not configured")
 		return
 	}
 
 	payload, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxSMSWebhookBytes))
 	if err != nil {
-		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	receipts, ok := parseSMSReceipts(payload)
 	if !ok {
-		respondEnvelope(w, http.StatusBadRequest, "invalid request body", nil)
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
@@ -952,7 +951,7 @@ func (h *Handler) smsWebhook(w http.ResponseWriter, r *http.Request) {
 		matched, err := h.handleSMSReceiptUseCase.Execute(r.Context(), receipt)
 		if err != nil {
 			// A failure here is ours, so Dotgo is told to send it again.
-			respondEnvelope(w, http.StatusBadGateway, err.Error(), nil)
+			httpx.WriteError(w, http.StatusBadGateway, err.Error())
 			return
 		}
 		if matched {
@@ -962,7 +961,7 @@ func (h *Handler) smsWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// A receipt for a message this service did not send is still a 200: Dotgo
 	// cannot do anything about it and would only retry.
-	respondEnvelope(w, http.StatusOK, "received", map[string]any{"processed": processed})
+	httpx.WriteSuccess(w, http.StatusOK, "received", map[string]any{"processed": processed})
 }
 
 // smsWebhookTokenValid compares in constant time. An unset token refuses every
@@ -1199,18 +1198,4 @@ func firstNonNilHeaderMedia(values ...*sendJobInstructionHeaderMediaRequest) *se
 		}
 	}
 	return nil
-}
-
-func respondEnvelope(w http.ResponseWriter, status int, message string, data any) {
-	respondJSON(w, status, map[string]any{
-		"status":  status < http.StatusBadRequest,
-		"message": message,
-		"data":    data,
-	})
-}
-
-func respondJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
 }

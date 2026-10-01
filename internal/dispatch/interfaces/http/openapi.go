@@ -1,6 +1,10 @@
 package dispatchhttp
 
-import "net/http"
+import (
+	"net/http"
+
+	httpx "github.com/truckmoov/services-go/pkg/http"
+)
 
 const swaggerUIHTML = `<!doctype html>
 <html lang="en">
@@ -29,21 +33,19 @@ const swaggerUIHTML = `<!doctype html>
 
 func (h *Handler) docsUI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(swaggerUIHTML))
+	httpx.WriteHTML(w, swaggerUIHTML)
 }
 
 func (h *Handler) docsOpenAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	respondJSON(w, http.StatusOK, dispatchOpenAPISpec())
+	httpx.WriteDocument(w, dispatchOpenAPISpec())
 }
 
 func dispatchOpenAPISpec() map[string]any {
@@ -63,7 +65,7 @@ func dispatchOpenAPISpec() map[string]any {
 			"type": "string",
 		},
 	}
-	return map[string]any{
+	return httpx.ApplyContract(map[string]any{
 		"openapi": "3.0.3",
 		"info": map[string]any{
 			"title":       "Dispatch Service API",
@@ -1180,16 +1182,7 @@ func dispatchOpenAPISpec() map[string]any {
 						"data":    map[string]any{"$ref": "#/components/schemas/JobStatusSummary"},
 					},
 				},
-				"ErrorResponse": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"message":    map[string]any{"type": "string", "description": "What went wrong, e.g. job not found."},
-						"error":      map[string]any{"type": "string", "description": "HTTP status text, e.g. Not Found."},
-						"statusCode": map[string]any{"type": "integer"},
-					},
-					"required": []string{"message", "error", "statusCode"},
-				},
 			},
 		},
-	}
+	})
 }

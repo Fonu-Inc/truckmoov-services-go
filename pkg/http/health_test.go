@@ -24,17 +24,20 @@ func TestReadinessHandlerAllDepsHealthy(t *testing.T) {
 	}
 
 	var body struct {
-		Ready  bool              `json:"ready"`
-		Checks map[string]string `json:"checks"`
+		Status bool `json:"status"`
+		Data   struct {
+			Ready  bool              `json:"ready"`
+			Checks map[string]string `json:"checks"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if !body.Ready {
-		t.Fatal("expected ready=true")
+	if !body.Status || !body.Data.Ready {
+		t.Fatal("expected status=true and ready=true")
 	}
-	if body.Checks["postgres"] != "ok" || body.Checks["nats"] != "ok" {
-		t.Fatalf("expected all checks ok, got %v", body.Checks)
+	if body.Data.Checks["postgres"] != "ok" || body.Data.Checks["nats"] != "ok" {
+		t.Fatalf("expected all checks ok, got %v", body.Data.Checks)
 	}
 }
 
@@ -52,20 +55,14 @@ func TestReadinessHandlerFailingDepReturns503(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, response.Code)
 	}
 
-	var body struct {
-		Ready  bool              `json:"ready"`
-		Checks map[string]string `json:"checks"`
-	}
+	var body ErrorBody
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.Ready {
-		t.Fatal("expected ready=false")
+	if body.Status || body.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected a 503 error envelope, got %#v", body)
 	}
-	if body.Checks["postgres"] != "ok" {
-		t.Fatalf("expected postgres ok, got %q", body.Checks["postgres"])
-	}
-	if body.Checks["nats"] != "connection refused" {
-		t.Fatalf("expected nats failure reason, got %q", body.Checks["nats"])
+	if len(body.Errors) != 1 || body.Errors[0] != "nats: connection refused" {
+		t.Fatalf("expected only the nats failure listed, got %v", body.Errors)
 	}
 }
