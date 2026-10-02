@@ -108,3 +108,22 @@ func (r *fixedWhatsAppAccountRepository) FindAccountByPhoneNumberID(_ context.Co
 func (r *fixedWhatsAppAccountRepository) DeleteAccountByTenantAndPhoneNumberID(context.Context, string, string) error {
 	return nil
 }
+
+func (r *fixedWhatsAppAccountRepository) UpdateAccountStatus(context.Context, domain.WhatsAppAccount) error {
+	return nil
+}
+
+func (r *fixedWhatsAppAccountRepository) SetTokenStatus(context.Context, string, string) error {
+	return nil
+}
+
+func (r *fixedWhatsAppAccountRepository) FindAccountByBusinessAccountID(_ context.Context, businessAccountID string) (domain.WhatsAppAccount, bool, error) {
+	if r.account.BusinessAccountID != businessAccountID {
+		return domain.WhatsAppAccount{}, false, nil
+	}
+	return r.account, true, nil
+}
+
+func (r *fixedWhatsAppAccountRepository) ListAccounts(context.Context) ([]domain.WhatsAppAccount, error) {
+	return []domain.WhatsAppAccount{r.account}, nil
+}

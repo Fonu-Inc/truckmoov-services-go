@@ -5,6 +5,9 @@ import "time"
 const (
 	WhatsAppDirectionInbound  = "inbound"
 	WhatsAppDirectionOutbound = "outbound"
+	WhatsAppDirectionInternal = "internal"
+
+	WhatsAppMessageTypeNote = "note"
 )
 
 type WhatsAppConversationMessage struct {
@@ -29,4 +32,13 @@ type WhatsAppConversationMessage struct {
 	Payload           map[string]any `json:"payload,omitempty"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
+}
+
+const WhatsAppMessageStatusScheduled = "scheduled"
+
+// ScheduledAt reads the send time of a scheduled message.
+func ScheduledAt(m WhatsAppConversationMessage) (time.Time, bool) {
+	raw, _ := m.Payload["scheduled_at"].(string)
+	at, err := time.Parse(time.RFC3339, raw)
+	return at.UTC(), err == nil
 }

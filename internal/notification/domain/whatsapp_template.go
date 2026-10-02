@@ -25,6 +25,7 @@ type WhatsAppTemplate struct {
 	SubCategory      string           `json:"sub_category,omitempty"`
 	PreviousCategory string           `json:"previous_category,omitempty"`
 	RejectedReason   string           `json:"rejected_reason,omitempty"`
+	QualityScore     map[string]any   `json:"quality_score,omitempty"`
 	Components       []map[string]any `json:"components,omitempty"`
 }
 
@@ -42,4 +43,9 @@ type WhatsAppTemplatePaging struct {
 type WhatsAppTemplateListResponse struct {
 	Data   []WhatsAppTemplate      `json:"data"`
 	Paging *WhatsAppTemplatePaging `json:"paging,omitempty"`
+}
+
+type WhatsAppTemplateDeleteRequest struct {
+	TenantID string
+	Name     string
 }

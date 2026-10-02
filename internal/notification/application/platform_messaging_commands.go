@@ -72,11 +72,7 @@ func (c *PlatformMessagingCommands) reportInvalid(ctx context.Context, command P
 
 func (c *PlatformMessagingCommands) refuse(ctx context.Context, command PlatformSendCommand) {
 	c.log.Warn("platform_messaging_command_refused", "actor", command.ActorID, "client_message_id", command.ClientMessageID)
-	existing, found, err := c.repository.FindMessageByClientID(ctx, identity.SystemTenantID, command.ClientMessageID)
-	if err != nil || !found {
-		return
-	}
-	c.notifier.Failure(ctx, existing.ConversationID, command.ClientMessageID, ErrorCodeForbidden)
+	c.notifier.Failure(ctx, command.ConversationID, command.ClientMessageID, ErrorCodeForbidden)
 }
 
 func parsePlatformSend(envelope eventbus.EventEnvelope) (PlatformSendCommand, bool) {

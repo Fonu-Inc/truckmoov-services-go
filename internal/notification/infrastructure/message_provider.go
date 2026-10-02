@@ -17,10 +17,14 @@ import (
 	"github.com/truckmoov/services-go/internal/notification/domain"
 )
 
-const defaultWhatsAppAPIBaseURL = "https://graph.facebook.com/v18.0"
+const defaultWhatsAppAPIBaseURL = "https://graph.facebook.com/v23.0"
 
 type whatsAppAccountRepository interface {
 	FindAccountByTenantID(ctx context.Context, tenantID string) (domain.WhatsAppAccount, bool, error)
+}
+
+type whatsAppTokenStatusMarker interface {
+	SetTokenStatus(ctx context.Context, tenantID, status string) error
 }
 
 type whatsAppTokenCipher interface {
@@ -222,7 +226,7 @@ func (p *MetaWhatsAppMessageProvider) SendText(ctx context.Context, tenantID, re
 		},
 	}
 
-	return p.send(ctx, phoneNumberID, accessToken, payload)
+	return p.sendTracked(ctx, tenantID, phoneNumberID, accessToken, payload)
 }
 
 func (p *MetaWhatsAppMessageProvider) SendTemplate(ctx context.Context, request domain.WhatsAppTemplateMessageRequest) (domain.WhatsAppSendResult, error) {
@@ -256,7 +260,7 @@ func (p *MetaWhatsAppMessageProvider) SendTemplate(ctx context.Context, request 
 		"template":          template,
 	}
 
-	return p.send(ctx, phoneNumberID, accessToken, payload)
+	return p.sendTracked(ctx, request.TenantID, phoneNumberID, accessToken, payload)
 }
 
 func (p *MetaWhatsAppMessageProvider) SendMedia(ctx context.Context, request domain.WhatsAppMediaMessageRequest) (domain.WhatsAppSendResult, error) {
@@ -299,7 +303,7 @@ func (p *MetaWhatsAppMessageProvider) SendMedia(ctx context.Context, request dom
 		mediaType:           mediaPayload,
 	}
 
-	return p.send(ctx, phoneNumberID, accessToken, payload)
+	return p.sendTracked(ctx, request.TenantID, phoneNumberID, accessToken, payload)
 }
 
 // DownloadMedia fetches an inbound media attachment by its Meta media id.
@@ -408,6 +412,22 @@ func (p *MetaWhatsAppMessageProvider) resolveCredentials(ctx context.Context, te
 		return p.legacyPhoneNumberID, p.legacyAccessToken, nil
 	}
 	return "", "", errors.New("whatsapp account is not connected for this tenant")
+}
+
+// sendTracked flags the tenant's account when Meta says its token is dead, so
+// the setup page asks for a reconnect instead of still reading Connected.
+func (p *MetaWhatsAppMessageProvider) sendTracked(ctx context.Context, tenantID, phoneNumberID, accessToken string, payload map[string]any) (domain.WhatsAppSendResult, error) {
+	result, err := p.send(ctx, phoneNumberID, accessToken, payload)
+	if apiErr, ok := domain.AsWhatsAppAPIError(err); ok && apiErr.IsTokenInvalid() {
+		p.markTokenInvalid(ctx, tenantID)
+	}
+	return result, err
+}
+
+func (p *MetaWhatsAppMessageProvider) markTokenInvalid(ctx context.Context, tenantID string) {
+	if marker, ok := p.accountRepository.(whatsAppTokenStatusMarker); ok && strings.TrimSpace(tenantID) != "" {
+		_ = marker.SetTokenStatus(ctx, tenantID, domain.WhatsAppTokenNeedsReconnect)
+	}
 }
 
 func (p *MetaWhatsAppMessageProvider) send(ctx context.Context, phoneNumberID, accessToken string, payload map[string]any) (domain.WhatsAppSendResult, error) {
@@ -551,16 +571,17 @@ func buildWhatsAppAPIError(statusCode int, body []byte) error {
 	var response struct {
 		Error struct {
 			Message string `json:"message"`
+			Type    string `json:"type"`
+			Code    int    `json:"code"`
+			Subcode int    `json:"error_subcode"`
 		} `json:"error"`
 	}
-	if err := json.Unmarshal(body, &response); err == nil && strings.TrimSpace(response.Error.Message) != "" {
-		return fmt.Errorf("whatsapp api %d: %s", statusCode, response.Error.Message)
+	apiErr := &domain.WhatsAppAPIError{HTTPStatus: statusCode, Body: string(body)}
+	if err := json.Unmarshal(body, &response); err == nil {
+		apiErr.Message = strings.TrimSpace(response.Error.Message)
+		apiErr.Type = response.Error.Type
+		apiErr.Code = response.Error.Code
+		apiErr.Subcode = response.Error.Subcode
 	}
-
-	trimmedBody := strings.TrimSpace(string(body))
-	if trimmedBody == "" {
-		return fmt.Errorf("whatsapp api %d", statusCode)
-	}
-
-	return fmt.Errorf("whatsapp api %d: %s", statusCode, trimmedBody)
+	return apiErr
 }

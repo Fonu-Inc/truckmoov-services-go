@@ -43,6 +43,14 @@ func (n *PlatformMessagingNotifier) MessageStatus(ctx context.Context, message d
 	n.report("message.status", n.publisher.PublishMessageStatus(ctx, NewMessageStatusView(message)))
 }
 
+func (n *PlatformMessagingNotifier) MessageDeleted(ctx context.Context, message domain.WhatsAppConversationMessage) {
+	if !n.Covers(message.TenantID) {
+		return
+	}
+	view := MessageDeletedView{ConversationID: message.ConversationID, MessageID: message.ID, ClientMessageID: optionalText(message.ClientMessageID)}
+	n.report("message.deleted", n.publisher.PublishMessageDeleted(ctx, view))
+}
+
 func (n *PlatformMessagingNotifier) Failure(ctx context.Context, conversationID, clientMessageID, code string) {
 	if n == nil {
 		return

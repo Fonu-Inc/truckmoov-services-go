@@ -120,6 +120,7 @@ func main() {
 		go suspensionSync.Run(ctx, time.Duration(max(cfg.TrackingGateReloadSeconds, 5))*time.Second)
 	}
 
+	messageRate := application.NewMessageRate(clock.Now())
 	ingestLocationUseCase := application.NewIngestLocationUseCase(
 		eventPublisher,
 		latestLocationStore,
@@ -133,7 +134,7 @@ func main() {
 		},
 		imeiResolver,
 		telemetryStore,
-	).WithGate(gate)
+	).WithGate(gate).WithMessageRate(messageRate)
 	publishAlertUseCase := application.NewPublishAlertUseCase(
 		eventPublisher,
 		clock,
@@ -159,7 +160,7 @@ func main() {
 		)
 	}
 
-	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, deviceTelemetryQueryUseCase, cfg.GPSAPIKey, userTokens, activityPublisher).WithGate(gate)
+	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, deviceTelemetryQueryUseCase, cfg.GPSAPIKey, userTokens, activityPublisher).WithGate(gate).WithMessageRate(messageRate)
 	accessClient := identity.NewAccessClient(cfg.AuthServiceURL, serviceCaller)
 	if broadcaster, ok := bus.(eventbus.Broadcaster); ok {
 		if _, subErr := broadcaster.SubscribeEveryInstance(identity.AccessChangedSubject, func(_ context.Context, e eventbus.EventEnvelope) error {

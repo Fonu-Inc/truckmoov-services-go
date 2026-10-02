@@ -11,6 +11,46 @@ const (
 	InboxStateUnread = "unread"
 )
 
+const AssigneeUnassigned = "unassigned"
+
+// InboxFilter narrows the staff inbox. Empty fields do not filter.
+type InboxFilter struct {
+	Query    string
+	State    string
+	Status   string
+	Assignee string
+	Tag      string
+}
+
+func (f InboxFilter) Matches(c WhatsAppConversation) bool {
+	if !ConversationMatches(c, f.Query) || (f.State == InboxStateUnread && c.UnreadCount == 0) {
+		return false
+	}
+	if f.Status != "" && c.EffectiveStatus() != f.Status {
+		return false
+	}
+	if f.Tag != "" && !hasTag(c.Tags, f.Tag) {
+		return false
+	}
+	switch f.Assignee {
+	case "":
+		return true
+	case AssigneeUnassigned:
+		return c.AssigneeUserID == ""
+	default:
+		return c.AssigneeUserID == f.Assignee
+	}
+}
+
+func hasTag(tags []string, tag string) bool {
+	for _, item := range tags {
+		if strings.EqualFold(item, tag) {
+			return true
+		}
+	}
+	return false
+}
+
 type ConversationCursor struct {
 	SortAt time.Time
 	ID     string
@@ -39,9 +79,13 @@ func ConversationMatches(c WhatsAppConversation, needle string) bool {
 // PageConversations is the reference ordering: newest activity first, id as
 // the tiebreak, keyset after the cursor. Returns at most limit items.
 func PageConversations(all []WhatsAppConversation, query, state string, cursor *ConversationCursor, limit int) []WhatsAppConversation {
+	return PageConversationsFiltered(all, InboxFilter{Query: query, State: state}, cursor, limit)
+}
+
+func PageConversationsFiltered(all []WhatsAppConversation, filter InboxFilter, cursor *ConversationCursor, limit int) []WhatsAppConversation {
 	matched := make([]WhatsAppConversation, 0, len(all))
 	for _, c := range all {
-		if !ConversationMatches(c, query) || (state == InboxStateUnread && c.UnreadCount == 0) {
+		if !filter.Matches(c) {
 			continue
 		}
 		if cursor != nil && !conversationBefore(c, *cursor) {

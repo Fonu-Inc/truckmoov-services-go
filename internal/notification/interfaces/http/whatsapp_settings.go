@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/truckmoov/services-go/internal/notification/application"
+	"github.com/truckmoov/services-go/internal/notification/domain"
 	"github.com/truckmoov/services-go/pkg/activitylog"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
@@ -18,6 +19,7 @@ type connectWhatsAppSettingsRequest struct {
 	BusinessAccountID  string `json:"business_account_id,omitempty"`
 	BusinessAccountAlt string `json:"businessAccountId,omitempty"`
 	Code               string `json:"code,omitempty"`
+	Coexistence        bool   `json:"coexistence,omitempty"`
 }
 
 func (h *Handler) whatsAppSettings(w http.ResponseWriter, r *http.Request) {
@@ -67,9 +69,10 @@ func (h *Handler) connectWhatsAppAccountFor(w http.ResponseWriter, r *http.Reque
 		PhoneNumberID:     firstNonEmpty(req.PhoneNumberID, req.PhoneNumberIDAlt),
 		BusinessAccountID: firstNonEmpty(req.BusinessID, req.BusinessIDAlt, req.BusinessAccountID, req.BusinessAccountAlt),
 		Code:              req.Code,
+		Coexistence:       req.Coexistence,
 	})
 	if err != nil {
-		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		httpx.WriteError(w, connectErrorStatus(err), domain.PlainErrorText(err))
 		return
 	}
 
@@ -109,6 +112,7 @@ func (h *Handler) getWhatsAppAccountFor(w http.ResponseWriter, r *http.Request, 
 		httpx.WriteError(w, http.StatusNotFound, application.ErrWhatsAppAccountNotFound.Error())
 		return
 	}
+	account = h.refreshedWhatsAppAccount(r, account)
 
 	httpx.WriteSuccess(w, http.StatusOK, "success", account)
 }
@@ -123,20 +127,17 @@ func (h *Handler) disconnectWhatsAppSettings(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) disconnectWhatsAppAccountFor(w http.ResponseWriter, r *http.Request, tenantID, phoneNumberID string) {
-	err := h.disconnectWhatsAppAccountUseCase.Execute(r.Context(), application.DisconnectWhatsAppAccountCommand{
+	result, err := h.disconnectWhatsAppAccountUseCase.Execute(r.Context(), application.DisconnectWhatsAppAccountCommand{
 		TenantID:      tenantID,
 		PhoneNumberID: strings.TrimSpace(phoneNumberID),
+		Deregister:    r.URL.Query().Get("deregister") == "true",
 	})
 	if err != nil {
-		status := http.StatusBadRequest
-		if err == application.ErrWhatsAppAccountNotFound {
-			status = http.StatusNotFound
-		}
-		httpx.WriteError(w, status, err.Error())
+		httpx.WriteError(w, connectErrorStatus(err), domain.PlainErrorText(err))
 		return
 	}
 
-	httpx.WriteSuccess(w, http.StatusOK, "success", map[string]any{"phone_number_id": strings.TrimSpace(phoneNumberID)})
+	httpx.WriteSuccess(w, http.StatusOK, "success", result)
 	h.publishActivity(r, activitylog.PublishCommand{
 		TenantID:   tenantID,
 		Service:    "notification",
@@ -163,7 +164,7 @@ func authenticatedWhatsAppSettingsTenantID(r *http.Request) (string, int, bool) 
 
 func isWhatsAppSettingsCapableRole(role string) bool {
 	switch strings.ToUpper(strings.TrimSpace(role)) {
-	case "PLATFORM_ADMIN", "ENTERPRISE_ADMIN", "AGGREGATOR_ADMIN", "OWNER_OPERATOR", "FLEET_ADMIN", "OPERATIONS_MANAGER":
+	case "ENTERPRISE_ADMIN", "AGGREGATOR_ADMIN", "OWNER_OPERATOR", "FLEET_ADMIN", "OPERATIONS_MANAGER":
 		return true
 	default:
 		return false

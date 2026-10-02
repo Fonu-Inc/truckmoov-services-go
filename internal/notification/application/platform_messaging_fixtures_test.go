@@ -43,6 +43,10 @@ func (r *platformRepo) ListConversationsByTenantPage(ctx context.Context, tenant
 	return domain.PageConversations(all, query, state, cursor, limit), nil
 }
 
+func (r *platformRepo) ListConversationsFiltered(ctx context.Context, tenantID string, filter domain.InboxFilter, cursor *domain.ConversationCursor, limit int) ([]domain.WhatsAppConversation, error) {
+	return r.ListConversationsByTenantPage(ctx, tenantID, filter.Query, filter.State, cursor, limit)
+}
+
 func (r *platformRepo) ListMessagesPage(_ context.Context, tenantID, conversationID, before string, limit int) ([]domain.WhatsAppConversationMessage, error) {
 	return domain.PageMessages(r.messagesOf(tenantID, conversationID), before, limit), nil
 }
@@ -123,6 +127,11 @@ func (p *recordingInboxPublisher) PublishMessageStatus(_ context.Context, payloa
 
 func (p *recordingInboxPublisher) PublishConversationUpdated(_ context.Context, payload ConversationUpdatedView) error {
 	p.add(recordedEvent{Name: "conversation.updated", Updated: &payload})
+	return nil
+}
+
+func (p *recordingInboxPublisher) PublishMessageDeleted(_ context.Context, payload MessageDeletedView) error {
+	p.add(recordedEvent{Name: "message.deleted"})
 	return nil
 }
 

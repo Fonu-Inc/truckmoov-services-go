@@ -56,6 +56,7 @@ type IngestLocationUseCase struct {
 	resolver       IMEIResolver
 	telemetryStore TelemetryStore
 	gate           *IngestGate
+	rate           *MessageRate
 }
 
 func NewIngestLocationUseCase(
@@ -84,6 +85,11 @@ func NewIngestLocationUseCase(
 
 func (u *IngestLocationUseCase) WithGate(gate *IngestGate) *IngestLocationUseCase {
 	u.gate = gate
+	return u
+}
+
+func (u *IngestLocationUseCase) WithMessageRate(rate *MessageRate) *IngestLocationUseCase {
+	u.rate = rate
 	return u
 }
 
@@ -237,6 +243,8 @@ func (u *IngestLocationUseCase) Execute(
 	if err := u.publisher.PublishLocationUpdate(ctx, locationUpdate); err != nil {
 		return IngestLocationResult{}, fmt.Errorf("publish location event: %w", err)
 	}
+
+	u.rate.Record(u.clock.Now())
 
 	return IngestLocationResult{
 		Published: true,

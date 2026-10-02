@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -69,4 +70,11 @@ func (c *AESTokenCipher) Decrypt(ciphertextHex, ivHex string) (string, error) {
 		return "", err
 	}
 	return string(plaintext), nil
+}
+
+// KeyID names the key without revealing it, so a stored token shows which key
+// sealed it once keys are rotated.
+func (c *AESTokenCipher) KeyID() string {
+	sum := sha256.Sum256(c.key)
+	return hex.EncodeToString(sum[:4])
 }

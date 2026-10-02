@@ -161,8 +161,11 @@ func TestCommandSendRequiresAStaffUserWhoMayReply(t *testing.T) {
 	if err := commands.HandleSend(context.Background(), sendEnvelope("intruder")); err != nil {
 		t.Fatalf("handle: %v", err)
 	}
-	if kit.provider.calls != 0 || len(kit.publisher.events) != 0 {
-		t.Fatalf("a refused actor must cause no send and no event without a row, got %s", kit.publisher.names())
+	if kit.provider.calls != 0 || kit.publisher.names() != "message.status" {
+		t.Fatalf("a refused actor must cause no send and one forbidden status, got %s", kit.publisher.names())
+	}
+	if status := kit.publisher.last("message.status").Status; status == nil || status.Error == nil || status.Error.Code != "forbidden" || status.ConversationID != "wac-1" {
+		t.Fatalf("want forbidden status for the conversation, got %+v", status)
 	}
 
 	if err := commands.HandleSend(context.Background(), sendEnvelope("staff-1")); err != nil {

@@ -69,6 +69,10 @@ func (h *Handler) systemWhatsAppSettingsByPath(w http.ResponseWriter, r *http.Re
 		httpx.WriteError(w, http.StatusNotFound, "not found")
 		return
 	}
+	if r.Method == http.MethodPost && isWhatsAppConnectorAction(phoneNumberID) {
+		h.systemWhatsAppConnectorAction(w, r, phoneNumberID)
+		return
+	}
 	if r.Method != http.MethodDelete {
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return

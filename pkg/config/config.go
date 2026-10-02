@@ -172,7 +172,7 @@ func Load(serviceName, defaultPort string) Config {
 		GPSAPIKey:                    getEnv("GPS_API_KEY", ""),
 		RateLimitRPS:                 getEnvInt("RATE_LIMIT_RPS", 100),
 		RateLimitBurst:               getEnvInt("RATE_LIMIT_BURST", 200),
-		WhatsAppAPIBaseURL:           getEnv("WHATSAPP_API_BASE_URL", "https://graph.facebook.com/v18.0"),
+		WhatsAppAPIBaseURL:           getEnv("WHATSAPP_API_BASE_URL", "https://graph.facebook.com/v23.0"),
 		WhatsAppAppID:                getEnv("WHATSAPP_APP_ID", ""),
 		EventSigningSecret:           getEnv("EVENT_SIGNING_SECRET", ""),
 		EventAcceptUnsigned:          getEnvBoolStrict("EVENT_ACCEPT_UNSIGNED", false),

@@ -108,6 +108,8 @@ func (u *CreateWhatsAppTemplateUseCase) Execute(ctx context.Context, command Cre
 
 type ListWhatsAppTemplatesQuery struct {
 	TenantID string
+	Limit    int
+	After    string
 }
 
 type ListWhatsAppTemplatesUseCase struct {
@@ -122,7 +124,29 @@ func (u *ListWhatsAppTemplatesUseCase) Execute(ctx context.Context, query ListWh
 	if strings.TrimSpace(query.TenantID) == "" {
 		return domain.WhatsAppTemplateListResponse{}, ErrTenantIDRequired
 	}
-	return u.provider.ListTemplates(ctx, domain.WhatsAppTemplateListRequest{TenantID: strings.TrimSpace(query.TenantID)})
+	return u.provider.ListTemplates(ctx, domain.WhatsAppTemplateListRequest{TenantID: strings.TrimSpace(query.TenantID), Limit: query.Limit, After: strings.TrimSpace(query.After)})
+}
+
+type WhatsAppTemplateDeleter interface {
+	DeleteTemplate(ctx context.Context, request domain.WhatsAppTemplateDeleteRequest) error
+}
+
+type DeleteWhatsAppTemplateUseCase struct {
+	provider WhatsAppTemplateDeleter
+}
+
+func NewDeleteWhatsAppTemplateUseCase(provider WhatsAppTemplateDeleter) *DeleteWhatsAppTemplateUseCase {
+	return &DeleteWhatsAppTemplateUseCase{provider: provider}
+}
+
+func (u *DeleteWhatsAppTemplateUseCase) Execute(ctx context.Context, tenantID, name string) error {
+	if strings.TrimSpace(tenantID) == "" {
+		return ErrTenantIDRequired
+	}
+	if strings.TrimSpace(name) == "" {
+		return ErrWhatsAppTemplateNameRequired
+	}
+	return u.provider.DeleteTemplate(ctx, domain.WhatsAppTemplateDeleteRequest{TenantID: strings.TrimSpace(tenantID), Name: strings.TrimSpace(name)})
 }
 
 func normalizeWhatsAppTemplateType(raw string) (string, error) {

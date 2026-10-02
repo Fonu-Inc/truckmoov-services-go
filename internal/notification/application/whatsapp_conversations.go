@@ -115,6 +115,9 @@ type HandleWhatsAppWebhookUseCase struct {
 	// Optional. Campaign recipients are updated from the same receipts, so a
 	// deployment without campaigns wired up simply skips it.
 	campaignReceipts *ApplyCampaignReceiptUseCase
+	// Optional. Re-reads the number when Meta reports a quality, name or
+	// account change.
+	accountRefresher AccountRefresher
 	// Optional. Streams the platform number's inbox to staff; nil for a
 	// deployment without the messaging center.
 	platform *PlatformMessagingNotifier
@@ -456,6 +459,7 @@ func (u *HandleWhatsAppWebhookUseCase) Execute(ctx context.Context, command Hand
 	processed := 0
 	for _, entry := range payload.Entry {
 		for _, change := range entry.Changes {
+			u.refreshAccountOnChange(ctx, entry.ID, change.Field)
 			contactNames := map[string]string{}
 			for _, contact := range change.Value.Contacts {
 				waID := normalizeConversationPhone(contact.WAID)
@@ -472,6 +476,9 @@ func (u *HandleWhatsAppWebhookUseCase) Execute(ctx context.Context, command Hand
 				processed += handled
 			}
 			for _, message := range change.Value.Messages {
+				if u.alreadyStored(ctx, message.ID) {
+					continue
+				}
 				conversation, ok, err := resolveWebhookConversation(ctx, u.repository, u.accountRepository, strings.TrimSpace(change.Value.Metadata.PhoneNumberID), message)
 				if err != nil {
 					return processed, err
@@ -483,6 +490,7 @@ func (u *HandleWhatsAppWebhookUseCase) Execute(ctx context.Context, command Hand
 					}
 				}
 				if !ok {
+					u.logDroppedInbound(ctx, strings.TrimSpace(change.Value.Metadata.PhoneNumberID))
 					continue
 				}
 
@@ -702,7 +710,7 @@ func (u *HandleWhatsAppWebhookUseCase) applyWebhookStatus(ctx context.Context, s
 		if u.platform.Covers(existingMessage.TenantID) {
 			existingMessage.Status = advancedStatus(previousStatus, platformReceiptStatus(status.Status))
 			if existingMessage.Status == "failed" {
-				statusPayload["error"] = errorPayload(ErrorCodeSendFailed, "")
+				statusPayload["error"] = errorPayload(platformFailureCode(status), "")
 			}
 		}
 		existingMessage.Payload = mergeAnyMap(existingMessage.Payload, statusPayload)
@@ -1279,7 +1287,9 @@ func isSupportedOutboundMediaType(mediaType string) bool {
 
 type whatsAppWebhookPayload struct {
 	Entry []struct {
+		ID      string `json:"id"`
 		Changes []struct {
+			Field string `json:"field"`
 			Value struct {
 				Metadata struct {
 					DisplayPhoneNumber string `json:"display_phone_number"`

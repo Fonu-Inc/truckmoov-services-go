@@ -67,6 +67,10 @@ func (p *PlatformMessagingEventPublisher) PublishConversationUpdated(ctx context
 	return p.publish(ctx, "conversation.updated", payload)
 }
 
+func (p *PlatformMessagingEventPublisher) PublishMessageDeleted(ctx context.Context, payload application.MessageDeletedView) error {
+	return p.publish(ctx, "message.deleted", payload)
+}
+
 func (p *PlatformMessagingEventPublisher) publish(ctx context.Context, name string, payload any) error {
 	data, err := toEventData(payload)
 	if err != nil {

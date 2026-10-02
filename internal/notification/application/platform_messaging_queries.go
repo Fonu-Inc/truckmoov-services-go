@@ -21,10 +21,13 @@ const (
 var ErrInvalidInboxCursor = errors.New("cursor is not valid")
 
 type ListInboxQuery struct {
-	Query  string
-	State  string
-	Cursor string
-	Limit  int
+	Query    string
+	State    string
+	Status   string
+	Assignee string
+	Tag      string
+	Cursor   string
+	Limit    int
 }
 
 type ConversationPage struct {
@@ -53,11 +56,7 @@ func (q *PlatformInboxQueries) ListConversations(ctx context.Context, query List
 		return ConversationPage{}, err
 	}
 	limit := clampLimit(query.Limit, defaultConversationPage)
-	state := domain.InboxStateAll
-	if strings.EqualFold(strings.TrimSpace(query.State), domain.InboxStateUnread) {
-		state = domain.InboxStateUnread
-	}
-	rows, err := q.repository.ListConversationsByTenantPage(ctx, identity.SystemTenantID, strings.TrimSpace(query.Query), state, cursor, limit+1)
+	rows, err := q.repository.ListConversationsFiltered(ctx, identity.SystemTenantID, inboxFilterOf(query), cursor, limit+1)
 	if err != nil {
 		return ConversationPage{}, err
 	}
@@ -72,6 +71,25 @@ func (q *PlatformInboxQueries) ListConversations(ctx context.Context, query List
 		page.Items = append(page.Items, NewConversationView(row, now))
 	}
 	return page, nil
+}
+
+type UnreadSummary struct {
+	Conversations int  `json:"conversations"`
+	AtLeast       bool `json:"at_least"`
+}
+
+// UnreadSummary counts conversations with unread messages, up to one page; it
+// feeds the badge on the navigation item.
+func (q *PlatformInboxQueries) UnreadSummary(ctx context.Context) (UnreadSummary, error) {
+	filter := domain.InboxFilter{State: domain.InboxStateUnread}
+	rows, err := q.repository.ListConversationsFiltered(ctx, identity.SystemTenantID, filter, nil, maxInboxPage+1)
+	if err != nil {
+		return UnreadSummary{}, err
+	}
+	if len(rows) > maxInboxPage {
+		return UnreadSummary{Conversations: maxInboxPage, AtLeast: true}, nil
+	}
+	return UnreadSummary{Conversations: len(rows)}, nil
 }
 
 func (q *PlatformInboxQueries) GetConversation(ctx context.Context, id string) (ConversationView, error) {
@@ -110,6 +128,22 @@ func (q *PlatformInboxQueries) ListMessages(ctx context.Context, conversationID,
 		page.Items = append(page.Items, NewMessageView(rows[index]))
 	}
 	return page, nil
+}
+
+func inboxFilterOf(query ListInboxQuery) domain.InboxFilter {
+	filter := domain.InboxFilter{
+		Query:    strings.TrimSpace(query.Query),
+		State:    domain.InboxStateAll,
+		Assignee: strings.TrimSpace(query.Assignee),
+		Tag:      strings.ToLower(strings.TrimSpace(query.Tag)),
+	}
+	if strings.EqualFold(strings.TrimSpace(query.State), domain.InboxStateUnread) {
+		filter.State = domain.InboxStateUnread
+	}
+	if status := strings.ToLower(strings.TrimSpace(query.Status)); domain.IsConversationStatus(status) {
+		filter.Status = status
+	}
+	return filter
 }
 
 func clampLimit(limit, fallback int) int {

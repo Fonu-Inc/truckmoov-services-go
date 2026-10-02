@@ -5,6 +5,29 @@ import (
 	"time"
 )
 
+const (
+	ConversationStatusOpen     = "open"
+	ConversationStatusPending  = "pending"
+	ConversationStatusResolved = "resolved"
+
+	ConversationPriorityLow    = "low"
+	ConversationPriorityNormal = "normal"
+	ConversationPriorityHigh   = "high"
+	ConversationPriorityUrgent = "urgent"
+
+	MaxConversationTags      = 10
+	MaxConversationTagLength = 32
+)
+
+var (
+	conversationStatuses   = map[string]bool{ConversationStatusOpen: true, ConversationStatusPending: true, ConversationStatusResolved: true}
+	conversationPriorities = map[string]bool{ConversationPriorityLow: true, ConversationPriorityNormal: true, ConversationPriorityHigh: true, ConversationPriorityUrgent: true}
+)
+
+func IsConversationStatus(value string) bool { return conversationStatuses[value] }
+
+func IsConversationPriority(value string) bool { return conversationPriorities[value] }
+
 type WhatsAppConversation struct {
 	ID                    string     `json:"id"`
 	TenantID              string     `json:"tenant_id"`
@@ -20,6 +43,11 @@ type WhatsAppConversation struct {
 	LastMessageType       string     `json:"last_message_type,omitempty"`
 	LastReadAt            *time.Time `json:"-"`
 	UnreadCount           int        `json:"-"`
+	Status                string     `json:"-"`
+	Priority              string     `json:"-"`
+	AssigneeUserID        string     `json:"-"`
+	Tags                  []string   `json:"-"`
+	MarkedUnread          bool       `json:"-"`
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
 }
@@ -46,4 +74,18 @@ func (c WhatsAppConversation) WindowRemainingHours(now time.Time) float64 {
 
 func (c WhatsAppConversation) IsLocked(now time.Time) bool {
 	return c.WindowRemainingSeconds(now) == 0
+}
+
+func (c WhatsAppConversation) EffectiveStatus() string {
+	if IsConversationStatus(c.Status) {
+		return c.Status
+	}
+	return ConversationStatusOpen
+}
+
+func (c WhatsAppConversation) EffectivePriority() string {
+	if IsConversationPriority(c.Priority) {
+		return c.Priority
+	}
+	return ConversationPriorityNormal
 }

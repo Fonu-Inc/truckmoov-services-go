@@ -178,6 +178,17 @@ func (r *PostgresCampaignRepository) ListCampaigns(
 	return campaigns, total, rows.Err()
 }
 
+func (r *PostgresCampaignRepository) ClaimScheduledCampaign(ctx context.Context, tenantID, campaignID string, at time.Time) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
+        UPDATE campaigns SET status = 'sending', updated_at = $3
+        WHERE tenant_id = $1 AND id = $2 AND status = 'scheduled'`, tenantID, campaignID, at.UTC())
+	if err != nil {
+		return false, err
+	}
+	claimed, err := result.RowsAffected()
+	return claimed > 0, err
+}
+
 func pageBounds(page, limit int) (int, int) {
 	if limit <= 0 || limit > 100 {
 		limit = 25

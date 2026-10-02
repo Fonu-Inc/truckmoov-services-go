@@ -51,16 +51,26 @@ type WhatsAppTemplateProvider interface {
 type WhatsAppAccountRepository interface {
 	EnsureSchema(ctx context.Context) error
 	SaveAccount(ctx context.Context, account domain.WhatsAppAccount) (domain.WhatsAppAccount, error)
+	UpdateAccountStatus(ctx context.Context, account domain.WhatsAppAccount) error
+	SetTokenStatus(ctx context.Context, tenantID, status string) error
 	FindAccountByTenantID(ctx context.Context, tenantID string) (domain.WhatsAppAccount, bool, error)
 	FindAccountByPhoneNumberID(ctx context.Context, phoneNumberID string) (domain.WhatsAppAccount, bool, error)
+	FindAccountByBusinessAccountID(ctx context.Context, businessAccountID string) (domain.WhatsAppAccount, bool, error)
+	ListAccounts(ctx context.Context) ([]domain.WhatsAppAccount, error)
 	DeleteAccountByTenantAndPhoneNumberID(ctx context.Context, tenantID, phoneNumberID string) error
 }
 
 type WhatsAppEmbeddedSignupProvider interface {
 	ExchangeCodeForLongLivedToken(ctx context.Context, code string) (string, error)
+	InspectToken(ctx context.Context, token string) (domain.WhatsAppTokenInfo, error)
+	ListPhoneNumbers(ctx context.Context, accessToken, businessAccountID string) ([]domain.WhatsAppAccount, error)
 	GetPhoneNumberProfile(ctx context.Context, accessToken, phoneNumberID string) (domain.WhatsAppAccount, error)
 	GetBusinessProfile(ctx context.Context, accessToken, businessAccountID string) (domain.WhatsAppAccount, error)
 	SubscribeBusinessApp(ctx context.Context, accessToken, businessAccountID string) error
+	UnsubscribeBusinessApp(ctx context.Context, accessToken, businessAccountID string) error
+	IsAppSubscribed(ctx context.Context, accessToken, businessAccountID string) (bool, error)
+	RegisterPhoneNumber(ctx context.Context, accessToken, phoneNumberID, pin string) error
+	DeregisterPhoneNumber(ctx context.Context, accessToken, phoneNumberID string) error
 }
 
 type WhatsAppTokenCipher interface {

@@ -194,6 +194,34 @@ func (f *fakeWhatsAppEmbeddedSignupProvider) SubscribeBusinessApp(_ context.Cont
 	return nil
 }
 
+func (f *fakeWhatsAppEmbeddedSignupProvider) InspectToken(context.Context, string) (domain.WhatsAppTokenInfo, error) {
+	return domain.WhatsAppTokenInfo{Valid: true, NeverExpires: true}, nil
+}
+
+func (f *fakeWhatsAppEmbeddedSignupProvider) ListPhoneNumbers(_ context.Context, _, _ string) ([]domain.WhatsAppAccount, error) {
+	var numbers []domain.WhatsAppAccount
+	for _, id := range []string{"pnid-123", "pnid-sys"} {
+		numbers = append(numbers, domain.WhatsAppAccount{PhoneNumberID: id, DisplayPhoneNumber: "+2348012345678", VerifiedName: "Truckmoov Support"})
+	}
+	return numbers, nil
+}
+
+func (f *fakeWhatsAppEmbeddedSignupProvider) UnsubscribeBusinessApp(context.Context, string, string) error {
+	return nil
+}
+
+func (f *fakeWhatsAppEmbeddedSignupProvider) IsAppSubscribed(context.Context, string, string) (bool, error) {
+	return true, nil
+}
+
+func (f *fakeWhatsAppEmbeddedSignupProvider) RegisterPhoneNumber(context.Context, string, string, string) error {
+	return nil
+}
+
+func (f *fakeWhatsAppEmbeddedSignupProvider) DeregisterPhoneNumber(context.Context, string, string) error {
+	return nil
+}
+
 type fakeWhatsAppTokenCipher struct{}
 
 func (f *fakeWhatsAppTokenCipher) Encrypt(token string) (string, string, error) {
@@ -269,7 +297,8 @@ func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvi
 	retryUseCase := application.NewRetryMessageUseCase(outboxRepository, provider, publisher, clock, ids)
 	connectWhatsAppAccountUseCase := application.NewConnectWhatsAppAccountUseCase(whatsAppAccountRepository, signupProvider, tokenCipher, clock, ids, "default")
 	getWhatsAppAccountUseCase := application.NewGetWhatsAppAccountUseCase(whatsAppAccountRepository, "default")
-	disconnectWhatsAppAccountUseCase := application.NewDisconnectWhatsAppAccountUseCase(whatsAppAccountRepository, "default")
+	whatsAppConnector := application.NewWhatsAppConnector(whatsAppAccountRepository, signupProvider, tokenCipher, clock, "default")
+	disconnectWhatsAppAccountUseCase := application.NewDisconnectWhatsAppAccountUseCase(whatsAppAccountRepository, whatsAppConnector, signupProvider, "default")
 	createTemplateUseCase := application.NewCreateWhatsAppTemplateUseCase(templateProvider)
 	listTemplatesUseCase := application.NewListWhatsAppTemplatesUseCase(templateProvider)
 	sendOtherTemplateUseCase := application.NewSendOtherTemplateUseCase(outboxRepository, conversationRepository, templateProvider, provider, publisher, clock, ids, "default")
@@ -305,6 +334,7 @@ func notificationHandlerForTests(t *testing.T) (http.Handler, *fakeTemplateProvi
 		"verify-token",
 		testWhatsAppAppSecret,
 	)
+	handler.WithWhatsAppConnector(whatsAppConnector)
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 	return httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me")), templateProvider, provider, clock, outboxRepository, driverStatusRequestSender, activityPublisher
@@ -438,7 +468,7 @@ func TestWhatsAppSettingsConnectGetAndDisconnect(t *testing.T) {
 		"phoneNumberId":"pnid-123",
 		"businessAccountId":"waba-123",
 		"code":"embedded-signup-code"
-	}`), "tenant-a", "PLATFORM_ADMIN")
+	}`), "tenant-a", "FLEET_ADMIN")
 	connectRes := httptest.NewRecorder()
 	handler.ServeHTTP(connectRes, connectReq)
 	if connectRes.Code != http.StatusOK {
@@ -473,7 +503,7 @@ func TestWhatsAppSettingsConnectGetAndDisconnect(t *testing.T) {
 		t.Fatalf("expected populated display phone number, got %q", account.DisplayPhoneNumber)
 	}
 
-	deleteReq := makeNotificationAuthRequestWithRole(http.MethodDelete, "/notify/whatsapp/settings/pnid-123", nil, "tenant-a", "PLATFORM_ADMIN")
+	deleteReq := makeNotificationAuthRequestWithRole(http.MethodDelete, "/notify/whatsapp/settings/pnid-123", nil, "tenant-a", "FLEET_ADMIN")
 	deleteRes := httptest.NewRecorder()
 	handler.ServeHTTP(deleteRes, deleteReq)
 	if deleteRes.Code != http.StatusOK {

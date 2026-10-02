@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/truckmoov/services-go/internal/tracking/application"
 	trackingws "github.com/truckmoov/services-go/internal/tracking/interfaces/ws"
@@ -48,10 +49,16 @@ type Handler struct {
 	activityPublisher           activityPublisher
 	wsBridge                    *trackingws.Bridge
 	gate                        *application.IngestGate
+	rate                        *application.MessageRate
 }
 
 func (h *Handler) WithGate(gate *application.IngestGate) *Handler {
 	h.gate = gate
+	return h
+}
+
+func (h *Handler) WithMessageRate(rate *application.MessageRate) *Handler {
+	h.rate = rate
 	return h
 }
 
@@ -89,6 +96,7 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 	routes.HandleFunc("/tracking/devices/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.devices"), h.deviceResource)
 	routes.HandleFunc("/tracking/ws", []httpx.Audience{httpx.Admin}, httpx.On("admin.devices"), h.wsBridge.ServeHTTP)
 	routes.HandleFunc("/tracking/internal/gate/blocked-devices", []httpx.Audience{httpx.Service}, httpx.None(), h.blockedDevices)
+	routes.HandleFunc("/tracking/internal/messages/hourly", []httpx.Audience{httpx.Service}, httpx.None(), h.messagesHourly)
 	routes.HandleFunc("/health", []httpx.Audience{httpx.Public}, httpx.None(), h.health)
 }
 
@@ -387,4 +395,17 @@ func (h *Handler) blockedDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteOK(w, http.StatusOK, h.gate.BlockedDevices())
+}
+
+func (h *Handler) messagesHourly(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	claims, ok := httpx.ClaimsFromRequest(r)
+	if !ok || claims == nil || claims.Service != "auth" {
+		http.NotFound(w, r)
+		return
+	}
+	httpx.WriteOK(w, http.StatusOK, h.rate.Report(time.Now()))
 }

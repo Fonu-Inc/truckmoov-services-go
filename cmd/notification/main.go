@@ -98,6 +98,9 @@ func main() {
 			log.Error("whatsapp_account_cipher_invalid", "error", err.Error())
 			os.Exit(1)
 		}
+	} else if cfg.IsProduction() {
+		log.Error("whatsapp_account_cipher_unconfigured", "message", "WHATSAPP_ACCOUNT_ENCRYPTION_KEY is required in production: connected WhatsApp accounts cannot store their tokens without it")
+		os.Exit(1)
 	} else {
 		log.Warn("whatsapp_account_cipher_unconfigured", "message", "set WHATSAPP_ACCOUNT_ENCRYPTION_KEY to enable connected WhatsApp accounts")
 	}
@@ -179,16 +182,22 @@ func main() {
 		clock,
 		idGenerator,
 	)
+	// A nil *AESTokenCipher inside the interface would not compare equal to nil.
+	var connectorCipher application.WhatsAppTokenCipher
+	if tokenCipher != nil {
+		connectorCipher = tokenCipher
+	}
 	connectWhatsAppAccountUseCase := application.NewConnectWhatsAppAccountUseCase(
 		whatsAppAccountRepository,
 		embeddedSignupProvider,
-		tokenCipher,
+		connectorCipher,
 		clock,
 		idGenerator,
 		cfg.DefaultTenant,
 	)
 	getWhatsAppAccountUseCase := application.NewGetWhatsAppAccountUseCase(whatsAppAccountRepository, cfg.DefaultTenant)
-	disconnectWhatsAppAccountUseCase := application.NewDisconnectWhatsAppAccountUseCase(whatsAppAccountRepository, cfg.DefaultTenant)
+	whatsAppConnector := application.NewWhatsAppConnector(whatsAppAccountRepository, embeddedSignupProvider, connectorCipher, clock, cfg.DefaultTenant)
+	disconnectWhatsAppAccountUseCase := application.NewDisconnectWhatsAppAccountUseCase(whatsAppAccountRepository, whatsAppConnector, embeddedSignupProvider, cfg.DefaultTenant)
 	createWhatsAppTemplateUseCase := application.NewCreateWhatsAppTemplateUseCase(templateProvider)
 	listWhatsAppTemplatesUseCase := application.NewListWhatsAppTemplatesUseCase(templateProvider)
 	sendOtherTemplateUseCase := application.NewSendOtherTemplateUseCase(
@@ -299,6 +308,14 @@ func main() {
 		usageCharger,
 		clock,
 	)
+	smsTemplateRepository := infrastructure.NewPostgresSMSTemplateRepository(postgresDB)
+	if err := smsTemplateRepository.EnsureSchema(ctx); err != nil {
+		log.Error("sms_template_schema_failed", "error", err)
+	}
+	voiceRepository := infrastructure.NewPostgresVoiceRepository(postgresDB)
+	if err := voiceRepository.EnsureSchema(ctx); err != nil {
+		log.Error("voice_schema_failed", "error", err)
+	}
 	listCampaignsUseCase := application.NewListCampaignsUseCase(campaignRepository)
 	suppressRecipientUseCase := application.NewSuppressRecipientUseCase(suppressionRepository)
 
@@ -314,6 +331,7 @@ func main() {
 	// media, and the same internal-service-token pattern dispatch uses to call
 	// fleet.
 	fleetWaybillClient := infrastructure.NewFleetWaybillClient(cfg.FleetServiceURL, serviceCaller, nil)
+	handleWhatsAppWebhookUseCase = handleWhatsAppWebhookUseCase.WithAccountRefresher(whatsAppConnector)
 	handleWhatsAppWebhookUseCase = handleWhatsAppWebhookUseCase.WithWaybillCapture(
 		whatsAppMessageProvider,
 		fleetWaybillClient,
@@ -341,6 +359,21 @@ func main() {
 		cfg.WhatsAppWebhookVerifyToken,
 		cfg.WhatsAppAppSecret,
 	)
+	handler = handler.WithWhatsAppConnector(whatsAppConnector)
+	platformNotifier := application.NewPlatformMessagingNotifier(conversationRepository, infrastructure.NewPlatformMessagingEventPublisher(bus, clock, idGenerator), clock, log)
+	platformTemplateSend := application.NewPlatformTemplateSendUseCase(
+		conversationRepository,
+		templateProvider,
+		whatsAppMessageProvider,
+		platformNotifier,
+		clock,
+		idGenerator,
+	)
+	handler = handler.WithPlatformOutreach(
+		platformTemplateSend,
+		application.NewDeleteWhatsAppTemplateUseCase(templateProvider),
+	)
+	go runWhatsAppTokenSweep(ctx, whatsAppConnector, log)
 	handler = handler.WithSMSReceipts(
 		application.NewHandleSMSDeliveryReceiptUseCase(outboxRepository, deliveryLogRepository, deliveryPublisher, clock, idGenerator),
 		cfg.DotgoWebhookSecret,
@@ -354,14 +387,30 @@ func main() {
 	)
 
 	accessClient := identity.NewAccessClient(cfg.AuthServiceURL, serviceCaller)
-	handler = handler.WithPlatformInbox(wirePlatformMessaging(
+	inbox := wirePlatformMessaging(
 		ctx,
 		platformMessagingWiring{bus: bus, verified: verified, log: log, clock: clock, ids: idGenerator},
 		conversationRepository,
 		sendWhatsAppTextMessageUseCase,
 		handleWhatsAppWebhookUseCase,
 		accessClient,
-	))
+		platformInboxExtras{
+			notifier:     platformNotifier,
+			media:        whatsAppMessageProvider,
+			templateSend: platformTemplateSend,
+			drivers:      infrastructure.NewFleetDriverLookupClient(cfg.FleetServiceURL, serviceCaller, nil),
+			voice:        application.NewPlatformVoice(voiceRepository, infrastructure.NullVoiceProvider{}, clock, idGenerator),
+			sms:          application.NewPlatformSMSTemplates(smsTemplateRepository, messageProvider, clock, idGenerator),
+			campaigns: application.NewPlatformCampaigns(
+				campaignRepository,
+				createCampaignUseCase,
+				application.NewSendCampaignUseCase(campaignRepository, suppressionRepository, messageProvider, whatsAppMessageProvider, cfg.WhatsAppTemplateLanguage, nil, clock),
+				templateProvider,
+				clock,
+			),
+		},
+	)
+	handler = handler.WithPlatformInbox(inbox.queries).WithPlatformInboxTools(inbox.tools)
 	if broadcaster, ok := bus.(eventbus.Broadcaster); ok {
 		if _, subErr := broadcaster.SubscribeEveryInstance(identity.AccessChangedSubject, func(_ context.Context, e eventbus.EventEnvelope) error {
 			if userID, ok := e.Data["userId"].(string); ok {

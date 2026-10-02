@@ -92,7 +92,7 @@ func TestMetaWhatsAppTemplateProviderListTemplates_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if gotRawQuery != "after=cursor-1&limit=25" && gotRawQuery != "limit=25&after=cursor-1" {
+	if !strings.Contains(gotRawQuery, "after=cursor-1") || !strings.Contains(gotRawQuery, "limit=25") {
 		t.Fatalf("expected query to contain after and limit, got %q", gotRawQuery)
 	}
 	if len(response.Data) != 1 {

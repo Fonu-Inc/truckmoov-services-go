@@ -103,6 +103,7 @@ func (p *MetaWhatsAppTemplateProvider) ListTemplates(ctx context.Context, reques
 	}
 
 	query := url.Values{}
+	query.Set("fields", "id,name,language,status,category,sub_category,previous_category,rejected_reason,quality_score,components")
 	if request.Limit > 0 {
 		query.Set("limit", strconv.Itoa(request.Limit))
 	}
@@ -143,6 +144,36 @@ func (p *MetaWhatsAppTemplateProvider) ListTemplates(ctx context.Context, reques
 		result.Data = []domain.WhatsAppTemplate{}
 	}
 	return result, nil
+}
+
+// DeleteTemplate removes every language of the named template, which is what
+// Meta's delete by name does.
+func (p *MetaWhatsAppTemplateProvider) DeleteTemplate(ctx context.Context, request domain.WhatsAppTemplateDeleteRequest) error {
+	businessAccountID, accessToken, err := p.resolveCredentials(ctx, request.TenantID)
+	if err != nil {
+		return err
+	}
+	query := url.Values{}
+	query.Set("name", strings.TrimSpace(request.Name))
+	endpoint := fmt.Sprintf("%s/%s/message_templates?%s", p.baseURL, businessAccountID, query.Encode())
+	apiRequest, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("build whatsapp template delete request: %w", err)
+	}
+	apiRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	response, err := p.client.Do(apiRequest)
+	if err != nil {
+		return fmt.Errorf("delete whatsapp template: %w", err)
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		return fmt.Errorf("read whatsapp template delete response: %w", err)
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return buildWhatsAppAPIError(response.StatusCode, responseBody)
+	}
+	return nil
 }
 
 func (p *MetaWhatsAppTemplateProvider) resolveCredentials(ctx context.Context, tenantID string) (string, string, error) {

@@ -41,7 +41,7 @@ Notification service auth vars:
 - `JWT_SECRET`: must match the auth service signing secret so template-management endpoints can derive tenant scope from bearer tokens.
 
 Notification WhatsApp vars (Meta Cloud API transport):
-- `WHATSAPP_API_BASE_URL`: defaults to `https://graph.facebook.com/v18.0`
+- `WHATSAPP_API_BASE_URL`: defaults to `https://graph.facebook.com/v23.0`
 - `WHATSAPP_APP_ID`: Meta app id used for embedded signup token exchange
 - `WHATSAPP_APP_SECRET`: Meta app secret used for embedded signup token exchange
 - `WHATSAPP_ACCOUNT_ENCRYPTION_KEY`: 32-byte AES key encoded as 64 hex characters; used to encrypt tenant-specific long-lived WhatsApp access tokens at rest

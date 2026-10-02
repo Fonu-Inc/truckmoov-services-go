@@ -182,6 +182,10 @@ type Handler struct {
 	listCampaignsUseCase                    *application.ListCampaignsUseCase
 	suppressRecipientUseCase                *application.SuppressRecipientUseCase
 	platformInbox                           *application.PlatformInboxQueries
+	whatsAppConnector                       *application.WhatsAppConnector
+	platformOutreach                        *application.PlatformTemplateSendUseCase
+	deleteWhatsAppTemplateUseCase           *application.DeleteWhatsAppTemplateUseCase
+	inboxTools                              *PlatformInboxTools
 }
 
 // WithCampaigns attaches the campaign use cases.
@@ -263,6 +267,16 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 	routes.HandleFunc("/notify/system/whatsapp/conversations", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppConversations)
 	routes.HandleFunc("/notify/system/whatsapp/conversations/", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppConversationByPath)
 	routes.HandleFunc("/notify/system/whatsapp/templates", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppTemplates)
+	routes.HandleFunc("/notify/system/whatsapp/templates/", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppTemplateByPath)
+	routes.HandleFunc("/notify/system/whatsapp/outreach", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppOutreach)
+	routes.HandleFunc("/notify/system/voice/", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemVoice)
+	routes.HandleFunc("/notify/system/sms-templates", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemSMSTemplates)
+	routes.HandleFunc("/notify/system/sms-templates/", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemSMSTemplateByPath)
+	routes.HandleFunc("/notify/system/campaigns", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemCampaigns)
+	routes.HandleFunc("/notify/system/campaigns/", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemCampaignByPath)
+	routes.HandleFunc("/notify/system/whatsapp/media/", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemWhatsAppMedia)
+	routes.HandleFunc("/notify/system/whatsapp/canned-replies", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemCannedReplies)
+	routes.HandleFunc("/notify/system/whatsapp/canned-replies/", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemCannedReplyByPath)
 	routes.HandleFunc("/notify/whatsapp/settings", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.whatsAppSettings)
 	routes.HandleFunc("/notify/whatsapp/settings/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.whatsAppSettingsByPath)
 	routes.HandleFunc("/notify/whatsapp/create-template", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.createWhatsAppTemplate)
@@ -448,7 +462,8 @@ func (h *Handler) getAllWhatsAppTemplates(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) listWhatsAppTemplatesFor(w http.ResponseWriter, r *http.Request, tenantID string) {
-	templates, err := h.listWhatsAppTemplatesUseCase.Execute(r.Context(), application.ListWhatsAppTemplatesQuery{TenantID: tenantID})
+	limit, after := parseTemplateListQuery(r)
+	templates, err := h.listWhatsAppTemplatesUseCase.Execute(r.Context(), application.ListWhatsAppTemplatesQuery{TenantID: tenantID, Limit: limit, After: after})
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadGateway, err.Error())
 		return
@@ -838,7 +853,7 @@ func (h *Handler) verifyWhatsAppWebhook(w http.ResponseWriter, r *http.Request) 
 		httpx.WriteError(w, http.StatusBadRequest, "invalid webhook verification request")
 		return
 	}
-	if verifyToken != h.whatsAppWebhookVerifyToken {
+	if subtle.ConstantTimeCompare([]byte(verifyToken), []byte(h.whatsAppWebhookVerifyToken)) != 1 {
 		httpx.WriteError(w, http.StatusForbidden, "invalid webhook verify token")
 		return
 	}
