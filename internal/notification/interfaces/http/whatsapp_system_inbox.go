@@ -139,9 +139,7 @@ func parseLimit(raw string) int {
 }
 
 func inboxJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
+	httpx.WriteOK(w, status, body)
 }
 
 func respondInbox(w http.ResponseWriter, status int, body any, err error) {
@@ -172,7 +170,7 @@ func respondInboxError(w http.ResponseWriter, err error) {
 	case errors.As(err, &input):
 		httpx.WriteError(w, http.StatusBadRequest, input.Error())
 	case errors.Is(err, application.ErrWhatsAppConversationLocked):
-		inboxJSON(w, http.StatusConflict, map[string]string{"code": application.ErrorCodeWindowLocked, "message": "The 24-hour window has closed. Send an approved template to reopen it."})
+		httpx.WriteError(w, http.StatusConflict, "The 24-hour window has closed. Send an approved template to reopen it.", application.ErrorCodeWindowLocked)
 	case errors.Is(err, application.ErrSMSTemplateNameTaken), errors.Is(err, application.ErrCannedReplyShortcutTaken):
 		httpx.WriteError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, application.ErrOutreachPhoneInvalid):

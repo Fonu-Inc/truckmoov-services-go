@@ -118,7 +118,7 @@ func TestPatchConversationValidatesAndReturnsTheView(t *testing.T) {
 	server := toolsServer(t, true)
 	patched := staffCall(server, http.MethodPatch, "/notify/system/whatsapp/conversations/wac-1", `{"status":"pending","assignee_user_id":"user-1","tags":["VIP"],"name":"Ada"}`)
 	var view application.ConversationView
-	if err := json.Unmarshal(patched.Body.Bytes(), &view); err != nil || patched.Code != http.StatusOK {
+	if err := json.Unmarshal(decodeNotificationEnvelope(t, patched).Data, &view); err != nil || patched.Code != http.StatusOK {
 		t.Fatalf("patch: %d %s", patched.Code, patched.Body.String())
 	}
 	if view.Status != "pending" || view.AssigneeUserID == nil || *view.AssigneeUserID != "user-1" || view.Tags[0] != "vip" || view.DriverName == nil || *view.DriverName != "Ada" {
@@ -174,7 +174,7 @@ func TestCannedReplyRoutes(t *testing.T) {
 	server := toolsServer(t, true)
 	created := staffCall(server, http.MethodPost, "/notify/system/whatsapp/canned-replies", `{"shortcut":"/ETA","title":"ETA","body":"On the way"}`)
 	var reply domain.CannedReply
-	if err := json.Unmarshal(created.Body.Bytes(), &reply); err != nil || created.Code != http.StatusCreated || reply.Shortcut != "eta" {
+	if err := json.Unmarshal(decodeNotificationEnvelope(t, created).Data, &reply); err != nil || created.Code != http.StatusCreated || reply.Shortcut != "eta" {
 		t.Fatalf("create: %d %s", created.Code, created.Body.String())
 	}
 	if got := staffCall(server, http.MethodPost, "/notify/system/whatsapp/canned-replies", `{"shortcut":"eta","title":"Dup","body":"x"}`).Code; got != http.StatusConflict {

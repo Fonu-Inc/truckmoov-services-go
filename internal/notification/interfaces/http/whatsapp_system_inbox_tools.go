@@ -194,7 +194,7 @@ func (h *Handler) systemWhatsAppCancelScheduled(w http.ResponseWriter, r *http.R
 		respondInboxError(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusNoContent) // contract:raw 204 has no body
 }
 
 func (h *Handler) systemWhatsAppRetry(w http.ResponseWriter, r *http.Request, messageID string) {
@@ -240,7 +240,7 @@ func writeMedia(w http.ResponseWriter, media application.PlatformMedia) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	w.Header().Set("Content-Disposition", mediaDisposition(contentType, media.Filename))
-	_, _ = w.Write(media.Data)
+	_, _ = w.Write(media.Data) // contract:raw binary media proxy
 }
 
 var inlineMediaTypes = map[string]bool{
@@ -309,7 +309,7 @@ func (h *Handler) systemCannedReplyByPath(w http.ResponseWriter, r *http.Request
 			respondInboxError(w, err)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(http.StatusNoContent) // contract:raw 204 has no body
 	default:
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

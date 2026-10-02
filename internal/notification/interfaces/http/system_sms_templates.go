@@ -72,7 +72,7 @@ func (h *Handler) systemSMSTemplateByPath(w http.ResponseWriter, r *http.Request
 			respondInboxError(w, err)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(http.StatusNoContent) // contract:raw 204 has no body
 	default:
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

@@ -399,12 +399,12 @@ func (h *Handler) blockedDevices(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) messagesHourly(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 	claims, ok := httpx.ClaimsFromRequest(r)
 	if !ok || claims == nil || claims.Service != "auth" {
-		http.NotFound(w, r)
+		httpx.NotFound(w, r)
 		return
 	}
 	httpx.WriteOK(w, http.StatusOK, h.rate.Report(time.Now()))
