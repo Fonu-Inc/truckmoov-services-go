@@ -83,14 +83,11 @@ func (u *JobAttachmentUseCase) Add(ctx context.Context, command AddJobAttachment
 	if err != nil {
 		return domain.Job{}, err
 	}
+	if err := u.store.Save(ctx, job.TenantID, job.ID, updated.Attachments[len(updated.Attachments)-1], command.Data); err != nil {
+		return domain.Job{}, fmt.Errorf("store attachment: %w", err)
+	}
 	if err := u.jobs.Save(updated); err != nil {
 		return domain.Job{}, fmt.Errorf("save job attachment: %w", err)
-	}
-	if err := u.store.Save(ctx, job.TenantID, job.ID, updated.Attachments[len(updated.Attachments)-1], command.Data); err != nil {
-		if rollbackErr := u.jobs.Save(job); rollbackErr != nil {
-			return domain.Job{}, fmt.Errorf("store attachment: %w (rollback failed: %v)", err, rollbackErr)
-		}
-		return domain.Job{}, fmt.Errorf("store attachment: %w", err)
 	}
 	return updated, nil
 }

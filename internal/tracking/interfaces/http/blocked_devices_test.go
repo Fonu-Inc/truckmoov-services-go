@@ -39,7 +39,7 @@ func callAs(service string, req *http.Request) {
 func TestBlockedDevices_Report(t *testing.T) {
 	now := time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)
 	clock := tickingClock{now: &now}
-	gate := application.NewIngestGate(application.GateConfig{}, nil, nil, clock, nil)
+	gate := application.NewIngestGate(nil, nil, clock, nil)
 	gate.Replace(application.SuspensionSnapshot{
 		Tenants: map[string]struct{}{"t-bad": {}},
 		IMEIs:   map[string]struct{}{"imei-2": {}},
@@ -82,7 +82,7 @@ func TestBlockedDevices_Report(t *testing.T) {
 
 func TestBlockedDevices_RepeatedReadsKeepCounts(t *testing.T) {
 	now := time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)
-	gate := application.NewIngestGate(application.GateConfig{}, nil, nil, tickingClock{now: &now}, nil)
+	gate := application.NewIngestGate(nil, nil, tickingClock{now: &now}, nil)
 	gate.Replace(application.SuspensionSnapshot{Tenants: map[string]struct{}{"t": {}}}, now)
 	gate.Evaluate("t", nil, "imei-1")
 	for i := 0; i < 3; i++ {
@@ -94,7 +94,7 @@ func TestBlockedDevices_RepeatedReadsKeepCounts(t *testing.T) {
 
 func TestBlockedDevices_Endpoint(t *testing.T) {
 	now := time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)
-	gate := application.NewIngestGate(application.GateConfig{}, nil, nil, tickingClock{now: &now}, nil)
+	gate := application.NewIngestGate(nil, nil, tickingClock{now: &now}, nil)
 	gate.Replace(application.SuspensionSnapshot{Tenants: map[string]struct{}{"t": {}}}, now)
 	gate.Evaluate("t", nil, "imei-1")
 	tests := []struct {

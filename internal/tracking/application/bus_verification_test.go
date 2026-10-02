@@ -80,7 +80,7 @@ func blocked(h *gateHarness, tenant string) bool {
 }
 
 func TestTenantSuspensionIgnoresForgedEvents(t *testing.T) {
-	h := newGateHarness("default")
+	h := newGateHarness()
 	uc := NewConsumeTenantSuspensionUseCase(h.gate)
 	suspend := verifiedBy(uc.HandleSuspended)
 
@@ -97,7 +97,7 @@ func TestTenantSuspensionIgnoresForgedEvents(t *testing.T) {
 }
 
 func TestTenantSuspensionSignedEventUsesEnvelopeTenantNotPayload(t *testing.T) {
-	h := newGateHarness("default")
+	h := newGateHarness()
 	uc := NewConsumeTenantSuspensionUseCase(h.gate)
 
 	event := deliveredOn(t, "tm.t1.tenant.suspended", suspensionEvent("t1", "t2"), true)

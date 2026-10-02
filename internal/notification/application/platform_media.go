@@ -24,7 +24,6 @@ type mediaRule struct {
 const (
 	megabyte = 1024 * 1024
 
-	// MaxPlatformMediaBytes is the largest upload the staff inbox accepts.
 	MaxPlatformMediaBytes = 20 * megabyte
 )
 

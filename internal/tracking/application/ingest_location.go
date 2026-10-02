@@ -38,7 +38,10 @@ type IngestLocationCommand struct {
 	VendorPositionID string
 }
 
-var ErrIdentityUnavailable = errors.New("device identity lookup unavailable")
+var (
+	ErrIdentityUnavailable = errors.New("device identity lookup unavailable")
+	ErrIngestUnavailable   = errors.New("location storage unavailable")
+)
 
 type IngestLocationResult struct {
 	Published  bool   `json:"published"`
@@ -61,6 +64,8 @@ type IngestLocationUseCase struct {
 	gate           *IngestGate
 	rate           *MessageRate
 	quarantine     *Quarantine
+	warmup         *Warmup
+	idMetrics      IdentityMetrics
 }
 
 func NewIngestLocationUseCase(
@@ -99,6 +104,16 @@ func (u *IngestLocationUseCase) WithMessageRate(rate *MessageRate) *IngestLocati
 
 func (u *IngestLocationUseCase) WithQuarantine(quarantine *Quarantine) *IngestLocationUseCase {
 	u.quarantine = quarantine
+	return u
+}
+
+func (u *IngestLocationUseCase) WithWarmup(warmup *Warmup) *IngestLocationUseCase {
+	u.warmup = warmup
+	return u
+}
+
+func (u *IngestLocationUseCase) WithIdentityMetrics(metrics IdentityMetrics) *IngestLocationUseCase {
+	u.idMetrics = metrics
 	return u
 }
 
@@ -147,6 +162,9 @@ func (u *IngestLocationUseCase) Execute(
 	ctx context.Context,
 	command IngestLocationCommand,
 ) (IngestLocationResult, error) {
+	if !u.warmup.Ready() {
+		return IngestLocationResult{}, ErrWarmingUp
+	}
 	resolved := u.resolveIdentity(command)
 	if resolved.lookupErr != nil {
 		return IngestLocationResult{}, fmt.Errorf("%w: %v", ErrIdentityUnavailable, resolved.lookupErr)
@@ -194,7 +212,7 @@ func (u *IngestLocationUseCase) Execute(
 	// The dedupe key lives in the stored latest location, so it is written only
 	// after the event is out: a failed publish must stay retryable.
 	if err := u.publisher.PublishLocationUpdate(ctx, locationUpdate); err != nil {
-		return IngestLocationResult{}, fmt.Errorf("publish location event: %w", err)
+		return IngestLocationResult{}, fmt.Errorf("publish location event: %w: %w", ErrIngestUnavailable, err)
 	}
 
 	if err := u.locationStore.Save(LatestLocation{
@@ -211,7 +229,7 @@ func (u *IngestLocationUseCase) Execute(
 		EventID:          locationUpdate.EventID,
 		VendorPositionID: command.VendorPositionID,
 	}); err != nil {
-		return IngestLocationResult{}, fmt.Errorf("save latest location: %w", err)
+		return IngestLocationResult{}, fmt.Errorf("save latest location: %w: %w", ErrIngestUnavailable, err)
 	}
 
 	if err := u.historyStore.Append(LatestLocation{
@@ -227,7 +245,7 @@ func (u *IngestLocationUseCase) Execute(
 		ObservedAt: locationUpdate.OccurredAt,
 		EventID:    locationUpdate.EventID,
 	}); err != nil {
-		return IngestLocationResult{}, fmt.Errorf("append location history: %w", err)
+		return IngestLocationResult{}, fmt.Errorf("append location history: %w: %w", ErrIngestUnavailable, err)
 	}
 
 	// Time-series persistence is best-effort: the live path (Redis snapshot + NATS
@@ -276,6 +294,9 @@ func (u *IngestLocationUseCase) screen(ctx context.Context, command IngestLocati
 	unknown := command.IMEI != "" && resolved.known == nil
 	if unknown && (reason == "" || reason == SkipUnknownDevice) {
 		u.quarantine.Observe(ctx, command.IMEI)
+		if u.idMetrics != nil {
+			u.idMetrics.Quarantined()
+		}
 		return true, SkipUnknownDevice
 	}
 	return reason != "", reason

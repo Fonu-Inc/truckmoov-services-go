@@ -32,7 +32,6 @@ func PoolSettingsFromEnv() PoolSettings {
 	}
 }
 
-// ConfigurePool applies the settings from the environment to an open pool.
 func ConfigurePool(pool *sql.DB) {
 	PoolSettingsFromEnv().Apply(pool)
 }

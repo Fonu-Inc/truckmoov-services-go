@@ -10,6 +10,7 @@ import (
 const (
 	quarantineFlushEvery = 10 * time.Second
 	quarantineMaxPending = 50000
+	quarantineMaxIMEILen = 64
 	QuarantineListLimit  = 500
 )
 
@@ -47,7 +48,7 @@ func NewQuarantine(store QuarantineStore, clock Clock) *Quarantine {
 
 func (q *Quarantine) Observe(ctx context.Context, imei string) {
 	imei = strings.TrimSpace(imei)
-	if q == nil || q.store == nil || imei == "" {
+	if q == nil || q.store == nil || imei == "" || len(imei) > quarantineMaxIMEILen {
 		return
 	}
 	now := q.clock.Now()

@@ -48,7 +48,6 @@ func (s *Store) SetEX(key string, value []byte, ttlSeconds int) error {
 	return err
 }
 
-// SetNX stores the value only when the key is absent and reports whether it did.
 func (s *Store) SetNX(key string, value []byte, ttlSeconds int) (bool, error) {
 	reply, err := s.do("SET", key, string(value), "EX", strconv.Itoa(ttlSeconds), "NX")
 	if err != nil {
@@ -59,6 +58,17 @@ func (s *Store) SetNX(key string, value []byte, ttlSeconds int) (bool, error) {
 
 func (s *Store) Get(key string) ([]byte, bool, error) {
 	reply, err := s.do("GET", key)
+	return bulkValue("GET", reply, err)
+}
+
+// GetEX reads a value and pushes its expiry out to ttlSeconds from now, in one
+// round trip.
+func (s *Store) GetEX(key string, ttlSeconds int) ([]byte, bool, error) {
+	reply, err := s.do("GETEX", key, "EX", strconv.Itoa(ttlSeconds))
+	return bulkValue("GETEX", reply, err)
+}
+
+func bulkValue(command string, reply any, err error) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
@@ -68,7 +78,7 @@ func (s *Store) Get(key string) ([]byte, bool, error) {
 
 	value, ok := reply.(string)
 	if !ok {
-		return nil, false, fmt.Errorf("unexpected GET response type %T", reply)
+		return nil, false, fmt.Errorf("unexpected %s response type %T", command, reply)
 	}
 	return []byte(value), true, nil
 }

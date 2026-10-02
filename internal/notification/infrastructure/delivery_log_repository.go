@@ -69,7 +69,14 @@ func (r *PostgresDeliveryLogRepository) Append(ctx context.Context, entry domain
            (id, tenant_id, notification_type, channel, recipient, subject, content,
             status, provider_message_id, failure_reason, created_at, updated_at, delivered_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-         ON CONFLICT (id) DO NOTHING`,
+         ON CONFLICT (id) DO UPDATE SET
+            status = EXCLUDED.status,
+            provider_message_id = COALESCE(EXCLUDED.provider_message_id, notification_delivery_log.provider_message_id),
+            failure_reason = EXCLUDED.failure_reason,
+            updated_at = EXCLUDED.updated_at,
+            delivered_at = COALESCE(EXCLUDED.delivered_at, notification_delivery_log.delivered_at)
+         WHERE notification_delivery_log.tenant_id = EXCLUDED.tenant_id
+           AND notification_delivery_log.status = 'failed'`,
 		entry.ID, entry.TenantID, entry.NotificationType, entry.Channel, entry.Recipient,
 		entry.Subject, entry.Content, entry.Status, nullableProviderMessageID(entry.ProviderMessageID),
 		entry.FailureReason, entry.CreatedAt, entry.UpdatedAt, entry.DeliveredAt,

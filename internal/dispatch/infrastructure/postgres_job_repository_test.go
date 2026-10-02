@@ -33,6 +33,18 @@ func TestDecodeStoredJob_NormalizesLegacyPriority(t *testing.T) {
 	}
 }
 
+func TestDecodeStoredJob_LegacyJobHasEmptyListsNotNull(t *testing.T) {
+	payload := []byte(`{"id":"job-1","tenant_id":"tenant-1","pickup":{"address":"Apapa"},"dropoff":{"address":"Lekki"},"status":"created","created_at":"2026-04-01T10:00:00Z","updated_at":"2026-04-01T10:00:00Z"}`)
+
+	job, err := decodeStoredJob(payload)
+	if err != nil {
+		t.Fatalf("decodeStoredJob returned error: %v", err)
+	}
+	if job.Attachments == nil {
+		t.Fatal("a job stored before attachments existed must serialize attachments as [], not null")
+	}
+}
+
 func newTestPostgresRepo(t *testing.T) *PostgresJobRepository {
 	t.Helper()
 

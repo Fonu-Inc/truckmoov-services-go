@@ -154,7 +154,7 @@ func (r *InMemoryJobOfferRepository) Accept(
 	r.offers[accepted.ID] = accepted
 
 	for id, sibling := range r.offers {
-		if sibling.JobID == offer.JobID && id != offer.ID && sibling.Status == domain.OfferStatusPending {
+		if sibling.OfferingTenantID == offer.OfferingTenantID && sibling.JobID == offer.JobID && id != offer.ID && sibling.Status == domain.OfferStatusPending {
 			r.offers[id] = sibling.Withdraw(now)
 		}
 	}

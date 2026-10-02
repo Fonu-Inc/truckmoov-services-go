@@ -226,7 +226,6 @@ func (u *PlatformCampaigns) Cancel(ctx context.Context, id string) (CampaignView
 	return u.view(ctx, saved)
 }
 
-// RunDue sends every scheduled campaign whose time has come.
 func (u *PlatformCampaigns) RunDue(ctx context.Context) (int, error) {
 	now := u.clock.Now()
 	campaigns, _, err := u.repository.ListCampaigns(ctx, ListCampaignsQuery{TenantID: identity.SystemTenantID, Status: domain.CampaignStatusScheduled, Limit: dueCampaignPage})

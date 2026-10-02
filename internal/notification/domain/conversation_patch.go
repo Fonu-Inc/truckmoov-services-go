@@ -20,7 +20,6 @@ func (p ConversationPatch) Empty() bool {
 	return p.Name == nil && p.Status == nil && p.Priority == nil && p.AssigneeUserID == nil && p.Tags == nil && p.MarkedUnread == nil
 }
 
-// NormalizeTags trims, lowercases and de-duplicates, and drops empties.
 func NormalizeTags(tags []string) []string {
 	seen := make(map[string]bool, len(tags))
 	normalized := make([]string, 0, len(tags))

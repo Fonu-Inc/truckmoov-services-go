@@ -31,7 +31,7 @@ func TestHandler_SuspendedMessagesAreDroppedOnEveryHTTPPath(t *testing.T) {
 			history := infrastructure.NewInMemoryLocationHistoryRepository()
 			telemetry := infrastructure.NewInMemoryTelemetryRepository()
 			resolver := infrastructure.NewInMemoryIMEIResolver()
-			gate := application.NewIngestGate(application.GateConfig{}, nil, nil, clock, logger.New("test"))
+			gate := application.NewIngestGate(nil, nil, clock, logger.New("test"))
 			gate.Replace(application.SuspensionSnapshot{
 				Tenants: map[string]struct{}{"t-bad": {}},
 				IMEIs:   map[string]struct{}{imei: {}},

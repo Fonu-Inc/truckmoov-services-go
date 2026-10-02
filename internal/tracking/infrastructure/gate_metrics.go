@@ -32,6 +32,8 @@ func (m *PrometheusGateMetrics) Blocked(reason string) { m.blocked.WithLabelValu
 
 func (m *PrometheusGateMetrics) ReloadFailed() { m.reloadFailed.Inc() }
 
+func (m *PrometheusGateMetrics) Registry() *prometheus.Registry { return m.registry }
+
 // Handler appends the gate counters to the service's own metrics output.
 func (m *PrometheusGateMetrics) Handler(base http.Handler) http.Handler {
 	own := promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})

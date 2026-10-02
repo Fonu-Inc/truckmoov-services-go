@@ -127,7 +127,7 @@ func (h *Handler) addJobAttachment(w http.ResponseWriter, r *http.Request, jobID
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxAttachmentRequestBytes)
+	httpx.LimitBody(w, r, maxAttachmentRequestBytes)
 	var req addJobAttachmentRequest
 	if err := decodeJSONBody(r, &req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")

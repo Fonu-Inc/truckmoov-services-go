@@ -444,6 +444,7 @@ func (j Job) Assign(driverID, driverPhone, vehicleID string, now time.Time, time
 	// driver again, leaves the status where it was.
 	if updated.DriverChangedFrom(j) {
 		updated.Status = StatusAssigned
+		updated.releaseDriverState()
 	}
 	updated.UpdatedAt = now.UTC()
 
@@ -471,6 +472,17 @@ func (j Job) Assign(driverID, driverPhone, vehicleID string, now time.Time, time
 // before: newly assigned or replaced.
 func (j Job) DriverChangedFrom(before Job) bool {
 	return j.AssignedDriverID != before.AssignedDriverID
+}
+
+func (j *Job) releaseDriverState() {
+	j.AcknowledgedAt = nil
+	kept := make([]DriverStatusRequest, 0, len(j.DriverStatusRequests))
+	for _, request := range j.DriverStatusRequests {
+		if request.State != DriverStatusRequestPending {
+			kept = append(kept, request)
+		}
+	}
+	j.DriverStatusRequests = kept
 }
 
 func (j *Job) clearAssignment() {

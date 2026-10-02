@@ -17,6 +17,12 @@ type ActiveJobTenantLister interface {
 	ListTenantsWithActiveJobs(ctx context.Context) ([]string, error)
 }
 
+// InProgressJobSource reads only a tenant's jobs that are underway, so a sweep
+// does not decode the tenant's whole history.
+type InProgressJobSource interface {
+	FindInProgressByTenant(ctx context.Context, tenantID string) ([]domain.Job, error)
+}
+
 type EtaMonitorUseCase struct {
 	repository     JobRepository
 	tenants        ActiveJobTenantLister
@@ -54,8 +60,20 @@ func (u *EtaMonitorUseCase) Check(ctx context.Context) {
 	}
 }
 
+func (u *EtaMonitorUseCase) jobsToCheck(ctx context.Context, tenantID string) []domain.Job {
+	source, ok := u.repository.(InProgressJobSource)
+	if !ok {
+		return u.repository.FindByTenant(tenantID)
+	}
+	jobs, err := source.FindInProgressByTenant(ctx, tenantID)
+	if err != nil {
+		return nil
+	}
+	return jobs
+}
+
 func (u *EtaMonitorUseCase) checkTenant(ctx context.Context, tenantID string) {
-	jobs := u.repository.FindByTenant(tenantID)
+	jobs := u.jobsToCheck(ctx, tenantID)
 	now := u.clock.Now().UTC()
 
 	for _, job := range jobs {
@@ -69,24 +87,26 @@ func (u *EtaMonitorUseCase) checkTenant(ctx context.Context, tenantID string) {
 		key := job.TenantID + ":" + job.ID
 		u.mu.Lock()
 		seen := u.alerted[key]
-		if !seen {
-			u.alerted[key] = true
-		}
 		u.mu.Unlock()
-
 		if seen {
 			continue
 		}
 
-		_ = u.alertPublisher.PublishAlert(ctx, job.TenantID, "eta_breach", "high", job.ID, job.AssignedVehicleID, map[string]any{
+		err := u.alertPublisher.PublishAlert(ctx, job.TenantID, "eta_breach", "high", job.ID, job.AssignedVehicleID, map[string]any{
 			"deadline":     job.TimeWindow.DropoffEnd,
 			"job_status":   string(job.Status),
 			"driver_id":    job.AssignedDriverID,
 			"dropoff_addr": job.Dropoff.Address,
 		})
+		if err != nil {
+			continue
+		}
+		u.mu.Lock()
+		u.alerted[key] = true
+		u.mu.Unlock()
 	}
 }
 
 func isActiveJob(job domain.Job) bool {
-	return job.Status == domain.StatusEnRoute || job.Status == domain.StatusAssigned || job.Status == domain.StatusArrived
+	return job.IsActive() && job.Status != domain.StatusCreated
 }

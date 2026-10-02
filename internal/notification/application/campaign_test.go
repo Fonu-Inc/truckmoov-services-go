@@ -412,6 +412,27 @@ func TestRetryDoesNotContactSomeoneWhoOptedOut(t *testing.T) {
 	}
 }
 
+type suppressionLookupDown struct{ *fakeSuppression }
+
+func (suppressionLookupDown) IsSuppressed(context.Context, string, string) (bool, error) {
+	return false, errors.New("suppression store unavailable")
+}
+
+func TestCampaignSendsNothingWhenTheOptOutCheckFails(t *testing.T) {
+	kit := newCampaignKit()
+	campaign := smsCampaign(kit, t, "+2348000000001")
+	send := NewSendCampaignUseCase(kit.repo, suppressionLookupDown{kit.suppression}, kit.provider, kit.templates, "en", kit.charger, campaignClock{now: time.Unix(1_700_000_000, 0).UTC()})
+
+	_, err := send.Execute(context.Background(), SendCampaignCommand{TenantID: "tenant-a", CampaignID: campaign.ID})
+
+	if err == nil {
+		t.Fatal("expected the failed opt-out check to surface")
+	}
+	if len(kit.provider.sent) != 0 || len(kit.charger.charges) != 0 {
+		t.Fatalf("a recipient whose opt-out could not be checked must not be messaged or charged: sent=%v charges=%d", kit.provider.sent, len(kit.charger.charges))
+	}
+}
+
 func TestWhatsAppCampaignKeepsTheProviderMessageID(t *testing.T) {
 	kit := newCampaignKit()
 	campaign, err := kit.create.Execute(context.Background(), CreateCampaignCommand{

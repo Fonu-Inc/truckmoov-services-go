@@ -296,6 +296,29 @@ func TestJob_Assign_SameDriverAgainLogsNothing(t *testing.T) {
 	}
 }
 
+func TestJob_Assign_ReplacingTheDriverDropsTheirPendingRequestAndAcknowledgement(t *testing.T) {
+	job := mustAssign(t, validJobFixture(t), "driver-1", "vehicle-1")
+	job, err := job.Acknowledge("driver-1", job.UpdatedAt, "tl-ack")
+	if err != nil {
+		t.Fatalf("acknowledge: %v", err)
+	}
+	job, _, err = job.ReportDriverStatusRequest(StatusEnRoute, "driver-1", "", "enroute", "", "msg-1", "whatsapp", job.UpdatedAt, "req-1", "tl-req")
+	if err != nil {
+		t.Fatalf("report: %v", err)
+	}
+
+	reassigned := mustAssign(t, job, "driver-2", "")
+	if reassigned.AcknowledgedAt != nil {
+		t.Fatalf("the new driver has not acknowledged, got %v", reassigned.AcknowledgedAt)
+	}
+	if len(reassigned.DriverStatusRequests) != 0 {
+		t.Fatalf("the replaced driver's pending request must go, got %+v", reassigned.DriverStatusRequests)
+	}
+	if _, _, err := reassigned.ReportDriverStatusRequest(StatusEnRoute, "driver-2", "", "enroute", "", "msg-2", "whatsapp", reassigned.UpdatedAt, "req-2", "tl-req-2"); err != nil {
+		t.Fatalf("the new driver must be able to report: %v", err)
+	}
+}
+
 func TestJob_PatchDetails_KeepsFieldsNotSent(t *testing.T) {
 	job := validJobFixture(t)
 	deadline := job.UpdatedAt.Add(48 * time.Hour)

@@ -28,6 +28,7 @@ Core vars used by notification, tracking, and dispatch:
 - `DEFAULT_TENANT`
 - `NOTIFICATION_SERVICE_URL` (dispatch uses this to call the notification service when sending WhatsApp driver instructions)
 - `JWT_SECRET` (must match the auth service signing secret when tenant should be derived from bearer tokens)
+- `EVENT_SIGNING_SECRET` (must equal the TypeScript services' value: every verified event consumer drops events while it is unset)
 - `CORS_ALLOWED_ORIGINS`
 - `NATS_URL`, `NATS_STREAM` (use a JetStream-safe stream name such as `truckmoov_events`)
 
@@ -67,7 +68,7 @@ Tracking- and ingest-specific vars:
 - `TELEMETRY_MAX_SPEED_KPH`: reject implausible speed samples.
 - `TRACKING_HISTORY_TTL_SECONDS`: retention for historical location entries.
 - `TRACKING_LATEST_TTL_SECONDS`: retention for latest-known vehicle position cache.
-- `GPS_API_KEY`: reserved for external GPS vendor adapters when enabled.
+- `GPS_API_KEY`: key GPS vendors send as `X-Api-Key` (or `api_key`) on `/tracking/ingest`. While it is unset, ingest answers 503. `ALLOW_UNAUTHENTICATED_INGEST=true` opens ingest without a key outside production.
 
 Shared runtime protection:
 - `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`

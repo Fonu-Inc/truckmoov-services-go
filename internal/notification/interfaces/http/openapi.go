@@ -112,6 +112,7 @@ func notificationOpenAPISpec() map[string]any {
 					"responses": map[string]any{
 						"200": openAPIJSONResponse("Retry succeeded", map[string]any{"$ref": "#/components/schemas/OutboxMessage"}),
 						"404": openAPIJSONResponse("Message not found", map[string]any{"$ref": "#/components/schemas/ErrorResponse"}),
+						"409": openAPIJSONResponse("Only a failed message can be retried", map[string]any{"$ref": "#/components/schemas/ErrorResponse"}),
 						"502": openAPIJSONResponse("Provider failure", map[string]any{"$ref": "#/components/schemas/OutboxMessage"}),
 					},
 				},

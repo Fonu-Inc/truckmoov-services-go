@@ -8,12 +8,16 @@ import (
 	"github.com/truckmoov/services-go/internal/notification/domain"
 )
 
-var ErrMessageNotFound = errors.New("message not found")
+var (
+	ErrMessageNotFound     = errors.New("message not found")
+	ErrMessageNotRetryable = errors.New("only a failed message can be retried")
+)
 
 type RetryMessageUseCase struct {
 	repository     OutboxRepository
 	provider       MessageProvider
 	eventPublisher DeliveryEventPublisher
+	usageCharger   UsageCharger
 	clock          Clock
 	idGenerator    IDGenerator
 }
@@ -34,10 +38,21 @@ func NewRetryMessageUseCase(
 	}
 }
 
+func (u *RetryMessageUseCase) WithCharger(charger UsageCharger) *RetryMessageUseCase {
+	u.usageCharger = charger
+	return u
+}
+
 func (u *RetryMessageUseCase) Execute(ctx context.Context, tenantID, id string) (domain.OutboxMessage, error) {
 	message, ok := u.repository.FindByTenantAndID(tenantID, id)
 	if !ok {
 		return domain.OutboxMessage{}, ErrMessageNotFound
+	}
+	if message.Status != domain.StatusFailed {
+		return domain.OutboxMessage{}, ErrMessageNotRetryable
+	}
+	if err := chargeOutboxMessage(ctx, u.usageCharger, message); err != nil {
+		return message, fmt.Errorf("usage charge failed: %w", err)
 	}
 
 	sent, sendErr := sendViaProvider(ctx, u.provider, message.TenantID, message.Channel, message.Recipient, message.Content)

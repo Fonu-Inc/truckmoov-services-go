@@ -223,9 +223,6 @@ func (u *ConsumeDriverJobInstructionUseCase) sendTemplate(ctx context.Context, i
 	if u.templateName == "" {
 		return errors.New("no job instruction template is configured")
 	}
-	if err := u.chargeTemplate(ctx, instruction); err != nil {
-		return err
-	}
 	_, err := u.template.Execute(ctx, SendJobInstructionCommand{
 		TenantID:         instruction.tenantID,
 		JobID:            instruction.jobID,
@@ -239,6 +236,7 @@ func (u *ConsumeDriverJobInstructionUseCase) sendTemplate(ctx context.Context, i
 		DeliveryLocation: instruction.delivery,
 		CargoDescription: instruction.cargo,
 		Priority:         instruction.priority,
+		BeforeSend:       func(ctx context.Context) error { return u.chargeTemplate(ctx, instruction) },
 	})
 	return err
 }

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/truckmoov/services-go/internal/notification/domain"
 	"github.com/truckmoov/services-go/pkg/activitylog"
@@ -1257,7 +1258,11 @@ func truncatePreview(value string) string {
 	if len(trimmed) <= 140 {
 		return trimmed
 	}
-	return trimmed[:137] + "..."
+	cut := 137
+	for cut > 0 && !utf8.RuneStart(trimmed[cut]) {
+		cut--
+	}
+	return trimmed[:cut] + "..."
 }
 
 func cloneAnyMap(value map[string]any) map[string]any {

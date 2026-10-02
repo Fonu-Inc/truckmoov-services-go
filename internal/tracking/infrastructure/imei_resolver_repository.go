@@ -53,7 +53,7 @@ func NewRedisIMEIResolver(store *redisstore.Store, ttlSeconds int) *RedisIMEIRes
 }
 
 func (r *RedisIMEIResolver) Resolve(imei string) (*application.DeviceIdentity, error) {
-	payload, ok, err := r.store.Get(redisIMEIIdentityKey(imei))
+	payload, ok, err := r.read(redisIMEIIdentityKey(imei))
 	if err != nil || !ok {
 		return nil, err
 	}
@@ -62,6 +62,15 @@ func (r *RedisIMEIResolver) Resolve(imei string) (*application.DeviceIdentity, e
 		return nil, err
 	}
 	return &identity, nil
+}
+
+// read slides the expiry on every hit, so a device that keeps reporting never
+// ages out of the cache just because fleet has had nothing new to say about it.
+func (r *RedisIMEIResolver) read(key string) ([]byte, bool, error) {
+	if r.ttlSeconds > 0 {
+		return r.store.GetEX(key, r.ttlSeconds)
+	}
+	return r.store.Get(key)
 }
 
 func (r *RedisIMEIResolver) Upsert(identity application.DeviceIdentity) error {

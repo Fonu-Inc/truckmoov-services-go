@@ -131,11 +131,15 @@ func (u *SendMessageUseCase) Execute(ctx context.Context, command SendMessageCom
 // silently stop every send. The system tenant is the platform itself, so its
 // sends are logged but never debited.
 func (u *SendMessageUseCase) chargeForSend(ctx context.Context, message domain.OutboxMessage) error {
-	if u.usageCharger == nil || !IsBillable(message.Channel) || message.TenantID == identity.SystemTenantID {
+	return chargeOutboxMessage(ctx, u.usageCharger, message)
+}
+
+func chargeOutboxMessage(ctx context.Context, charger UsageCharger, message domain.OutboxMessage) error {
+	if charger == nil || !IsBillable(message.Channel) || message.TenantID == identity.SystemTenantID {
 		return nil
 	}
 
-	return u.usageCharger.Charge(ctx, UsageCharge{
+	return charger.Charge(ctx, UsageCharge{
 		TenantID: message.TenantID,
 		Channel:  message.Channel,
 		Quantity: 1,

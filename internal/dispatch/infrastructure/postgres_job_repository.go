@@ -40,12 +40,6 @@ CREATE INDEX IF NOT EXISTS idx_dispatch_jobs_tenant_created_at
 CREATE INDEX IF NOT EXISTS idx_dispatch_jobs_tenant_status_created_at
     ON dispatch_jobs (tenant_id, status, created_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_dispatch_jobs_id
-    ON dispatch_jobs (id);
-
-CREATE INDEX IF NOT EXISTS idx_dispatch_jobs_tenant_status
-    ON dispatch_jobs (tenant_id, status);
-
 CREATE INDEX IF NOT EXISTS idx_dispatch_jobs_tenant_driver
     ON dispatch_jobs (tenant_id, assigned_driver_id)
     WHERE assigned_driver_id <> '';
@@ -258,6 +252,31 @@ func (r *PostgresJobRepository) FindByTenant(tenantID string) []domain.Job {
 	return results
 }
 
+func (r *PostgresJobRepository) FindInProgressByTenant(ctx context.Context, tenantID string) ([]domain.Job, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT payload FROM dispatch_jobs WHERE tenant_id = $1 AND status NOT IN ('created', 'delivered', 'cancelled') ORDER BY created_at ASC`,
+		strings.TrimSpace(tenantID),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("find in-progress jobs: %w", err)
+	}
+	defer rows.Close()
+
+	jobs := make([]domain.Job, 0)
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		job, err := decodeStoredJob(payload)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, rows.Err()
+}
+
 // ListTenantsWithActiveJobs names every tenant with a job still in progress.
 func (r *PostgresJobRepository) ListTenantsWithActiveJobs(ctx context.Context) ([]string, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT tenant_id FROM dispatch_jobs WHERE status NOT IN ('created', 'delivered', 'cancelled')`)
@@ -277,7 +296,6 @@ func (r *PostgresJobRepository) ListTenantsWithActiveJobs(ctx context.Context) (
 	return tenants, rows.Err()
 }
 
-// CountActive counts a tenant's jobs that are not yet delivered or cancelled.
 func (r *PostgresJobRepository) CountActive(ctx context.Context, tenantID string) (int, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx,
@@ -327,6 +345,9 @@ func decodeStoredJob(payload []byte) (domain.Job, error) {
 	}
 	if job.Timeline == nil {
 		job.Timeline = []domain.JobTimelineEntry{}
+	}
+	if job.Attachments == nil {
+		job.Attachments = []domain.JobAttachment{}
 	}
 
 	return job, nil

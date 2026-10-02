@@ -152,7 +152,9 @@ func New(ctx context.Context, natsURL, streamName string, creds Credentials, log
 		log.Warn("nats_stream_name_sanitized", "configured_stream", streamName, "effective_stream", effectiveStreamName)
 	}
 
-	nc, err := nats.Connect(natsURL, append(creds.options(), connectionEvents(log)...)...)
+	options := append(creds.options(), connectionEvents(log)...)
+	options = append(options, nats.MaxReconnects(-1))
+	nc, err := nats.Connect(natsURL, options...)
 	if err != nil {
 		return nil, fmt.Errorf("connect nats %q: %w", natsURL, err)
 	}

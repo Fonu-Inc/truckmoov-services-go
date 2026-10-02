@@ -41,6 +41,7 @@ type SendJobInstructionCommand struct {
 	Priority         string
 	HeaderMedia      *JobInstructionHeaderMedia
 	ButtonParameters []JobInstructionButtonParameter
+	BeforeSend       func(ctx context.Context) error
 }
 
 type SendJobInstructionUseCase struct {
@@ -132,6 +133,16 @@ func (u *SendJobInstructionUseCase) Execute(ctx context.Context, command SendJob
 
 	if err := u.repository.Save(message); err != nil {
 		return domain.OutboxMessage{}, fmt.Errorf("save queued outbox message: %w", err)
+	}
+
+	if command.BeforeSend != nil {
+		if err := command.BeforeSend(ctx); err != nil {
+			message = message.MarkFailed(u.clock.Now())
+			if saveErr := u.repository.Save(message); saveErr != nil {
+				return domain.OutboxMessage{}, fmt.Errorf("save refused outbox message: %w", saveErr)
+			}
+			return message, err
+		}
 	}
 
 	result, sendErr := u.messageProvider.SendTemplate(ctx, domain.WhatsAppTemplateMessageRequest{

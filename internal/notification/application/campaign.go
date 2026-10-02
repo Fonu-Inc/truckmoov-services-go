@@ -172,11 +172,7 @@ func NewSendCampaignUseCase(
 	}
 }
 
-// Execute broadcasts a campaign.
-//
-// The whole run is charged before anything is sent, so a tenant cannot discover
-// halfway through that they could not afford it with half the drivers already
-// messaged.
+// Execute broadcasts a campaign, billing and sending one recipient at a time.
 func (u *SendCampaignUseCase) Execute(ctx context.Context, command SendCampaignCommand) (SendCampaignResult, error) {
 	campaign, found, err := u.repository.FindCampaign(ctx, command.TenantID, command.CampaignID)
 	if err != nil {
@@ -302,7 +298,10 @@ func (u *SendCampaignUseCase) deliver(
 	// Re-checked at the moment of sending: an opt-out may have arrived between
 	// the campaign being built and it being sent.
 	suppressed, err := u.suppression.IsSuppressed(ctx, campaign.TenantID, recipient.Destination)
-	if err == nil && suppressed {
+	if err != nil {
+		return fmt.Errorf("check recipient opt-out: %w", err)
+	}
+	if suppressed {
 		recipient.State = domain.RecipientStateSuppressed
 		recipient.FailureReason = "recipient opted out"
 		return nil

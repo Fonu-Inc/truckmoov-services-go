@@ -1,6 +1,8 @@
 package trackinghttp
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +10,7 @@ import (
 	"time"
 
 	"github.com/truckmoov/services-go/internal/tracking/application"
+	"github.com/truckmoov/services-go/internal/tracking/domain"
 	"github.com/truckmoov/services-go/internal/tracking/infrastructure"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 )
@@ -87,5 +90,35 @@ func TestIngest_UnknownImeiIsQuarantinedAndListed(t *testing.T) {
 	devices, _ := f.quarantine.List(t.Context())
 	if len(devices) != 1 || devices[0].IMEI != "359779090077777" {
 		t.Fatalf("expected the IMEI in quarantine, got %+v", devices)
+	}
+}
+
+type busDownPublisher struct{ fakeTrackingPublisher }
+
+func (b *busDownPublisher) PublishLocationUpdate(context.Context, domain.LocationUpdate) error {
+	return errors.New("bus down")
+}
+
+func TestIngest_PublishFailureAsksTheVendorToRetry(t *testing.T) {
+	clock := fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)}
+	resolver := infrastructure.NewInMemoryIMEIResolver()
+	if err := resolver.Upsert(application.DeviceIdentity{IMEI: "359779090077777", TenantID: "tenant-a", VehicleUUID: "vehicle-1", DeviceID: "device-1"}); err != nil {
+		t.Fatalf("seed identity: %v", err)
+	}
+	latest := infrastructure.NewInMemoryLatestLocationRepository()
+	history := infrastructure.NewInMemoryLocationHistoryRepository()
+	ingest := application.NewIngestLocationUseCase(&busDownPublisher{}, latest, clock, fixedTrackingID{value: "1"},
+		"default", history, application.TelemetryConfig{}, resolver, nil)
+	handler := NewHandler(ingest, nil, application.NewTrackingQueryUseCase(latest, history, "default"), nil, "ingest-key", nil, nil)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
+
+	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest/vendor/traccar", strings.NewReader(unknownImeiBody))
+	req.Header.Set("X-Api-Key", "ingest-key")
+	res := httptest.NewRecorder()
+	mux.ServeHTTP(res, req)
+
+	if res.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 so the vendor retries, got %d: %s", res.Code, res.Body.String())
 	}
 }

@@ -413,6 +413,12 @@ func trackingOpenAPISpec() map[string]any {
 								"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/ErrorResponse"}},
 							},
 						},
+						"503": map[string]any{
+							"description": "Ingest is not configured, or a dependency is unavailable; retry",
+							"content": map[string]any{
+								"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/ErrorResponse"}},
+							},
+						},
 					},
 				},
 			},
@@ -454,6 +460,12 @@ func trackingOpenAPISpec() map[string]any {
 						},
 						"401": map[string]any{
 							"description": "Invalid or missing API key",
+							"content": map[string]any{
+								"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/ErrorResponse"}},
+							},
+						},
+						"503": map[string]any{
+							"description": "Ingest is not configured, or a dependency is unavailable; retry",
 							"content": map[string]any{
 								"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/ErrorResponse"}},
 							},

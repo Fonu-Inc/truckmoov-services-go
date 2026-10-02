@@ -27,7 +27,12 @@ type instructionTemplateRecorder struct {
 	err      error
 }
 
-func (s *instructionTemplateRecorder) Execute(_ context.Context, command SendJobInstructionCommand) (domain.OutboxMessage, error) {
+func (s *instructionTemplateRecorder) Execute(ctx context.Context, command SendJobInstructionCommand) (domain.OutboxMessage, error) {
+	if command.BeforeSend != nil {
+		if err := command.BeforeSend(ctx); err != nil {
+			return domain.OutboxMessage{}, err
+		}
+	}
 	s.commands = append(s.commands, command)
 	return domain.OutboxMessage{}, s.err
 }

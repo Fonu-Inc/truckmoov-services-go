@@ -69,25 +69,24 @@ type Config struct {
 	// CORSEnabled is false in every deployed environment: Kong answers CORS
 	// there, and two layers both setting Access-Control-Allow-Origin makes a
 	// browser reject the response for carrying two values.
-	CORSEnabled                 bool
-	MaxAccuracyM                float64
-	MaxSpeedKPH                 float64
-	HistoryTTLSeconds           int
-	LatestTTLSeconds            int
-	IMEIIdentityTTLSeconds      int
-	SIMTTLSeconds               int
-	TrackingGateEnabled         bool
-	TrackingGateReloadSeconds   int
-	TrackingUnknownDevicePolicy string
-	StatusTimeoutSeconds        int
-	GPSAPIKey                   string
-	RateLimitRPS                int
-	RateLimitBurst              int
-	WhatsAppAPIBaseURL          string
-	WhatsAppAppID               string
-	EventSigningSecret          string
-	EventAcceptUnsigned         bool
-	WhatsAppAppSecret           string
+	CORSEnabled               bool
+	MaxAccuracyM              float64
+	MaxSpeedKPH               float64
+	HistoryTTLSeconds         int
+	LatestTTLSeconds          int
+	IMEIIdentityTTLSeconds    int
+	SIMTTLSeconds             int
+	TrackingGateEnabled       bool
+	TrackingGateReloadSeconds int
+	StatusTimeoutSeconds      int
+	GPSAPIKey                 string
+	RateLimitRPS              int
+	RateLimitBurst            int
+	WhatsAppAPIBaseURL        string
+	WhatsAppAppID             string
+	EventSigningSecret        string
+	EventAcceptUnsigned       bool
+	WhatsAppAppSecret         string
 	// Language a campaign template is sent in. Meta resolves a template by name
 	// and language together, so the wrong one is a template that does not exist.
 	WhatsAppTemplateLanguage     string
@@ -139,11 +138,11 @@ func Load(serviceName, defaultPort string) Config {
 		DefaultTenant:                getEnv("DEFAULT_TENANT", "default"),
 		JWTSecret:                    getEnv("JWT_SECRET", "replace-me"),
 		UserTokenPublicKeys:          getEnv("USER_TOKEN_PUBLIC_KEYS", ""),
-		LegacyTokensAccepted:         getEnv("LEGACY_TOKENS_ACCEPTED", "true") != "false",
+		LegacyTokensAccepted:         getEnvBoolStrict("LEGACY_TOKENS_ACCEPTED", true),
 		ServiceTokenDir:              getEnv("SERVICE_TOKEN_DIR", "/var/run/secrets/truckmoov/service-tokens"),
 		ServiceAuthDevSecret:         getEnv("SERVICE_AUTH_DEV_SECRET", ""),
-		PortalEnforced:               getEnv("PORTAL_ENFORCEMENT", "log") == "enforce",
-		PermissionsEnforced:          getEnv("PERMISSION_ENFORCEMENT", "log") == "enforce",
+		PortalEnforced:               getEnvEnforce("PORTAL_ENFORCEMENT"),
+		PermissionsEnforced:          getEnvEnforce("PERMISSION_ENFORCEMENT"),
 		JWTKeyID:                     getEnv("JWT_KEY_ID", "unset"),
 		PostgresHost:                 getEnv("POSTGRES_HOST", "localhost"),
 		PostgresPort:                 getEnv("POSTGRES_PORT", "5432"),
@@ -167,7 +166,6 @@ func Load(serviceName, defaultPort string) Config {
 		SIMTTLSeconds:                getEnvInt("TRACKING_SIM_TTL_SECONDS", 90*24*3600),
 		TrackingGateEnabled:          getEnvBoolStrict("TRACKING_GATE_ENABLED", true),
 		TrackingGateReloadSeconds:    getEnvInt("TRACKING_GATE_RELOAD_SECONDS", 60),
-		TrackingUnknownDevicePolicy:  strings.ToLower(strings.TrimSpace(getEnv("TRACKING_UNKNOWN_DEVICE_POLICY", "default"))),
 		StatusTimeoutSeconds:         getEnvInt("TRACKING_STATUS_TIMEOUT_SECONDS", 600),
 		GPSAPIKey:                    getEnv("GPS_API_KEY", ""),
 		RateLimitRPS:                 getEnvInt("RATE_LIMIT_RPS", 100),
@@ -264,6 +262,10 @@ func getEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	return i
+}
+
+func getEnvEnforce(key string) bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(key)), "enforce")
 }
 
 func getEnvBoolStrict(key string, fallback bool) bool {

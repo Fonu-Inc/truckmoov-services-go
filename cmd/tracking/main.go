@@ -27,6 +27,11 @@ import (
 	redisstore "github.com/truckmoov/services-go/pkg/redis"
 )
 
+const (
+	identityWarmupTimeout = 30 * time.Second
+	identityRefreshEvery  = 30 * time.Minute
+)
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -101,9 +106,16 @@ func main() {
 		}
 	}
 
+	gate, suspensionSync, gateMetrics := buildGate(cfg, serviceCaller, redisClient, imeiResolver, clock, log)
+	identityMetrics := infrastructure.NewPrometheusIdentityMetrics(gateMetrics.Registry())
+	identitySource := infrastructure.NewFleetIdentityClient(cfg.FleetServiceURL, serviceCaller)
+	warmup := application.NewWarmup(clock, identityWarmupTimeout)
+	identityResolver := application.NewReadThroughResolver(imeiResolver, identitySource, gate, clock, identityMetrics, log)
+	identitySync := application.NewIdentitySync(identitySource, imeiResolver, gate, warmup, identityMetrics, log)
+
 	// Keep the IMEI→{tenant,vehicle,device} cache fresh from fleet's identity events.
 	quarantine := application.NewQuarantine(quarantineStore, clock)
-	consumeDeviceIdentity := application.NewConsumeDeviceIdentityUseCase(imeiResolver, log).WithQuarantine(quarantine)
+	consumeDeviceIdentity := application.NewConsumeDeviceIdentityUseCase(identityResolver.EventSide(), log).WithQuarantine(quarantine)
 	if _, subErr := bus.Subscribe(ctx, "tm.*.device.identity.changed", "tracking-device-identity", eventbus.Verified(consumeDeviceIdentity.Handle, cfg.EventSigningSecret, eventbus.VerifyOptions{AcceptUnsigned: cfg.EventAcceptUnsigned}, log)); subErr != nil {
 		log.Warn("device_identity_subscribe_failed", "error", subErr.Error())
 	}
@@ -115,7 +127,6 @@ func main() {
 		log.Warn("sim_changed_subscribe_failed", "error", subErr.Error())
 	}
 
-	gate, suspensionSync, gateMetrics := buildGate(cfg, serviceCaller, redisClient, imeiResolver, clock, log)
 	if gate != nil {
 		consumeTenantSuspension := application.NewConsumeTenantSuspensionUseCase(gate)
 		subscribeTenantSuspension(bus, consumeTenantSuspension, cfg.EventSigningSecret, eventbus.VerifyOptions{AcceptUnsigned: cfg.EventAcceptUnsigned}, log)
@@ -124,6 +135,7 @@ func main() {
 		}
 		go suspensionSync.Run(ctx, time.Duration(max(cfg.TrackingGateReloadSeconds, 5))*time.Second)
 	}
+	go identitySync.Run(ctx, identityRefreshEvery)
 
 	messageRate := application.NewMessageRate(clock.Now())
 	ingestLocationUseCase := application.NewIngestLocationUseCase(
@@ -137,9 +149,9 @@ func main() {
 			MaxAccuracyM: cfg.MaxAccuracyM,
 			MaxSpeedKPH:  cfg.MaxSpeedKPH,
 		},
-		imeiResolver,
+		identityResolver,
 		telemetryStore,
-	).WithGate(gate).WithMessageRate(messageRate).WithQuarantine(quarantine)
+	).WithGate(gate).WithMessageRate(messageRate).WithQuarantine(quarantine).WithWarmup(warmup).WithIdentityMetrics(identityMetrics)
 	publishAlertUseCase := application.NewPublishAlertUseCase(
 		eventPublisher,
 		clock,
@@ -185,15 +197,18 @@ func main() {
 	handler.RegisterRoutes(routes)
 
 	metrics := httpx.NewMetrics(cfg.ServiceName)
-	metricsHandler := metrics.Handler()
-	if gateMetrics != nil {
-		metricsHandler = gateMetrics.Handler(metricsHandler)
-	}
+	metricsHandler := gateMetrics.Handler(metrics.Handler())
 	routes.Handle("/metrics", []httpx.Audience{httpx.Public}, httpx.None(), metricsHandler)
 
 	readiness := httpx.ReadinessHandler("tracking",
 		httpx.ReadinessCheck{Name: "nats", Probe: bus.Ping},
 		httpx.ReadinessCheck{Name: "redis", Probe: func(context.Context) error { return redisClient.Ping() }},
+		httpx.ReadinessCheck{Name: "identity-snapshot", Probe: func(context.Context) error {
+			if !warmup.Ready() {
+				return errors.New("device identities not loaded yet")
+			}
+			return nil
+		}},
 		httpx.ReadinessCheck{Name: "suspension-gate", Probe: func(context.Context) error {
 			if !gate.Ready() {
 				return errors.New("suspension lists not loaded yet")
@@ -232,13 +247,12 @@ func buildGate(
 	clock application.Clock,
 	log *slog.Logger,
 ) (*application.IngestGate, *application.SuspensionSync, *infrastructure.PrometheusGateMetrics) {
+	metrics := infrastructure.NewPrometheusGateMetrics()
 	if !cfg.TrackingGateEnabled {
 		log.Warn("suspension_gate_disabled", "detail", "TRACKING_GATE_ENABLED=false; suspended customers are not blocked")
-		return nil, nil, nil
+		return nil, nil, metrics
 	}
-	metrics := infrastructure.NewPrometheusGateMetrics()
 	gate := application.NewIngestGate(
-		application.GateConfig{UnknownDevicePolicy: cfg.TrackingUnknownDevicePolicy},
 		infrastructure.NewRedisSuspendedSeenStore(redisClient),
 		metrics,
 		clock,

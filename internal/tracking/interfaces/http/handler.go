@@ -2,7 +2,6 @@ package trackinghttp
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -117,26 +116,7 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 }
 
 func (h *Handler) withAPIKey(next http.Handler) http.Handler {
-	if h.gpsAPIKey == "" {
-		if h.allowOpenIngest {
-			return next
-		}
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			httpx.WriteError(w, http.StatusServiceUnavailable, "ingest is not configured")
-		})
-	}
-	expected := []byte(h.gpsAPIKey)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := r.Header.Get("X-Api-Key")
-		if key == "" {
-			key = r.URL.Query().Get("api_key")
-		}
-		if subtle.ConstantTimeCompare([]byte(key), expected) != 1 {
-			httpx.WriteError(w, http.StatusUnauthorized, "invalid or missing api key")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return httpx.WithAPIKey(next, h.gpsAPIKey, h.allowOpenIngest)
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
@@ -172,8 +152,16 @@ func (h *Handler) ingestWithAdapter(w http.ResponseWriter, r *http.Request, adap
 		return
 	}
 	result, err := h.ingestLocationUseCase.Execute(r.Context(), cmd)
+	if errors.Is(err, application.ErrWarmingUp) {
+		httpx.WriteError(w, http.StatusServiceUnavailable, "warming up, retry")
+		return
+	}
 	if errors.Is(err, application.ErrIdentityUnavailable) {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "device lookup unavailable, retry")
+		return
+	}
+	if errors.Is(err, application.ErrIngestUnavailable) {
+		httpx.WriteError(w, http.StatusServiceUnavailable, "location storage unavailable, retry")
 		return
 	}
 	if err != nil {

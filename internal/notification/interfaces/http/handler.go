@@ -368,6 +368,10 @@ func (h *Handler) retryMessage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	if errors.Is(err, application.ErrMessageNotRetryable) {
+		httpx.WriteError(w, http.StatusConflict, err.Error())
+		return
+	}
 
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadGateway, err.Error())

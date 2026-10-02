@@ -92,3 +92,46 @@ func TestEtaMonitor_DoesNothingWhenTenantsCannotBeListed(t *testing.T) {
 		t.Fatalf("expected no alerts, got %+v", publisher.alerts)
 	}
 }
+
+type flakyAlertPublisher struct {
+	fakeAlertPublisher
+	failures int
+}
+
+func (f *flakyAlertPublisher) PublishAlert(ctx context.Context, tenantID, alertType, severity, jobID, vehicleID string, details map[string]any) error {
+	if f.failures > 0 {
+		f.failures--
+		return errors.New("bus down")
+	}
+	return f.fakeAlertPublisher.PublishAlert(ctx, tenantID, alertType, severity, jobID, vehicleID, details)
+}
+
+func TestEtaMonitor_AlertsALoadedJobThatIsLate(t *testing.T) {
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	repository := newLifecycleRepository()
+	_ = repository.Save(lateJob(t, "tenant-a", "job-loaded", domain.StatusLoaded, now.Add(-time.Hour)))
+	publisher := &fakeAlertPublisher{}
+	monitor := NewEtaMonitorUseCase(repository, fakeTenantLister{tenants: []string{"tenant-a"}}, publisher, lifecycleClock{now: now})
+
+	monitor.Check(context.Background())
+
+	if len(publisher.alerts) != 1 || publisher.alerts[0].jobID != "job-loaded" {
+		t.Fatalf("expected one alert for the loaded job, got %+v", publisher.alerts)
+	}
+}
+
+func TestEtaMonitor_RetriesAnAlertThePublisherRefused(t *testing.T) {
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	repository := newLifecycleRepository()
+	_ = repository.Save(lateJob(t, "tenant-a", "job-a", domain.StatusEnRoute, now.Add(-time.Hour)))
+	publisher := &flakyAlertPublisher{failures: 1}
+	monitor := NewEtaMonitorUseCase(repository, fakeTenantLister{tenants: []string{"tenant-a"}}, publisher, lifecycleClock{now: now})
+
+	monitor.Check(context.Background())
+	monitor.Check(context.Background())
+	monitor.Check(context.Background())
+
+	if len(publisher.alerts) != 1 {
+		t.Fatalf("expected the refused alert to go out once on the next sweep, got %+v", publisher.alerts)
+	}
+}

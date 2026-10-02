@@ -2,7 +2,9 @@ package httpx
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -17,18 +19,25 @@ func WithLogging(next http.Handler, log *slog.Logger) http.Handler {
 	})
 }
 
-// WithAPIKey rejects requests to the wrapped handler if the configured key is
-// non-empty and neither the X-Api-Key header nor the api_key query param match.
-func WithAPIKey(next http.Handler, apiKey string) http.Handler {
+// WithAPIKey rejects requests unless the X-Api-Key header or the api_key query
+// param carries apiKey. With no key configured it refuses everything, unless
+// allowOpen says the endpoint may run unguarded (development only).
+func WithAPIKey(next http.Handler, apiKey string, allowOpen bool) http.Handler {
 	if apiKey == "" {
-		return next
+		if allowOpen {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			WriteError(w, http.StatusServiceUnavailable, "api key is not configured")
+		})
 	}
+	expected := []byte(apiKey)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("X-Api-Key")
 		if key == "" {
 			key = r.URL.Query().Get("api_key")
 		}
-		if key != apiKey {
+		if subtle.ConstantTimeCompare([]byte(key), expected) != 1 {
 			WriteError(w, http.StatusUnauthorized, "invalid or missing api key")
 			return
 		}
@@ -88,16 +97,32 @@ const (
 	defaultMaxBodyBytes      = 1 << 20 // 1 MiB
 )
 
+type originalBodyKey struct{}
+
 // WithMaxBodyBytes caps the size of request bodies read by downstream handlers.
 // Reads beyond the limit fail, and the wrapped MaxBytesReader writes a 413 hint,
 // so handlers that io.ReadAll or json.Decode the body stay bounded.
 func WithMaxBodyBytes(next http.Handler, limit int64) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Body != nil {
+			r = r.WithContext(context.WithValue(r.Context(), originalBodyKey{}, r.Body))
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// LimitBody replaces the default body cap for this request. A MaxBytesReader
+// stacked on the default one can only lower it, so routes that take larger
+// uploads must raise it through here.
+func LimitBody(w http.ResponseWriter, r *http.Request, limit int64) {
+	body := r.Body
+	if original, ok := r.Context().Value(originalBodyKey{}).(io.ReadCloser); ok {
+		body = original
+	}
+	if body != nil {
+		r.Body = http.MaxBytesReader(w, body, limit)
+	}
 }
 
 func Run(ctx context.Context, addr string, handler http.Handler, log *slog.Logger) error {
@@ -111,7 +136,9 @@ func Run(ctx context.Context, addr string, handler http.Handler, log *slog.Logge
 		MaxHeaderBytes:    defaultMaxHeaderBytes,
 	}
 
+	drained := make(chan struct{})
 	go func() {
+		defer close(drained)
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -123,5 +150,6 @@ func Run(ctx context.Context, addr string, handler http.Handler, log *slog.Logge
 		return err
 	}
 
+	<-drained
 	return nil
 }

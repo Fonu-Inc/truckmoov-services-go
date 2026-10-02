@@ -106,6 +106,11 @@ func main() {
 	} else {
 		log.Warn("whatsapp_account_cipher_unconfigured", "message", "set WHATSAPP_ACCOUNT_ENCRYPTION_KEY to enable connected WhatsApp accounts")
 	}
+	// A nil *AESTokenCipher inside an interface would not compare equal to nil.
+	var accountCipher application.WhatsAppTokenCipher
+	if tokenCipher != nil {
+		accountCipher = tokenCipher
+	}
 
 	embeddedSignupProvider := infrastructure.NewMetaWhatsAppEmbeddedSignupProvider(
 		cfg.WhatsAppAPIBaseURL,
@@ -119,7 +124,7 @@ func main() {
 	whatsAppMessageProvider := infrastructure.NewMetaWhatsAppMessageProvider(
 		cfg.WhatsAppAPIBaseURL,
 		whatsAppAccountRepository,
-		tokenCipher,
+		accountCipher,
 		cfg.WhatsAppPhoneNumberID,
 		cfg.WhatsAppAccessToken,
 	)
@@ -149,7 +154,7 @@ func main() {
 	templateProvider := infrastructure.NewMetaWhatsAppTemplateProvider(
 		cfg.WhatsAppAPIBaseURL,
 		whatsAppAccountRepository,
-		tokenCipher,
+		accountCipher,
 		cfg.WhatsAppBusinessAccountID,
 		cfg.WhatsAppAccessToken,
 	)
@@ -183,22 +188,17 @@ func main() {
 		deliveryPublisher,
 		clock,
 		idGenerator,
-	)
-	// A nil *AESTokenCipher inside the interface would not compare equal to nil.
-	var connectorCipher application.WhatsAppTokenCipher
-	if tokenCipher != nil {
-		connectorCipher = tokenCipher
-	}
+	).WithCharger(usageCharger)
 	connectWhatsAppAccountUseCase := application.NewConnectWhatsAppAccountUseCase(
 		whatsAppAccountRepository,
 		embeddedSignupProvider,
-		connectorCipher,
+		accountCipher,
 		clock,
 		idGenerator,
 		cfg.DefaultTenant,
 	)
 	getWhatsAppAccountUseCase := application.NewGetWhatsAppAccountUseCase(whatsAppAccountRepository, cfg.DefaultTenant)
-	whatsAppConnector := application.NewWhatsAppConnector(whatsAppAccountRepository, embeddedSignupProvider, connectorCipher, clock, cfg.DefaultTenant)
+	whatsAppConnector := application.NewWhatsAppConnector(whatsAppAccountRepository, embeddedSignupProvider, accountCipher, clock, cfg.DefaultTenant)
 	disconnectWhatsAppAccountUseCase := application.NewDisconnectWhatsAppAccountUseCase(whatsAppAccountRepository, whatsAppConnector, embeddedSignupProvider, cfg.DefaultTenant)
 	createWhatsAppTemplateUseCase := application.NewCreateWhatsAppTemplateUseCase(templateProvider)
 	listWhatsAppTemplatesUseCase := application.NewListWhatsAppTemplatesUseCase(templateProvider)
@@ -297,7 +297,6 @@ func main() {
 			Reporter:      infrastructure.NewDispatchDriverInstructionReporter(cfg.DispatchServiceURL, serviceCaller, nil),
 			Claims:        eventClaims,
 			Clock:         clock,
-			Language:      cfg.WhatsAppTemplateLanguage,
 		},
 	})
 

@@ -24,16 +24,26 @@ const (
 type SuspensionSnapshotClient struct {
 	authURL  string
 	fleetURL string
-	caller   *identity.Caller
-	client   *http.Client
+	getter   serviceGetter
 }
+
+type serviceGetter struct {
+	caller *identity.Caller
+	client *http.Client
+}
+
+type statusError struct {
+	callee string
+	status int
+}
+
+func (e *statusError) Error() string { return fmt.Sprintf("%s answered %d", e.callee, e.status) }
 
 func NewSuspensionSnapshotClient(authURL, fleetURL string, caller *identity.Caller) *SuspensionSnapshotClient {
 	return &SuspensionSnapshotClient{
 		authURL:  strings.TrimRight(strings.TrimSpace(authURL), "/"),
 		fleetURL: strings.TrimRight(strings.TrimSpace(fleetURL), "/"),
-		caller:   caller,
-		client:   &http.Client{Timeout: snapshotTimeout},
+		getter:   serviceGetter{caller: caller, client: &http.Client{Timeout: snapshotTimeout}},
 	}
 }
 
@@ -55,7 +65,7 @@ func (c *SuspensionSnapshotClient) loadTenants(ctx context.Context) (map[string]
 			TenantID string `json:"tenantId"`
 		} `json:"tenants"`
 	}
-	if err := c.get(ctx, c.authURL+"/auth/internal/suspensions", "auth", &page); err != nil {
+	if err := c.getter.get(ctx, c.authURL+"/auth/internal/suspensions", "auth", &page); err != nil {
 		return nil, err
 	}
 	tenants := make(map[string]struct{}, len(page.Tenants))
@@ -78,7 +88,7 @@ func (c *SuspensionSnapshotClient) loadDevices(ctx context.Context) (map[string]
 			NextCursor *string `json:"nextCursor"`
 		}
 		endpoint := fmt.Sprintf("%s/fleet/internal/suspended-devices?limit=%d&cursor=%s", c.fleetURL, snapshotPageSize, url.QueryEscape(cursor))
-		if err := c.get(ctx, endpoint, "fleet", &page); err != nil {
+		if err := c.getter.get(ctx, endpoint, "fleet", &page); err != nil {
 			return nil, err
 		}
 		for _, device := range page.Devices {
@@ -94,7 +104,7 @@ func (c *SuspensionSnapshotClient) loadDevices(ctx context.Context) (map[string]
 	return nil, fmt.Errorf("more than %d pages", snapshotMaxPages)
 }
 
-func (c *SuspensionSnapshotClient) get(ctx context.Context, endpoint, callee string, out any) error {
+func (c serviceGetter) get(ctx context.Context, endpoint, callee string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
@@ -108,7 +118,7 @@ func (c *SuspensionSnapshotClient) get(ctx context.Context, endpoint, callee str
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s answered %d", callee, resp.StatusCode)
+		return &statusError{callee: callee, status: resp.StatusCode}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, snapshotMaxBody))
 	if err != nil {

@@ -126,7 +126,7 @@ func (h *Handler) systemWhatsAppSendMedia(w http.ResponseWriter, r *http.Request
 }
 
 func readMediaForm(w http.ResponseWriter, r *http.Request, conversationID string) (application.PlatformMediaCommand, bool) {
-	r.Body = http.MaxBytesReader(w, r.Body, application.MaxPlatformMediaBytes+(1<<20))
+	httpx.LimitBody(w, r, application.MaxPlatformMediaBytes+(1<<20))
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, "the upload is invalid or too large")
 		return application.PlatformMediaCommand{}, false

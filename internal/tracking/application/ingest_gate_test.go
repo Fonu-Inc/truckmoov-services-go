@@ -81,7 +81,7 @@ type gateHarness struct {
 	ingest    *IngestLocationUseCase
 }
 
-func newGateHarness(policy string) *gateHarness {
+func newGateHarness() *gateHarness {
 	h := &gateHarness{
 		source:    &fakeSource{},
 		resolver:  newFakeIMEIResolver(),
@@ -91,7 +91,7 @@ func newGateHarness(policy string) *gateHarness {
 		clock:     &gateClock{now: time.Date(2026, 10, 5, 8, 0, 0, 0, time.UTC)},
 	}
 	log := logger.New("test")
-	h.gate = NewIngestGate(GateConfig{UnknownDevicePolicy: policy}, h.seen, h.metrics, h.clock, log)
+	h.gate = NewIngestGate(h.seen, h.metrics, h.clock, log)
 	h.sync = NewSuspensionSync(h.source, h.gate, h.resolver, &fakeIndex{members: map[string]struct{}{}}, log)
 	h.ingest = NewIngestLocationUseCase(
 		h.publisher, &fakeLatestLocationRepository{}, h.clock, fixedTrackingIDGenerator{value: "evt-1"},
@@ -122,7 +122,7 @@ func envelopeFor(tenantID string) eventbus.EventEnvelope {
 }
 
 func TestIngestGate_SuspendAndReinstateByEvent(t *testing.T) {
-	h := newGateHarness("default")
+	h := newGateHarness()
 	events := NewConsumeTenantSuspensionUseCase(h.gate)
 	cmd := IngestLocationCommand{TenantID: "t1", VehicleID: "v1", DeviceID: "d1"}
 
@@ -162,11 +162,11 @@ func TestIngestGate_DeviceBlocking(t *testing.T) {
 		{"cold cache imei in list", nil, []string{imei}, IngestLocationCommand{IMEI: imei, TenantID: "t9"}, SkipDeviceSuspended},
 		{"spoofed body tenant loses to resolved tenant", &DeviceIdentity{IMEI: imei, TenantID: "bad"}, nil, IngestLocationCommand{IMEI: imei, TenantID: "good"}, SkipTenantSuspended},
 		{"warm identity not suspended beats stale list", &DeviceIdentity{IMEI: imei, TenantID: "t1"}, []string{imei}, IngestLocationCommand{IMEI: imei}, ""},
-		{"unknown imei is quarantined even on default policy", nil, nil, IngestLocationCommand{IMEI: imei, TenantID: "t9"}, SkipUnknownDevice},
+		{"unknown imei is quarantined", nil, nil, IngestLocationCommand{IMEI: imei, TenantID: "t9"}, SkipUnknownDevice},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := newGateHarness("default")
+			h := newGateHarness()
 			if tt.identity != nil {
 				_ = h.resolver.Upsert(*tt.identity)
 			}
@@ -180,7 +180,7 @@ func TestIngestGate_DeviceBlocking(t *testing.T) {
 }
 
 func TestIngestGate_SpoofedTenantCannotUnblockSuspendedTenantDevice(t *testing.T) {
-	h := newGateHarness("default")
+	h := newGateHarness()
 	_ = h.resolver.Upsert(DeviceIdentity{IMEI: "111", TenantID: "t-suspended"})
 	h.gate.Replace(snapshotOf([]string{"t-suspended"}, nil), h.clock.now)
 	r := h.send(IngestLocationCommand{IMEI: "111", TenantID: "t-clean"})
@@ -192,19 +192,17 @@ func TestIngestGate_SpoofedTenantCannotUnblockSuspendedTenantDevice(t *testing.T
 func TestIngestGate_UnknownIMEI(t *testing.T) {
 	tests := []struct {
 		name   string
-		policy string
 		tenant string
 		list   []string
 		want   string
 	}{
-		{"default policy quarantines clean tenant", "default", "t1", nil, SkipUnknownDevice},
-		{"default policy blocks suspended body tenant", "default", "t-bad", nil, SkipTenantSuspended},
-		{"default policy blocks listed imei", "default", "t1", []string{"999"}, SkipDeviceSuspended},
-		{"reject policy drops", "reject", "t1", nil, SkipUnknownDevice},
+		{"quarantines clean tenant", "t1", nil, SkipUnknownDevice},
+		{"blocks suspended body tenant", "t-bad", nil, SkipTenantSuspended},
+		{"blocks listed imei", "t1", []string{"999"}, SkipDeviceSuspended},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := newGateHarness(tt.policy)
+			h := newGateHarness()
 			h.gate.Replace(snapshotOf([]string{"t-bad"}, tt.list), h.clock.now)
 			r := h.send(IngestLocationCommand{IMEI: "999", TenantID: tt.tenant})
 			if r.SkipReason != tt.want {
@@ -215,7 +213,7 @@ func TestIngestGate_UnknownIMEI(t *testing.T) {
 }
 
 func TestSuspensionSync_ReloadHealsMissedEventsBothWays(t *testing.T) {
-	h := newGateHarness("default")
+	h := newGateHarness()
 	_ = h.resolver.Upsert(DeviceIdentity{IMEI: "111", TenantID: "t1"})
 	cmd := IngestLocationCommand{TenantID: "t1", VehicleID: "v", DeviceID: "d"}
 
@@ -240,7 +238,7 @@ func TestSuspensionSync_ReloadHealsMissedEventsBothWays(t *testing.T) {
 }
 
 func TestSuspensionSync_EventDuringLoadIsNotUndone(t *testing.T) {
-	h := newGateHarness("default")
+	h := newGateHarness()
 	events := NewConsumeTenantSuspensionUseCase(h.gate)
 	started := h.gate.Begin()
 	h.clock.now = h.clock.now.Add(time.Second)
@@ -252,7 +250,7 @@ func TestSuspensionSync_EventDuringLoadIsNotUndone(t *testing.T) {
 }
 
 func TestSuspensionSync_StartupAndRestart(t *testing.T) {
-	h := newGateHarness("default")
+	h := newGateHarness()
 	h.source.err = errors.New("auth down")
 	if err := h.sync.LoadInitial(context.Background(), 2, time.Millisecond); err == nil {
 		t.Fatal("expected failure")
@@ -270,7 +268,7 @@ func TestSuspensionSync_StartupAndRestart(t *testing.T) {
 		t.Fatalf("load should succeed: %v ready=%v", err, h.gate.Ready())
 	}
 
-	restarted := NewIngestGate(GateConfig{}, h.seen, h.metrics, h.clock, logger.New("test"))
+	restarted := NewIngestGate(h.seen, h.metrics, h.clock, logger.New("test"))
 	if restarted.Ready() {
 		t.Fatal("fresh pod starts not ready")
 	}
@@ -281,7 +279,7 @@ func TestSuspensionSync_StartupAndRestart(t *testing.T) {
 }
 
 func TestSuspensionSync_ReloadFailureKeepsLastSets(t *testing.T) {
-	h := newGateHarness("default")
+	h := newGateHarness()
 	h.reload(snapshotOf([]string{"t1"}, []string{"111"}))
 	h.source.err = errors.New("fleet 503")
 	if err := h.sync.Reload(context.Background()); err == nil {
@@ -296,7 +294,7 @@ func TestSuspensionSync_ReloadFailureKeepsLastSets(t *testing.T) {
 }
 
 func TestIngestGate_SeenRecordAndLogAreThrottled(t *testing.T) {
-	h := newGateHarness("default")
+	h := newGateHarness()
 	h.gate.Replace(snapshotOf(nil, []string{"111"}), h.clock.now)
 	for i := 0; i < 5; i++ {
 		h.send(IngestLocationCommand{IMEI: "111"})

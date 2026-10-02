@@ -1,8 +1,10 @@
 package httpx
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -65,5 +67,43 @@ func TestWithCORSHandlesPreflight(t *testing.T) {
 
 	if nextCalled {
 		t.Fatal("expected middleware to short-circuit preflight request")
+	}
+}
+
+func readBodyHandler(raise int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if raise > 0 {
+			LimitBody(w, r, raise)
+		}
+		if _, err := io.ReadAll(r.Body); err != nil {
+			WriteError(w, http.StatusRequestEntityTooLarge, "too large")
+			return
+		}
+		WriteOK(w, http.StatusOK, nil)
+	})
+}
+
+func postBody(handler http.Handler, size int) int {
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/upload", strings.NewReader(strings.Repeat("x", size))))
+	return recorder.Code
+}
+
+func TestLimitBodyRaisesTheDefaultCapForOneRoute(t *testing.T) {
+	handler := WithMaxBodyBytes(readBodyHandler(4096), 1024)
+
+	if code := postBody(handler, 3000); code != http.StatusOK {
+		t.Fatalf("a body under the route's own limit must get past the default cap, got %d", code)
+	}
+	if code := postBody(handler, 5000); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a body over the route's own limit must be refused, got %d", code)
+	}
+}
+
+func TestDefaultBodyCapAppliesWithoutLimitBody(t *testing.T) {
+	handler := WithMaxBodyBytes(readBodyHandler(0), 1024)
+
+	if code := postBody(handler, 3000); code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected the default cap to refuse the body, got %d", code)
 	}
 }

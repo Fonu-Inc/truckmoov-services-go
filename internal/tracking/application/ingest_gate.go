@@ -12,9 +12,6 @@ const (
 	SkipDeviceSuspended = "device_suspended"
 	SkipUnknownDevice   = "unknown_device"
 
-	UnknownDevicePolicyDefault = "default"
-	UnknownDevicePolicyReject  = "reject"
-
 	blockedLogEvery = 5 * time.Minute
 	seenWriteEvery  = time.Minute
 )
@@ -33,10 +30,6 @@ type SuspendedSeenStore interface {
 	RecordSeen(id string, at time.Time) error
 }
 
-type GateConfig struct {
-	UnknownDevicePolicy string
-}
-
 type tenantMark struct {
 	tenantID  string
 	suspended bool
@@ -44,7 +37,6 @@ type tenantMark struct {
 }
 
 type IngestGate struct {
-	cfg     GateConfig
 	seen    SuspendedSeenStore
 	metrics GateMetrics
 	clock   Clock
@@ -61,12 +53,8 @@ type IngestGate struct {
 	seenLimit *rateLimiter
 }
 
-func NewIngestGate(cfg GateConfig, seen SuspendedSeenStore, metrics GateMetrics, clock Clock, log *slog.Logger) *IngestGate {
-	if cfg.UnknownDevicePolicy != UnknownDevicePolicyReject {
-		cfg.UnknownDevicePolicy = UnknownDevicePolicyDefault
-	}
+func NewIngestGate(seen SuspendedSeenStore, metrics GateMetrics, clock Clock, log *slog.Logger) *IngestGate {
 	return &IngestGate{
-		cfg:       cfg,
 		seen:      seen,
 		metrics:   metrics,
 		clock:     clock,
@@ -130,6 +118,17 @@ func (g *IngestGate) Replace(snapshot SuspensionSnapshot, startedAt time.Time) {
 	g.loaded = true
 }
 
+// DeviceSuspended reports whether the last loaded list holds this IMEI.
+func (g *IngestGate) DeviceSuspended(imei string) bool {
+	if g == nil {
+		return false
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	_, held := g.imeis[strings.TrimSpace(imei)]
+	return held
+}
+
 func (g *IngestGate) ReloadFailed() {
 	if g != nil && g.metrics != nil {
 		g.metrics.ReloadFailed()
@@ -166,9 +165,6 @@ func (g *IngestGate) decide(tenantID string, identity *DeviceIdentity, imei stri
 	}
 	if _, blocked := g.imeis[imei]; blocked {
 		return SkipDeviceSuspended
-	}
-	if g.cfg.UnknownDevicePolicy == UnknownDevicePolicyReject {
-		return SkipUnknownDevice
 	}
 	return ""
 }

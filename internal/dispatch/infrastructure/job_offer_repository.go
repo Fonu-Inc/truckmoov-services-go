@@ -270,8 +270,8 @@ func (r *PostgresJobOfferRepository) Accept(
 	}
 
 	siblingRows, err := tx.QueryContext(ctx,
-		`SELECT `+jobOfferColumns+` FROM job_offers WHERE job_id = $1 AND id <> $2 AND status = $3 FOR UPDATE`,
-		offer.JobID, offer.ID, domain.OfferStatusPending,
+		`SELECT `+jobOfferColumns+` FROM job_offers WHERE offering_tenant_id = $1 AND job_id = $2 AND id <> $3 AND status = $4 FOR UPDATE`,
+		offer.OfferingTenantID, offer.JobID, offer.ID, domain.OfferStatusPending,
 	)
 	if err != nil {
 		return application.AcceptedOffer{}, fmt.Errorf("load sibling offers: %w", err)
@@ -347,6 +347,13 @@ func (r *PostgresJobOfferRepository) Accept(
 		transferred.CreatedAt, transferred.UpdatedAt, newPayload,
 	); err != nil {
 		return application.AcceptedOffer{}, fmt.Errorf("insert job under carrier tenant: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE dispatch_job_attachments SET tenant_id = $1 WHERE tenant_id = $2 AND job_id = $3`,
+		transferred.TenantID, offer.OfferingTenantID, offer.JobID,
+	); err != nil {
+		return application.AcceptedOffer{}, fmt.Errorf("move job attachments to carrier tenant: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

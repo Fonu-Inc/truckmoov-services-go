@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	redisstore "github.com/truckmoov/services-go/pkg/redis"
@@ -58,43 +57,6 @@ func inChunks(items []string, apply func([]string) error) error {
 		if err := apply(items[start:end]); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-type InMemorySuspendedIMEIIndex struct {
-	mu      sync.Mutex
-	members map[string]struct{}
-}
-
-func NewInMemorySuspendedIMEIIndex() *InMemorySuspendedIMEIIndex {
-	return &InMemorySuspendedIMEIIndex{members: map[string]struct{}{}}
-}
-
-func (i *InMemorySuspendedIMEIIndex) Members() ([]string, error) {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	out := make([]string, 0, len(i.members))
-	for imei := range i.members {
-		out = append(out, imei)
-	}
-	return out, nil
-}
-
-func (i *InMemorySuspendedIMEIIndex) Add(imeis ...string) error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	for _, imei := range imeis {
-		i.members[imei] = struct{}{}
-	}
-	return nil
-}
-
-func (i *InMemorySuspendedIMEIIndex) Remove(imeis ...string) error {
-	i.mu.Lock()
-	defer i.mu.Unlock()
-	for _, imei := range imeis {
-		delete(i.members, imei)
 	}
 	return nil
 }
