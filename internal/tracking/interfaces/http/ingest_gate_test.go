@@ -1,7 +1,6 @@
 package trackinghttp
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,7 +50,7 @@ func TestHandler_SuspendedMessagesAreDroppedOnEveryHTTPPath(t *testing.T) {
 				t.Fatalf("status %d: %s", res.Code, res.Body.String())
 			}
 			var payload map[string]any
-			_ = json.Unmarshal(res.Body.Bytes(), &payload)
+			decodeData(t, res.Body.Bytes(), &payload)
 			if payload["skipped"] != true || payload["published"] == true {
 				t.Fatalf("expected dropped, got %v", payload)
 			}

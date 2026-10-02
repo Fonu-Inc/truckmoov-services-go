@@ -1,7 +1,6 @@
 package trackinghttp
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -119,8 +118,9 @@ func TestBlockedDevices_Endpoint(t *testing.T) {
 				return
 			}
 			var body application.BlockedDevicesReport
-			if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil || body.CountsSince != "service_restart" || len(body.Devices) != 1 {
-				t.Fatalf("body %s err %v", res.Body.String(), err)
+			decodeData(t, res.Body.Bytes(), &body)
+			if body.CountsSince != "service_restart" || len(body.Devices) != 1 {
+				t.Fatalf("body %s", res.Body.String())
 			}
 		})
 	}

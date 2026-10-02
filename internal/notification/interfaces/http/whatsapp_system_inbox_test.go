@@ -83,7 +83,7 @@ func TestSystemInboxReturnsPlainPagesAndHidesTenantConversations(t *testing.T) {
 		Items      []map[string]any `json:"items"`
 		NextCursor *string          `json:"next_cursor"`
 	}
-	if err := json.Unmarshal(list.Body.Bytes(), &page); err != nil || len(page.Items) != 1 || page.Items[0]["id"] != "wac-1" {
+	if err := json.Unmarshal(decodeNotificationEnvelope(t, list).Data, &page); err != nil || len(page.Items) != 1 || page.Items[0]["id"] != "wac-1" {
 		t.Fatalf("list: %s err=%v", list.Body.String(), err)
 	}
 	if page.Items[0]["unread_count"] != float64(1) || page.Items[0]["is_locked"] != false || page.Items[0]["driver_name"] != "Ada" {
@@ -94,7 +94,7 @@ func TestSystemInboxReturnsPlainPagesAndHidesTenantConversations(t *testing.T) {
 	var thread struct {
 		Items []map[string]any `json:"items"`
 	}
-	if err := json.Unmarshal(messages.Body.Bytes(), &thread); err != nil || len(thread.Items) != 1 {
+	if err := json.Unmarshal(decodeNotificationEnvelope(t, messages).Data, &thread); err != nil || len(thread.Items) != 1 {
 		t.Fatalf("messages: %s", messages.Body.String())
 	}
 	if thread.Items[0]["message_type"] != "other" || thread.Items[0]["text"] != nil {
