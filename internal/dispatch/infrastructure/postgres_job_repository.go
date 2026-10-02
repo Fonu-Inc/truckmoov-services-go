@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
 )
@@ -85,6 +86,16 @@ ALTER TABLE dispatch_jobs
 		return fmt.Errorf("ensure delivered at column: %w", err)
 	}
 
+	if _, err := r.db.ExecContext(ctx, `
+ALTER TABLE dispatch_jobs
+    ADD COLUMN IF NOT EXISTS late_alerted BOOLEAN NOT NULL DEFAULT FALSE
+`); err != nil {
+		return fmt.Errorf("ensure late alerted column: %w", err)
+	}
+	if err := r.backfillDeliveredAt(ctx); err != nil {
+		return err
+	}
+
 	// Canonicalize older persisted priority values so the database, API responses,
 	// and frontend all use the same vocabulary: low, normal, high, urgent.
 	if _, err := r.db.ExecContext(ctx, `
@@ -119,6 +130,82 @@ WHERE lower(priority) IN ('critical', 'medium')
 		return fmt.Errorf("normalize dispatch job priorities: %w", err)
 	}
 	return nil
+}
+
+type deliveredBackfill struct {
+	tenantID, id string
+	deliveredAt  time.Time
+}
+
+// backfillDeliveredAt stamps delivered_at on delivered jobs that predate it,
+// from their timeline. Jobs with no delivered entry stay null. Idempotent.
+func (r *PostgresJobRepository) backfillDeliveredAt(ctx context.Context) error {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT tenant_id, id, payload FROM dispatch_jobs WHERE status = 'delivered' AND delivered_at IS NULL`)
+	if err != nil {
+		return fmt.Errorf("find delivered jobs without delivered_at: %w", err)
+	}
+	pending, err := collectDeliveredBackfill(rows)
+	if err != nil {
+		return err
+	}
+	for _, item := range pending {
+		if _, err := r.db.ExecContext(ctx, `
+UPDATE dispatch_jobs
+SET delivered_at = $3,
+    payload = jsonb_set(payload, '{delivered_at}', to_jsonb($4::text), true)
+WHERE tenant_id = $1 AND id = $2 AND delivered_at IS NULL`,
+			item.tenantID, item.id, item.deliveredAt.UTC(), item.deliveredAt.UTC().Format(time.RFC3339Nano),
+		); err != nil {
+			return fmt.Errorf("backfill delivered_at: %w", err)
+		}
+	}
+	return nil
+}
+
+func collectDeliveredBackfill(rows *sql.Rows) ([]deliveredBackfill, error) {
+	defer rows.Close()
+	pending := make([]deliveredBackfill, 0)
+	for rows.Next() {
+		var tenantID, id string
+		var payload []byte
+		if err := rows.Scan(&tenantID, &id, &payload); err != nil {
+			return nil, fmt.Errorf("scan delivered job: %w", err)
+		}
+		job, err := decodeStoredJob(payload)
+		if err != nil {
+			continue
+		}
+		if deliveredAt := job.TimelineDeliveredAt(); deliveredAt != nil {
+			pending = append(pending, deliveredBackfill{tenantID: tenantID, id: id, deliveredAt: *deliveredAt})
+		}
+	}
+	return pending, rows.Err()
+}
+
+func (r *PostgresJobRepository) LateAlertedJobIDs(ctx context.Context, tenantID string) (map[string]bool, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id FROM dispatch_jobs WHERE tenant_id = $1 AND late_alerted`, strings.TrimSpace(tenantID))
+	if err != nil {
+		return nil, fmt.Errorf("list late alerted jobs: %w", err)
+	}
+	defer rows.Close()
+	ids := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids[id] = true
+	}
+	return ids, rows.Err()
+}
+
+func (r *PostgresJobRepository) MarkLateAlerted(ctx context.Context, tenantID, jobID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE dispatch_jobs SET late_alerted = TRUE WHERE tenant_id = $1 AND id = $2`,
+		strings.TrimSpace(tenantID), strings.TrimSpace(jobID))
+	return err
 }
 
 func (r *PostgresJobRepository) Save(job domain.Job) error {
@@ -202,7 +289,7 @@ ON CONFLICT (tenant_id, id) DO UPDATE SET
 	return nil
 }
 
-func (r *PostgresJobRepository) FindByTenantAndID(tenantID, id string) (domain.Job, bool) {
+func (r *PostgresJobRepository) FindByTenantAndID(tenantID, id string) (domain.Job, error) {
 	var payload []byte
 	err := r.db.QueryRowContext(
 		context.Background(),
@@ -212,16 +299,11 @@ func (r *PostgresJobRepository) FindByTenantAndID(tenantID, id string) (domain.J
 	).Scan(&payload)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.Job{}, false
+			return domain.Job{}, domain.ErrJobNotFound
 		}
-		return domain.Job{}, false
+		return domain.Job{}, fmt.Errorf("find dispatch job: %w", err)
 	}
-
-	job, err := decodeStoredJob(payload)
-	if err != nil {
-		return domain.Job{}, false
-	}
-	return job, true
+	return decodeStoredJob(payload)
 }
 
 func (r *PostgresJobRepository) FindByTenant(tenantID string) ([]domain.Job, error) {

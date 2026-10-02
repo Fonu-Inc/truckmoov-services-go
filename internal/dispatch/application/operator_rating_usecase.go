@@ -50,9 +50,12 @@ func (u *RateOperatorUseCase) Execute(ctx context.Context, command RateOperatorC
 		return domain.OperatorRating{}, ErrRatingAlreadyExists
 	}
 
-	job, found := u.jobs.FindByTenantAndID(command.OperatorTenantID, command.JobID)
-	if !found {
+	job, err := u.jobs.FindByTenantAndID(command.OperatorTenantID, command.JobID)
+	if errors.Is(err, ErrJobNotFound) {
 		return domain.OperatorRating{}, ErrSubDispatchJobNotFound
+	}
+	if err != nil {
+		return domain.OperatorRating{}, fmt.Errorf("load operator job: %w", err)
 	}
 	if job.Status != domain.StatusDelivered {
 		return domain.OperatorRating{}, ErrJobNotDelivered
@@ -64,7 +67,7 @@ func (u *RateOperatorUseCase) Execute(ctx context.Context, command RateOperatorC
 	}
 	sentByThisAggregator := false
 	for _, offer := range accepted {
-		if offer.JobID == command.JobID {
+		if offer.CarrierJob() == command.JobID {
 			sentByThisAggregator = true
 			break
 		}

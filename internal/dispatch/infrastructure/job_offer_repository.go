@@ -24,8 +24,10 @@ CREATE TABLE IF NOT EXISTS job_offers (
     response_note TEXT NOT NULL DEFAULT '',
     responded_at TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
+    updated_at TIMESTAMPTZ NOT NULL,
+    carrier_job_id TEXT NOT NULL DEFAULT ''
 );
+ALTER TABLE job_offers ADD COLUMN IF NOT EXISTS carrier_job_id TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_job_offers_tenant_job ON job_offers (offering_tenant_id, job_id);
 CREATE INDEX IF NOT EXISTS idx_job_offers_target_status ON job_offers (target_tenant_id, status);
 CREATE INDEX IF NOT EXISTS idx_job_offers_offering_status ON job_offers (offering_tenant_id, status);
@@ -61,11 +63,11 @@ func (r *PostgresJobOfferRepository) Create(ctx context.Context, offer domain.Jo
 	_, err := r.db.ExecContext(ctx, `
         INSERT INTO job_offers
             (id, job_id, offering_tenant_id, target_tenant_id, offered_rate_ngn,
-             status, expires_at, response_note, responded_at, created_at, updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+             status, expires_at, response_note, responded_at, created_at, updated_at, carrier_job_id)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 		offer.ID, offer.JobID, offer.OfferingTenantID, offer.TargetTenantID,
 		offer.OfferedRateNgn, offer.Status, offer.ExpiresAt, offer.ResponseNote,
-		offer.RespondedAt, offer.CreatedAt, offer.UpdatedAt,
+		offer.RespondedAt, offer.CreatedAt, offer.UpdatedAt, offer.CarrierJobID,
 	)
 	if err != nil {
 		return domain.JobOffer{}, fmt.Errorf("insert job offer: %w", err)
@@ -74,14 +76,14 @@ func (r *PostgresJobOfferRepository) Create(ctx context.Context, offer domain.Jo
 }
 
 const jobOfferColumns = `id, job_id, offering_tenant_id, target_tenant_id, offered_rate_ngn,
-    status, expires_at, response_note, responded_at, created_at, updated_at`
+    status, expires_at, response_note, responded_at, created_at, updated_at, carrier_job_id`
 
 func scanJobOffer(scanner interface{ Scan(...any) error }) (domain.JobOffer, error) {
 	var offer domain.JobOffer
 	err := scanner.Scan(
 		&offer.ID, &offer.JobID, &offer.OfferingTenantID, &offer.TargetTenantID,
 		&offer.OfferedRateNgn, &offer.Status, &offer.ExpiresAt, &offer.ResponseNote,
-		&offer.RespondedAt, &offer.CreatedAt, &offer.UpdatedAt,
+		&offer.RespondedAt, &offer.CreatedAt, &offer.UpdatedAt, &offer.CarrierJobID,
 	)
 	return offer, err
 }
@@ -321,6 +323,12 @@ func (r *PostgresJobOfferRepository) Accept(
 	if err != nil {
 		return application.AcceptedOffer{}, err
 	}
+	carrierHasJob, err := carrierHoldsJob(ctx, tx, targetTenantID, offer.JobID)
+	if err != nil {
+		return application.AcceptedOffer{}, err
+	}
+	transferred.ID = carrierJobIDFor(offer, carrierHasJob)
+	accepted.CarrierJobID = transferred.ID
 
 	newPayload, err := json.Marshal(transferred)
 	if err != nil {
@@ -350,10 +358,17 @@ func (r *PostgresJobOfferRepository) Accept(
 	}
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE dispatch_job_attachments SET tenant_id = $1 WHERE tenant_id = $2 AND job_id = $3`,
-		transferred.TenantID, offer.OfferingTenantID, offer.JobID,
+		`UPDATE dispatch_job_attachments SET tenant_id = $1, job_id = $2 WHERE tenant_id = $3 AND job_id = $4`,
+		transferred.TenantID, transferred.ID, offer.OfferingTenantID, offer.JobID,
 	); err != nil {
 		return application.AcceptedOffer{}, fmt.Errorf("move job attachments to carrier tenant: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE job_offers SET carrier_job_id = $1 WHERE id = $2`,
+		transferred.ID, accepted.ID,
+	); err != nil {
+		return application.AcceptedOffer{}, fmt.Errorf("record carrier job id: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -361,4 +376,25 @@ func (r *PostgresJobOfferRepository) Accept(
 	}
 
 	return application.AcceptedOffer{Offer: accepted, Job: transferred}, nil
+}
+
+func carrierHoldsJob(ctx context.Context, tx *sql.Tx, carrierTenantID, jobID string) (bool, error) {
+	var exists bool
+	err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM dispatch_jobs WHERE tenant_id = $1 AND id = $2)`,
+		carrierTenantID, jobID,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check carrier job id: %w", err)
+	}
+	return exists, nil
+}
+
+// carrierJobIDFor keeps the origin id unless the carrier already holds a job
+// with it, in which case the offer id makes the carrier's copy unique.
+func carrierJobIDFor(offer domain.JobOffer, carrierHasJob bool) string {
+	if !carrierHasJob {
+		return offer.JobID
+	}
+	return offer.JobID + "-" + offer.ID
 }

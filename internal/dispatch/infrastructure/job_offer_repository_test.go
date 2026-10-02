@@ -51,11 +51,11 @@ func TestInMemoryJobOfferRepository_AcceptTransfersTheJobToTheCarrier(t *testing
 	// The old tenant no longer holds it, and the new tenant does — this is the
 	// "accepted but unassigned" failure the requirements name, checked from
 	// both directions.
-	if _, found := jobs.FindByTenantAndID("tenant-owner", "job-1"); found {
+	if _, err := jobs.FindByTenantAndID("tenant-owner", "job-1"); err == nil {
 		t.Fatal("the offering tenant should no longer hold the job after acceptance")
 	}
-	transferredJob, found := jobs.FindByTenantAndID("tenant-carrier", "job-1")
-	if !found {
+	transferredJob, err := jobs.FindByTenantAndID("tenant-carrier", "job-1")
+	if err != nil {
 		t.Fatal("expected the carrier tenant to hold the job after acceptance")
 	}
 	if transferredJob.Status == domain.StatusCancelled {
@@ -168,5 +168,35 @@ func TestInMemoryJobOfferRepository_CountPendingIsScopedToTheTargetTenant(t *tes
 	}
 	if count != 2 {
 		t.Fatalf("expected 2, got %d", count)
+	}
+}
+
+func TestInMemoryJobOfferRepository_AcceptKeepsBothJobsWhenCarrierHasTheSameID(t *testing.T) {
+	ctx := context.Background()
+	jobs := NewInMemoryJobRepository()
+	if err := jobs.Save(newTestJob(t, "tenant-owner", "job-1")); err != nil {
+		t.Fatalf("save owner job: %v", err)
+	}
+	if err := jobs.Save(newTestJob(t, "tenant-carrier", "job-1")); err != nil {
+		t.Fatalf("save carrier job: %v", err)
+	}
+	offers := NewInMemoryJobOfferRepository(jobs)
+	now := time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC)
+	if _, err := offers.Create(ctx, newTestOffer(t, "offer-1", "job-1", "tenant-owner", "tenant-carrier", now.Add(time.Hour))); err != nil {
+		t.Fatalf("create offer: %v", err)
+	}
+
+	result, err := offers.Accept(ctx, "offer-1", "tenant-carrier", "", now)
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if result.Job.ID == "job-1" || result.Offer.CarrierJob() != result.Job.ID {
+		t.Fatalf("expected a new carrier id linked from the offer, got job %q offer %q", result.Job.ID, result.Offer.CarrierJob())
+	}
+	if _, err := jobs.FindByTenantAndID("tenant-carrier", "job-1"); err != nil {
+		t.Fatalf("the carrier's own job must be untouched: %v", err)
+	}
+	if _, err := jobs.FindByTenantAndID("tenant-carrier", result.Job.ID); err != nil {
+		t.Fatalf("the transferred copy must exist under its new id: %v", err)
 	}
 }

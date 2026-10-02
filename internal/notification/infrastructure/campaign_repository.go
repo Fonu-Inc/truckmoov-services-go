@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
+ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS consecutive_refusals INT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_campaigns_tenant_status ON campaigns (tenant_id, status);
 
 CREATE TABLE IF NOT EXISTS campaign_recipients (
@@ -44,6 +45,8 @@ CREATE TABLE IF NOT EXISTS campaign_recipients (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
+ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS interrupted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE campaign_recipients ADD COLUMN IF NOT EXISTS auto_retried BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_campaign_recipients_campaign ON campaign_recipients (tenant_id, campaign_id);
 -- Partial: most rows carry no provider id, and this index exists only to match
 -- an incoming receipt back to its recipient.
@@ -76,8 +79,8 @@ func (r *PostgresCampaignRepository) SaveCampaign(ctx context.Context, campaign 
 	}
 
 	result, err := r.db.ExecContext(ctx, `
-        INSERT INTO campaigns (id, tenant_id, name, channels, bodies, template_name, status, scheduled_for, created_at, updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+        INSERT INTO campaigns (id, tenant_id, name, channels, bodies, template_name, status, scheduled_for, created_at, updated_at, consecutive_refusals)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
         ON CONFLICT (id) DO UPDATE SET
             name = EXCLUDED.name,
             channels = EXCLUDED.channels,
@@ -85,11 +88,12 @@ func (r *PostgresCampaignRepository) SaveCampaign(ctx context.Context, campaign 
             template_name = EXCLUDED.template_name,
             status = EXCLUDED.status,
             scheduled_for = EXCLUDED.scheduled_for,
+            consecutive_refusals = EXCLUDED.consecutive_refusals,
             updated_at = EXCLUDED.updated_at
         WHERE campaigns.tenant_id = EXCLUDED.tenant_id`,
 		campaign.ID, campaign.TenantID, campaign.Name, channels, bodies,
 		campaign.TemplateName, campaign.Status, campaign.ScheduledFor,
-		campaign.CreatedAt, campaign.UpdatedAt,
+		campaign.CreatedAt, campaign.UpdatedAt, campaign.ConsecutiveRefusals,
 	)
 	if err != nil {
 		return domain.Campaign{}, fmt.Errorf("save campaign: %w", err)
@@ -100,13 +104,25 @@ func (r *PostgresCampaignRepository) SaveCampaign(ctx context.Context, campaign 
 	return campaign, nil
 }
 
+func (r *PostgresCampaignRepository) SaveCampaignIfStatus(ctx context.Context, campaign domain.Campaign, expected string) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
+        UPDATE campaigns SET status = $4, consecutive_refusals = $5, updated_at = $6
+        WHERE tenant_id = $1 AND id = $2 AND status = $3`,
+		campaign.TenantID, campaign.ID, expected, campaign.Status, campaign.ConsecutiveRefusals, campaign.UpdatedAt.UTC())
+	if err != nil {
+		return false, fmt.Errorf("save campaign: %w", err)
+	}
+	written, err := result.RowsAffected()
+	return written > 0, err
+}
+
 func scanCampaign(scanner interface{ Scan(...any) error }) (domain.Campaign, error) {
 	var campaign domain.Campaign
 	var channels, bodies []byte
 	if err := scanner.Scan(
 		&campaign.ID, &campaign.TenantID, &campaign.Name, &channels, &bodies,
 		&campaign.TemplateName, &campaign.Status, &campaign.ScheduledFor,
-		&campaign.CreatedAt, &campaign.UpdatedAt,
+		&campaign.CreatedAt, &campaign.UpdatedAt, &campaign.ConsecutiveRefusals,
 	); err != nil {
 		return domain.Campaign{}, err
 	}
@@ -119,7 +135,7 @@ func scanCampaign(scanner interface{ Scan(...any) error }) (domain.Campaign, err
 	return campaign, nil
 }
 
-const campaignColumns = `id, tenant_id, name, channels, bodies, template_name, status, scheduled_for, created_at, updated_at`
+const campaignColumns = `id, tenant_id, name, channels, bodies, template_name, status, scheduled_for, created_at, updated_at, consecutive_refusals`
 
 func (r *PostgresCampaignRepository) FindCampaign(ctx context.Context, tenantID, campaignID string) (domain.Campaign, bool, error) {
 	row := r.db.QueryRowContext(ctx,
@@ -198,7 +214,7 @@ func (r *PostgresCampaignRepository) ClaimCampaign(ctx context.Context, tenantID
 	row := r.db.QueryRowContext(ctx, `
         UPDATE campaigns SET status = 'sending', updated_at = $3
         WHERE tenant_id = $1 AND id = $2
-          AND (status IN ('draft','scheduled') OR `+staleSendingClause("$4")+`)
+          AND (status IN ('draft','scheduled','paused_no_funds') OR `+staleSendingClause("$4")+`)
         RETURNING `+campaignColumns, tenantID, campaignID, at.UTC(), staleBefore.UTC())
 	campaign, err := scanCampaign(row)
 	if err == sql.ErrNoRows {
@@ -246,10 +262,48 @@ func (r *PostgresCampaignRepository) ClaimRecipient(ctx context.Context, tenantI
 func (r *PostgresCampaignRepository) FailInterruptedRecipients(ctx context.Context, tenantID, campaignID string, staleBefore, at time.Time) error {
 	_, err := r.db.ExecContext(ctx, `
         UPDATE campaign_recipients
-        SET state = 'failed', failure_reason = 'interrupted before delivery was confirmed', updated_at = $4
+        SET state = 'failed', interrupted = TRUE, failure_reason = 'interrupted before delivery was confirmed', updated_at = $4
         WHERE tenant_id = $1 AND campaign_id = $2 AND state = 'sending' AND updated_at < $3`,
 		tenantID, campaignID, staleBefore.UTC(), at.UTC())
 	return err
+}
+
+// ClaimInterruptedForRetry spans tenants because the sweep is the platform's
+// own; each row carries its tenant and every later call on it is keyed by it.
+func (r *PostgresCampaignRepository) ClaimInterruptedForRetry(ctx context.Context, interruptedBefore, at time.Time, limit int) ([]domain.CampaignRecipient, error) {
+	rows, err := r.db.QueryContext(ctx, `
+        UPDATE campaign_recipients SET auto_retried = TRUE, updated_at = $2
+        WHERE id IN (
+            SELECT id FROM campaign_recipients
+            WHERE state = 'failed' AND interrupted AND NOT auto_retried
+              AND provider_message_id = '' AND channel = 'whatsapp' AND updated_at <= $1
+            ORDER BY updated_at ASC LIMIT $3
+            FOR UPDATE SKIP LOCKED)
+        RETURNING `+recipientColumns, interruptedBefore.UTC(), at.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recipients := []domain.CampaignRecipient{}
+	for rows.Next() {
+		recipient, err := scanRecipient(rows)
+		if err != nil {
+			return nil, err
+		}
+		recipients = append(recipients, recipient)
+	}
+	return recipients, rows.Err()
+}
+
+func (r *PostgresCampaignRepository) ReleaseAutoRetry(ctx context.Context, tenantID string, recipientIDs []string) error {
+	for _, id := range recipientIDs {
+		if _, err := r.db.ExecContext(ctx,
+			`UPDATE campaign_recipients SET auto_retried = FALSE WHERE tenant_id = $1 AND id = $2`, tenantID, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func pageBounds(page, limit int) (int, int) {
@@ -275,12 +329,15 @@ func (r *PostgresCampaignRepository) SaveRecipient(ctx context.Context, recipien
 	result, err := r.db.ExecContext(ctx, `
         INSERT INTO campaign_recipients
             (id, campaign_id, tenant_id, driver_id, channel, destination, state,
-             provider_message_id, failure_reason, sent_at, delivered_at, read_at, created_at, updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+             provider_message_id, failure_reason, sent_at, delivered_at, read_at, created_at, updated_at,
+             interrupted, auto_retried)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
         ON CONFLICT (id) DO UPDATE SET
             state = EXCLUDED.state,
             provider_message_id = EXCLUDED.provider_message_id,
             failure_reason = EXCLUDED.failure_reason,
+            interrupted = EXCLUDED.interrupted,
+            auto_retried = campaign_recipients.auto_retried OR EXCLUDED.auto_retried,
             sent_at = EXCLUDED.sent_at,
             delivered_at = EXCLUDED.delivered_at,
             read_at = EXCLUDED.read_at,
@@ -291,6 +348,7 @@ func (r *PostgresCampaignRepository) SaveRecipient(ctx context.Context, recipien
 		recipient.ProviderMessageID, recipient.FailureReason,
 		recipient.SentAt, recipient.DeliveredAt, recipient.ReadAt,
 		recipient.CreatedAt, recipient.UpdatedAt,
+		recipient.Interrupted, recipient.AutoRetried,
 	)
 	if err != nil {
 		return fmt.Errorf("save campaign recipient: %w", err)
@@ -308,7 +366,8 @@ func requireRowWritten(result sql.Result, what string) error {
 }
 
 const recipientColumns = `id, campaign_id, tenant_id, driver_id, channel, destination, state,
-    provider_message_id, failure_reason, sent_at, delivered_at, read_at, created_at, updated_at`
+    provider_message_id, failure_reason, sent_at, delivered_at, read_at, created_at, updated_at,
+    interrupted, auto_retried`
 
 func scanRecipient(scanner interface{ Scan(...any) error }) (domain.CampaignRecipient, error) {
 	var recipient domain.CampaignRecipient
@@ -318,6 +377,7 @@ func scanRecipient(scanner interface{ Scan(...any) error }) (domain.CampaignReci
 		&recipient.ProviderMessageID, &recipient.FailureReason,
 		&recipient.SentAt, &recipient.DeliveredAt, &recipient.ReadAt,
 		&recipient.CreatedAt, &recipient.UpdatedAt,
+		&recipient.Interrupted, &recipient.AutoRetried,
 	)
 	return recipient, err
 }

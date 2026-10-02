@@ -65,9 +65,9 @@ func (u *JobAttachmentUseCase) Add(ctx context.Context, command AddJobAttachment
 	if len(command.Data) > MaxJobAttachmentBytes {
 		return domain.Job{}, ErrAttachmentTooLarge
 	}
-	job, ok := u.jobs.FindByTenantAndID(command.TenantID, strings.TrimSpace(command.JobID))
-	if !ok {
-		return domain.Job{}, ErrJobNotFound
+	job, err := u.jobs.FindByTenantAndID(command.TenantID, strings.TrimSpace(command.JobID))
+	if err != nil {
+		return domain.Job{}, err
 	}
 	if len(job.Attachments) >= MaxJobAttachments {
 		return domain.Job{}, ErrTooManyAttachments
@@ -93,9 +93,9 @@ func (u *JobAttachmentUseCase) Add(ctx context.Context, command AddJobAttachment
 }
 
 func (u *JobAttachmentUseCase) Open(ctx context.Context, query OpenJobAttachmentQuery) (OpenedJobAttachment, error) {
-	job, ok := u.jobs.FindByTenantAndID(query.TenantID, strings.TrimSpace(query.JobID))
-	if !ok {
-		return OpenedJobAttachment{}, ErrJobNotFound
+	job, err := u.jobs.FindByTenantAndID(query.TenantID, strings.TrimSpace(query.JobID))
+	if err != nil {
+		return OpenedJobAttachment{}, err
 	}
 	for _, listed := range job.Attachments {
 		if listed.ID != query.AttachmentID {

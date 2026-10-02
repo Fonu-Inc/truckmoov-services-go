@@ -1019,7 +1019,7 @@ func (u *HandleWhatsAppWebhookUseCase) resolveDriverStatusRequestContext(ctx con
 }
 
 func driverStatusRequestContextFromMessage(message domain.WhatsAppConversationMessage, conversation domain.WhatsAppConversation) (driverStatusRequestContext, bool) {
-	if message.Direction != domain.WhatsAppDirectionOutbound {
+	if message.Direction != domain.WhatsAppDirectionOutbound || message.TenantID != conversation.TenantID {
 		return driverStatusRequestContext{}, false
 	}
 	payload := cloneAnyMap(message.Payload)
@@ -1088,7 +1088,10 @@ func normalizeDriverStatusKeyword(value string) string {
 }
 
 type outboundConversationMessageParams struct {
-	Conversation      domain.WhatsAppConversation
+	Conversation domain.WhatsAppConversation
+	// MessageID, when set, is the conversation message id, so recording the
+	// same send again overwrites it.
+	MessageID         string
 	TenantID          string
 	Recipient         string
 	DriverName        string
@@ -1140,7 +1143,7 @@ func recordOutboundConversationMessage(ctx context.Context, repository WhatsAppC
 	}
 
 	messageRecord, err := repository.SaveMessage(ctx, domain.WhatsAppConversationMessage{
-		ID:                idGenerator.New("wam"),
+		ID:                firstNonEmpty(strings.TrimSpace(params.MessageID), idGenerator.New("wam")),
 		TenantID:          strings.TrimSpace(params.TenantID),
 		ConversationID:    savedConversation.ID,
 		ProviderMessageID: strings.TrimSpace(params.ProviderMessageID),

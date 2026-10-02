@@ -3,6 +3,7 @@ package infrastructure
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -30,11 +31,14 @@ func (r *InMemoryJobRepository) Save(job domain.Job) error {
 	return nil
 }
 
-func (r *InMemoryJobRepository) FindByTenantAndID(tenantID, id string) (domain.Job, bool) {
+func (r *InMemoryJobRepository) FindByTenantAndID(tenantID, id string) (domain.Job, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	job, ok := r.jobs[buildJobKey(tenantID, id)]
-	return job, ok
+	if !ok {
+		return domain.Job{}, domain.ErrJobNotFound
+	}
+	return job, nil
 }
 
 func (r *InMemoryJobRepository) FindByTenant(tenantID string) ([]domain.Job, error) {
@@ -117,17 +121,20 @@ func (r *RedisJobRepository) Save(job domain.Job) error {
 	return r.store.SAdd(redisJobIndexKey(job.TenantID), strings.TrimSpace(job.ID))
 }
 
-func (r *RedisJobRepository) FindByTenantAndID(tenantID, id string) (domain.Job, bool) {
+func (r *RedisJobRepository) FindByTenantAndID(tenantID, id string) (domain.Job, error) {
 	payload, ok, err := r.store.Get(redisJobKey(tenantID, id))
-	if err != nil || !ok {
-		return domain.Job{}, false
+	if err != nil {
+		return domain.Job{}, fmt.Errorf("read job: %w", err)
+	}
+	if !ok {
+		return domain.Job{}, domain.ErrJobNotFound
 	}
 
 	var job domain.Job
 	if err := json.Unmarshal(payload, &job); err != nil {
-		return domain.Job{}, false
+		return domain.Job{}, fmt.Errorf("decode job: %w", err)
 	}
-	return job, true
+	return job, nil
 }
 
 func (r *RedisJobRepository) FindByTenant(tenantID string) ([]domain.Job, error) {
@@ -138,9 +145,12 @@ func (r *RedisJobRepository) FindByTenant(tenantID string) ([]domain.Job, error)
 
 	results := make([]domain.Job, 0, len(jobIDs))
 	for _, jobID := range jobIDs {
-		job, ok := r.FindByTenantAndID(tenantID, jobID)
-		if !ok {
+		job, err := r.FindByTenantAndID(tenantID, jobID)
+		if errors.Is(err, domain.ErrJobNotFound) {
 			continue
+		}
+		if err != nil {
+			return nil, err
 		}
 		results = append(results, job)
 	}

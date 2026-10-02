@@ -121,7 +121,8 @@ func (h *Handler) createCampaign(w http.ResponseWriter, r *http.Request) {
 }
 
 // campaignByPath handles /notify/campaigns/{id} and /notify/campaigns/{id}/send
-// and /notify/campaigns/{id}/retry.
+// and /notify/campaigns/{id}/retry, which takes ?scope=interrupted to resend
+// only to recipients a dead run left unconfirmed.
 func (h *Handler) campaignByPath(w http.ResponseWriter, r *http.Request) {
 	tenantID, authStatus, ok := authenticatedDispatcherTenantID(r)
 	if !ok {
@@ -146,7 +147,7 @@ func (h *Handler) campaignByPath(w http.ResponseWriter, r *http.Request) {
 	case action == "" && r.Method == http.MethodGet:
 		h.getCampaign(w, r, tenantID, campaignID)
 	case (action == "send" || action == "retry") && r.Method == http.MethodPost:
-		h.sendCampaign(w, r, tenantID, campaignID, action == "retry")
+		h.sendCampaign(w, r, tenantID, campaignID, retryScope(action, r))
 	default:
 		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -180,7 +181,21 @@ func (h *Handler) getCampaign(w http.ResponseWriter, r *http.Request, tenantID, 
 	})
 }
 
-func (h *Handler) sendCampaign(w http.ResponseWriter, r *http.Request, tenantID, campaignID string, retryOnly bool) {
+type campaignRun struct {
+	retryFailedOnly bool
+	interruptedOnly bool
+}
+
+// retryScope reads what a retry covers: every failed recipient, or with
+// ?scope=interrupted only those a dead run left unconfirmed.
+func retryScope(action string, r *http.Request) campaignRun {
+	return campaignRun{
+		retryFailedOnly: action == "retry",
+		interruptedOnly: action == "retry" && r.URL.Query().Get("scope") == "interrupted",
+	}
+}
+
+func (h *Handler) sendCampaign(w http.ResponseWriter, r *http.Request, tenantID, campaignID string, run campaignRun) {
 	if h.sendCampaignUseCase == nil {
 		httpx.WriteError(w, http.StatusServiceUnavailable, "campaigns are not configured")
 		return
@@ -189,7 +204,8 @@ func (h *Handler) sendCampaign(w http.ResponseWriter, r *http.Request, tenantID,
 	result, err := h.sendCampaignUseCase.Execute(r.Context(), application.SendCampaignCommand{
 		TenantID:        tenantID,
 		CampaignID:      campaignID,
-		RetryFailedOnly: retryOnly,
+		RetryFailedOnly: run.retryFailedOnly,
+		InterruptedOnly: run.interruptedOnly,
 	})
 	if errors.Is(err, application.ErrCampaignNotFound) {
 		httpx.WriteError(w, http.StatusNotFound, "campaign not found")

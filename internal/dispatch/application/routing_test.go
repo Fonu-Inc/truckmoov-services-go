@@ -25,9 +25,12 @@ func (r *routingRepository) Save(job domain.Job) error {
 	return nil
 }
 
-func (r *routingRepository) FindByTenantAndID(tenantID, id string) (domain.Job, bool) {
+func (r *routingRepository) FindByTenantAndID(tenantID, id string) (domain.Job, error) {
 	j, ok := r.data[tenantID+":"+id]
-	return j, ok
+	if !ok {
+		return domain.Job{}, ErrJobNotFound
+	}
+	return j, nil
 }
 
 func (r *routingRepository) Delete(tenantID, id string) error {

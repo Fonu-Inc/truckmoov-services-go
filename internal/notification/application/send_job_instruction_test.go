@@ -181,3 +181,178 @@ func TestSendJobInstructionUseCaseRequiresHeaderMediaWhenTemplateNeedsIt(t *test
 		t.Fatalf("expected header media required error, got %v", err)
 	}
 }
+
+func approvedJobTemplates() *fakeWhatsAppTemplateProvider {
+	return &fakeWhatsAppTemplateProvider{
+		listResponse: domain.WhatsAppTemplateListResponse{Data: []domain.WhatsAppTemplate{{
+			Name:       "job_assignment_v1",
+			Language:   "en_US",
+			Status:     "APPROVED",
+			Components: []map[string]any{{"type": "BODY", "text": "Driver {{1}}, job {{2}} pickup {{3}} delivery {{4}} cargo {{5}} priority {{6}}"}},
+		}}},
+	}
+}
+
+func jobInstructionCommand() SendJobInstructionCommand {
+	return SendJobInstructionCommand{
+		TenantID: "tenant-1", JobID: "job-9", DriverID: "driver-9", Recipient: "+2348012345678", TemplateName: "job_assignment_v1",
+		DriverName: "Chukwuma Okafor", JobReference: "TM-9", PickupLocation: "Apapa", DeliveryLocation: "Ikeja", CargoDescription: "Electronics", Priority: "high",
+	}
+}
+
+func jobInstructionWithLog(provider *fakeWhatsAppTemplateMessageProvider, templates *fakeWhatsAppTemplateProvider) (*SendJobInstructionUseCase, *recordingDeliveryLog, *fakeOutboxRepository) {
+	log := &recordingDeliveryLog{}
+	outbox := newFakeOutboxRepository()
+	useCase := NewSendJobInstructionUseCase(
+		outbox, newFakeWhatsAppConversationRepository(), templates, provider, &fakeDeliveryPublisher{},
+		fixedNotificationClock{now: time.Date(2026, 4, 3, 12, 0, 0, 0, time.UTC)}, fixedNotificationIDGenerator{id: "9"}, "default",
+	).WithDeliveryLog(log)
+	return useCase, log, outbox
+}
+
+func TestSendJobInstructionWritesTheSentTemplateToTheDeliveryLog(t *testing.T) {
+	useCase, log, _ := jobInstructionWithLog(&fakeWhatsAppTemplateMessageProvider{}, approvedJobTemplates())
+
+	if _, err := useCase.Execute(context.Background(), jobInstructionCommand()); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	if len(log.entries) != 1 {
+		t.Fatalf("expected one log entry, got %d", len(log.entries))
+	}
+	entry := log.entries[0]
+	if entry.TenantID != "tenant-1" || entry.NotificationType != domain.NotificationTypeJobAssignment || entry.Channel != "whatsapp" ||
+		entry.Status != domain.StatusSent || entry.ProviderMessageID != "wamid.template.1" {
+		t.Fatalf("unexpected entry %+v", entry)
+	}
+}
+
+func TestSendJobInstructionLogsAProviderFailure(t *testing.T) {
+	useCase, log, _ := jobInstructionWithLog(&fakeWhatsAppTemplateMessageProvider{err: errors.New("provider down")}, approvedJobTemplates())
+
+	if _, err := useCase.Execute(context.Background(), jobInstructionCommand()); err == nil {
+		t.Fatal("expected the failure")
+	}
+
+	if len(log.entries) != 1 || log.entries[0].Status != domain.StatusFailed || log.entries[0].FailureReason != "provider down" {
+		t.Fatalf("expected a failed entry with the reason, got %+v", log.entries)
+	}
+}
+
+func TestSendJobInstructionLogsARefusedWallet(t *testing.T) {
+	useCase, log, _ := jobInstructionWithLog(&fakeWhatsAppTemplateMessageProvider{}, approvedJobTemplates())
+	command := jobInstructionCommand()
+	command.BeforeSend = func(context.Context) error { return ErrInsufficientFunds }
+
+	if _, err := useCase.Execute(context.Background(), command); !errors.Is(err, ErrInsufficientFunds) {
+		t.Fatalf("expected the refusal, got %v", err)
+	}
+
+	if len(log.entries) != 1 || log.entries[0].Status != domain.StatusFailed {
+		t.Fatalf("expected a failed entry, got %+v", log.entries)
+	}
+}
+
+func TestSendJobInstructionLogsATemplateThatCannotBeUsed(t *testing.T) {
+	templates := approvedJobTemplates()
+	templates.listResponse.Data[0].Status = "PENDING"
+	useCase, log, _ := jobInstructionWithLog(&fakeWhatsAppTemplateMessageProvider{}, templates)
+
+	if _, err := useCase.Execute(context.Background(), jobInstructionCommand()); !errors.Is(err, ErrJobInstructionTemplateNotApproved) {
+		t.Fatalf("expected not approved, got %v", err)
+	}
+
+	if len(log.entries) != 1 || log.entries[0].Status != domain.StatusFailed || log.entries[0].TenantID != "tenant-1" {
+		t.Fatalf("an instruction that could not go out is still logged, got %+v", log.entries)
+	}
+}
+
+func TestSendJobInstructionRedeliveryDoesNotSendTheTemplateAgain(t *testing.T) {
+	provider := &fakeWhatsAppTemplateMessageProvider{}
+	useCase, log, outbox := jobInstructionWithLog(provider, approvedJobTemplates())
+	command := jobInstructionCommand()
+	command.MessageID, command.ConversationMessageID = "msg-evt-1", "wam-evt-1"
+	var charges int
+	command.BeforeSend = func(context.Context) error { charges++; return nil }
+
+	if _, err := useCase.Execute(context.Background(), command); err != nil {
+		t.Fatalf("first send: %v", err)
+	}
+	provider.lastRequest = domain.WhatsAppTemplateMessageRequest{}
+	message, err := useCase.Execute(context.Background(), command)
+
+	if err != nil {
+		t.Fatalf("redelivery: %v", err)
+	}
+	if provider.lastRequest.Name != "" || charges != 1 {
+		t.Fatalf("the template must not be sent or charged twice: request=%q charges=%d", provider.lastRequest.Name, charges)
+	}
+	if stored, ok := outbox.FindByTenantAndID("tenant-1", "msg-evt-1"); !ok || message.ProviderMessageID != stored.ProviderMessageID {
+		t.Fatalf("expected the stored message back, got %+v", message)
+	}
+	if len(log.entries) != 1 {
+		t.Fatalf("expected a single log entry, got %d", len(log.entries))
+	}
+}
+
+func TestSendJobInstructionRecordsTheConversationUnderTheGivenId(t *testing.T) {
+	useCase, _, _ := jobInstructionWithLog(&fakeWhatsAppTemplateMessageProvider{}, approvedJobTemplates())
+	command := jobInstructionCommand()
+	command.ConversationMessageID = "wam-evt-2"
+	repository := newFakeWhatsAppConversationRepository()
+	useCase.conversationRepository = repository
+
+	for range 2 {
+		if _, err := useCase.Execute(context.Background(), command); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+	}
+
+	conversation, _, _ := repository.FindConversationByTenantAndDriverPhone(context.Background(), "tenant-1", "2348012345678")
+	messages, _ := repository.ListMessagesByConversation(context.Background(), "tenant-1", conversation.ID)
+	if len(messages) != 1 || messages[0].ID != "wam-evt-2" {
+		t.Fatalf("expected one message under the given id, got %+v", messages)
+	}
+}
+
+type failingConversationRepository struct {
+	*fakeWhatsAppConversationRepository
+	fail bool
+}
+
+func (r *failingConversationRepository) SaveMessage(ctx context.Context, message domain.WhatsAppConversationMessage) (domain.WhatsAppConversationMessage, error) {
+	if r.fail {
+		return domain.WhatsAppConversationMessage{}, errors.New("db down")
+	}
+	return r.fakeWhatsAppConversationRepository.SaveMessage(ctx, message)
+}
+
+func TestSendJobInstructionRecordFailureIsRetriedWithoutSendingTwice(t *testing.T) {
+	provider := &fakeWhatsAppTemplateMessageProvider{}
+	useCase, _, _ := jobInstructionWithLog(provider, approvedJobTemplates())
+	repository := &failingConversationRepository{fakeWhatsAppConversationRepository: newFakeWhatsAppConversationRepository(), fail: true}
+	useCase.conversationRepository = repository
+	command := jobInstructionCommand()
+	command.MessageID, command.ConversationMessageID = "msg-evt-3", "wam-evt-3"
+
+	_, err := useCase.Execute(context.Background(), command)
+	var unrecorded *ConversationRecordError
+	if !errors.As(err, &unrecorded) {
+		t.Fatalf("expected a record error, got %v", err)
+	}
+
+	provider.lastRequest = domain.WhatsAppTemplateMessageRequest{}
+	repository.fail = false
+	if _, err := useCase.Execute(context.Background(), command); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+
+	if provider.lastRequest.Name != "" {
+		t.Fatal("the retry must only record, not send again")
+	}
+	conversation, _, _ := repository.FindConversationByTenantAndDriverPhone(context.Background(), "tenant-1", "2348012345678")
+	messages, _ := repository.ListMessagesByConversation(context.Background(), "tenant-1", conversation.ID)
+	if len(messages) != 1 || messages[0].ID != "wam-evt-3" {
+		t.Fatalf("expected the instruction recorded once, got %+v", messages)
+	}
+}

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/truckmoov/services-go/internal/tracking/application"
@@ -54,6 +56,7 @@ type Handler struct {
 	rate                        *application.MessageRate
 	quarantine                  *application.Quarantine
 	allowOpenIngest             bool
+	missingIMEI                 atomic.Int64
 }
 
 func (h *Handler) WithQuarantine(quarantine *application.Quarantine) *Handler {
@@ -112,6 +115,7 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 	routes.HandleFunc("/tracking/ws", []httpx.Audience{httpx.Admin}, httpx.On("admin.devices"), h.wsBridge.ServeHTTP)
 	routes.HandleFunc("/tracking/internal/gate/blocked-devices", []httpx.Audience{httpx.Service}, httpx.None(), h.blockedDevices)
 	routes.HandleFunc("/tracking/internal/quarantine", []httpx.Audience{httpx.Service}, httpx.None(), h.quarantineList)
+	routes.HandleFunc("/tracking/internal/quarantine/", []httpx.Audience{httpx.Service}, httpx.None(), h.quarantineAction)
 	routes.HandleFunc("/tracking/internal/messages/hourly", []httpx.Audience{httpx.Service}, httpx.None(), h.messagesHourly)
 	routes.HandleFunc("/health", []httpx.Audience{httpx.Public}, httpx.None(), h.health)
 }
@@ -148,6 +152,13 @@ func (h *Handler) ingestVendor(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) ingestWithAdapter(w http.ResponseWriter, r *http.Request, adapter vendorAdapter) {
 	cmd, err := adapter.decode(r)
+	if err == nil && strings.TrimSpace(cmd.IMEI) == "" {
+		err = errIMEIRequired
+	}
+	if errors.Is(err, errIMEIRequired) {
+		h.imeiMissing(w, r)
+		return
+	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -441,4 +452,64 @@ func (h *Handler) quarantineList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteOK(w, http.StatusOK, map[string]any{"devices": devices})
+}
+
+func (h *Handler) imeiMissing(w http.ResponseWriter, r *http.Request) {
+	total := h.missingIMEI.Add(1)
+	if total == 1 || total%100 == 0 {
+		slog.Warn("ingest_imei_missing", "total", total, "path", r.URL.Path, "user_agent", r.UserAgent())
+	}
+	httpx.WriteError(w, http.StatusBadRequest, "imei is required", "imei: this field is required and must not be empty")
+}
+
+func (h *Handler) quarantineAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	claims, ok := httpx.ClaimsFromRequest(r)
+	if !ok || claims == nil || claims.Service != "auth" {
+		httpx.NotFound(w, r)
+		return
+	}
+	parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/tracking/internal/quarantine/"), "/"), "/")
+	if len(parts) != 2 || parts[0] == "" {
+		httpx.NotFound(w, r)
+		return
+	}
+	imei, action := parts[0], parts[1]
+	var err error
+	switch action {
+	case "dismiss":
+		err = h.quarantine.Dismiss(r.Context(), imei)
+	case "block":
+		err = h.quarantine.Block(r.Context(), imei)
+	case "unblock":
+		err = h.quarantine.Unblock(r.Context(), imei)
+	default:
+		httpx.NotFound(w, r)
+		return
+	}
+	if errors.Is(err, application.ErrQuarantineNotFound) {
+		httpx.WriteError(w, http.StatusNotFound, "unrecognised device not found")
+		return
+	}
+	if errors.Is(err, application.ErrQuarantineBlocked) {
+		httpx.WriteError(w, http.StatusConflict, "IMEI is blocked: unblock it first")
+		return
+	}
+	if errors.Is(err, application.ErrQuarantineNotBlocked) {
+		httpx.WriteError(w, http.StatusConflict, "IMEI is not blocked")
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not update the unrecognised device")
+		return
+	}
+	status := map[string]string{
+		"dismiss": application.QuarantineDismissed,
+		"block":   application.QuarantineBlocked,
+		"unblock": application.QuarantineActive,
+	}[action]
+	httpx.WriteOK(w, http.StatusOK, map[string]any{"imei": imei, "status": status})
 }

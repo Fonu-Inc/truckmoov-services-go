@@ -88,18 +88,21 @@ func (u *ApplyCampaignReceiptUseCase) Execute(
 	}
 
 	// The campaign's own status follows its recipients, so it settles as the
-	// last outstanding receipt lands.
+	// last outstanding receipt lands. A decision a person or a run made (paused,
+	// cancelled, back to draft) is left alone, and the write only lands while
+	// the status is the one read, so a receipt cannot overwrite a live run.
 	campaign, ok, err := u.repository.FindCampaign(ctx, recipient.TenantID, recipient.CampaignID)
-	if err != nil || !ok {
+	if err != nil || !ok || !settlesFromRecipients(campaign.Status) {
 		return true, err
 	}
 	recipients, err := u.repository.ListRecipients(ctx, recipient.TenantID, recipient.CampaignID)
 	if err != nil {
 		return true, err
 	}
+	expected := campaign.Status
 	campaign.Status = domain.ResolveCampaignStatus(recipients)
 	campaign.UpdatedAt = now
-	if _, err := u.repository.SaveCampaign(ctx, campaign); err != nil {
+	if _, err := u.repository.SaveCampaignIfStatus(ctx, campaign, expected); err != nil {
 		return true, fmt.Errorf("save campaign: %w", err)
 	}
 

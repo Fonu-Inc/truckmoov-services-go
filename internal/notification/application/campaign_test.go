@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,17 @@ func (r *fakeCampaignRepository) SaveCampaign(_ context.Context, campaign domain
 	defer r.mu.Unlock()
 	r.campaigns[campaign.ID] = campaign
 	return campaign, nil
+}
+
+func (r *fakeCampaignRepository) SaveCampaignIfStatus(_ context.Context, campaign domain.Campaign, expected string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	stored, ok := r.campaigns[campaign.ID]
+	if !ok || stored.TenantID != campaign.TenantID || stored.Status != expected {
+		return false, nil
+	}
+	r.campaigns[campaign.ID] = campaign
+	return true, nil
 }
 
 func (r *fakeCampaignRepository) FindCampaign(_ context.Context, tenantID, campaignID string) (domain.Campaign, bool, error) {
@@ -140,6 +152,7 @@ func (r *fakeCampaignRepository) ClaimCampaign(_ context.Context, tenantID, id s
 	defer r.mu.Unlock()
 	campaign, ok := r.campaigns[id]
 	claimable := campaign.Status == domain.CampaignStatusDraft || campaign.Status == domain.CampaignStatusScheduled ||
+		campaign.Status == domain.CampaignStatusPausedNoFunds ||
 		(campaign.Status == domain.CampaignStatusSending && r.stale(campaign, staleBefore))
 	if !ok || campaign.TenantID != tenantID || !claimable {
 		return domain.Campaign{}, false, nil
@@ -185,8 +198,41 @@ func (r *fakeCampaignRepository) FailInterruptedRecipients(_ context.Context, te
 	for index := range list {
 		if list[index].TenantID == tenantID && list[index].State == domain.RecipientStateSending && list[index].UpdatedAt.Before(staleBefore) {
 			list[index].State = domain.RecipientStateFailed
+			list[index].Interrupted = true
 			list[index].FailureReason = "interrupted before delivery was confirmed"
 			list[index].UpdatedAt = at
+		}
+	}
+	return nil
+}
+
+func (r *fakeCampaignRepository) ClaimInterruptedForRetry(_ context.Context, interruptedBefore, at time.Time, limit int) ([]domain.CampaignRecipient, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	claimed := []domain.CampaignRecipient{}
+	for _, list := range r.recipients {
+		for index := range list {
+			recipient := &list[index]
+			eligible := recipient.State == domain.RecipientStateFailed && recipient.Interrupted && !recipient.AutoRetried &&
+				recipient.ProviderMessageID == "" && domain.ChannelReportsMessageID(recipient.Channel) && !recipient.UpdatedAt.After(interruptedBefore)
+			if eligible && len(claimed) < limit {
+				recipient.AutoRetried = true
+				recipient.UpdatedAt = at
+				claimed = append(claimed, *recipient)
+			}
+		}
+	}
+	return claimed, nil
+}
+
+func (r *fakeCampaignRepository) ReleaseAutoRetry(_ context.Context, tenantID string, recipientIDs []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, list := range r.recipients {
+		for index := range list {
+			if list[index].TenantID == tenantID && slices.Contains(recipientIDs, list[index].ID) {
+				list[index].AutoRetried = false
+			}
 		}
 	}
 	return nil

@@ -104,9 +104,9 @@ func (r *fakeOfferRepository) Accept(
 	}
 	r.offers[accepted.ID] = accepted
 
-	job, found := r.jobs.FindByTenantAndID(offer.OfferingTenantID, offer.JobID)
-	if !found {
-		return AcceptedOffer{}, ErrJobNotFound
+	job, err := r.jobs.FindByTenantAndID(offer.OfferingTenantID, offer.JobID)
+	if err != nil {
+		return AcceptedOffer{}, err
 	}
 	transferred, err := job.TransferToCarrier(targetTenantID, offer.OfferedRateNgn, now, "t")
 	if err != nil {
@@ -247,7 +247,7 @@ func TestAcceptJobOfferRefusesOverTheActiveJobCap(t *testing.T) {
 	if stillPending.Status != domain.OfferStatusPending {
 		t.Fatalf("expected the offer to remain pending, got %s", stillPending.Status)
 	}
-	if _, found := jobs.FindByTenantAndID("tenant-carrier", "job-1"); found {
+	if _, err := jobs.FindByTenantAndID("tenant-carrier", "job-1"); err == nil {
 		t.Fatal("the job must not transfer when the accept was refused")
 	}
 }

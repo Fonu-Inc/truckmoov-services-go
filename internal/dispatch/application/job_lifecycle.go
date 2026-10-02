@@ -12,13 +12,13 @@ import (
 )
 
 var (
-	ErrJobNotFound      = errors.New("job not found")
+	ErrJobNotFound      = domain.ErrJobNotFound
 	ErrJobAlreadyExists = errors.New("job already exists")
 )
 
 type JobRepository interface {
 	Save(job domain.Job) error
-	FindByTenantAndID(tenantID, id string) (domain.Job, bool)
+	FindByTenantAndID(tenantID, id string) (domain.Job, error)
 	FindByTenant(tenantID string) ([]domain.Job, error)
 	Delete(tenantID, id string) error
 }
@@ -312,8 +312,12 @@ func (u *JobLifecycleUseCase) newJobID(tenantID, requested string) (string, erro
 	if jobID == "" {
 		return u.idGenerator.New(), nil
 	}
-	if _, exists := u.repository.FindByTenantAndID(tenantID, jobID); exists {
+	_, err := u.repository.FindByTenantAndID(tenantID, jobID)
+	if err == nil {
 		return "", ErrJobAlreadyExists
+	}
+	if !errors.Is(err, ErrJobNotFound) {
+		return "", fmt.Errorf("check job id: %w", err)
 	}
 	return jobID, nil
 }
@@ -792,12 +796,7 @@ func (u *JobLifecycleUseCase) GetTimeline(_ context.Context, tenantID, jobID str
 
 func (u *JobLifecycleUseCase) findJobForTenant(tenantID, jobID string) (domain.Job, error) {
 	resolvedTenant := u.resolveTenant(tenantID)
-	job, ok := u.repository.FindByTenantAndID(resolvedTenant, strings.TrimSpace(jobID))
-	if !ok {
-		return domain.Job{}, ErrJobNotFound
-	}
-
-	return job, nil
+	return u.repository.FindByTenantAndID(resolvedTenant, strings.TrimSpace(jobID))
 }
 
 func (u *JobLifecycleUseCase) resolveTenant(tenantID string) string {

@@ -54,8 +54,42 @@ type alertTenantKey struct{}
 // alertTenant is the request-scoped place auth middleware, which runs inside
 // WithErrorAlerts on a copied request, leaves the tenant for the alert.
 type alertTenant struct {
-	mu sync.Mutex
-	id string
+	mu      sync.Mutex
+	id      string
+	pattern string
+}
+
+// AlertRoute wraps the router so the error alert can name the registered mux
+// pattern. The mux sets the pattern on the request it is given, which is a
+// copy the outer alert middleware never sees, so it is reported through the
+// request-scoped holder instead.
+func AlertRoute(mux http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if holder, ok := r.Context().Value(alertTenantKey{}).(*alertTenant); ok {
+				holder.setPattern(r.Pattern)
+			}
+		}()
+		mux.ServeHTTP(w, r)
+	})
+}
+
+func (a *alertTenant) setPattern(pattern string) {
+	if _, route, found := strings.Cut(pattern, " "); found {
+		pattern = route
+	}
+	a.mu.Lock()
+	a.pattern = pattern
+	a.mu.Unlock()
+}
+
+func (a *alertTenant) route(path string) string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.pattern != "" {
+		return a.pattern
+	}
+	return routeTemplate(path)
 }
 
 func noteAlertTenant(ctx context.Context, tenantID string) {
@@ -141,6 +175,7 @@ func WithErrorAlerts(next http.Handler, notifier *alert.NtfyClient, recent *Rece
 				sendAlert(notifier, serviceName, alertContext{
 					Method:   r.Method,
 					Path:     r.URL.Path,
+					Route:    holder.route(r.URL.Path),
 					Status:   http.StatusInternalServerError,
 					TenantID: holder.tenant(),
 					Detail:   fmt.Sprintf("panic: %v", rerr),
@@ -148,7 +183,7 @@ func WithErrorAlerts(next http.Handler, notifier *alert.NtfyClient, recent *Rece
 					Prior:    prior,
 				})
 				recent.Add(RequestSnapshot{
-					Method: r.Method, Path: r.URL.Path, Status: http.StatusInternalServerError,
+					Method: r.Method, Path: holder.route(r.URL.Path), Status: http.StatusInternalServerError,
 					TenantID: holder.tenant(), At: time.Now(),
 				})
 
@@ -165,13 +200,14 @@ func WithErrorAlerts(next http.Handler, notifier *alert.NtfyClient, recent *Rece
 			sendAlert(notifier, serviceName, alertContext{
 				Method:   r.Method,
 				Path:     r.URL.Path,
+				Route:    holder.route(r.URL.Path),
 				Status:   rec.status,
 				TenantID: tenantID,
 				Prior:    prior,
 			})
 		}
 		recent.Add(RequestSnapshot{
-			Method: r.Method, Path: r.URL.Path, Status: rec.status, TenantID: tenantID, At: time.Now(),
+			Method: r.Method, Path: holder.route(r.URL.Path), Status: rec.status, TenantID: tenantID, At: time.Now(),
 		})
 	})
 }
@@ -179,6 +215,7 @@ func WithErrorAlerts(next http.Handler, notifier *alert.NtfyClient, recent *Rece
 type alertContext struct {
 	Method   string
 	Path     string
+	Route    string
 	Status   int
 	TenantID string
 	Detail   string
@@ -191,7 +228,10 @@ func sendAlert(notifier *alert.NtfyClient, serviceName string, a alertContext) {
 	if tenant == "" {
 		tenant = "-"
 	}
-	route := routeTemplate(a.Path)
+	route := a.Route
+	if route == "" {
+		route = routeTemplate(a.Path)
+	}
 
 	// Prior requests are process-wide, not per-tenant: only surface entries
 	// belonging to the same tenant as the failing request so one tenant's

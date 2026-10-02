@@ -26,9 +26,12 @@ func (r *lifecycleRepository) Save(job domain.Job) error {
 	return nil
 }
 
-func (r *lifecycleRepository) FindByTenantAndID(tenantID, id string) (domain.Job, bool) {
+func (r *lifecycleRepository) FindByTenantAndID(tenantID, id string) (domain.Job, error) {
 	job, ok := r.data[fmt.Sprintf("%s:%s", tenantID, id)]
-	return job, ok
+	if !ok {
+		return domain.Job{}, ErrJobNotFound
+	}
+	return job, nil
 }
 
 func (r *lifecycleRepository) Delete(tenantID, id string) error {
@@ -612,8 +615,8 @@ func TestJobLifecycleUseCase_UpdateDetails_HappyPath(t *testing.T) {
 		t.Fatalf("expected one stop Oshodi, got %#v", updatedJob.Stops)
 	}
 
-	saved, ok := repo.FindByTenantAndID("default", job.ID)
-	if !ok {
+	saved, err := repo.FindByTenantAndID("default", job.ID)
+	if err != nil {
 		t.Fatal("expected job to be saved")
 	}
 	if saved.Pickup.Address != "Ikeja" || saved.AmountNgn != 5000 {
@@ -700,7 +703,7 @@ func TestJobLifecycleUseCase_DeleteJob_HappyPath(t *testing.T) {
 		t.Fatalf("delete job failed: %v", err)
 	}
 
-	if _, ok := repo.FindByTenantAndID("default", job.ID); ok {
+	if _, err := repo.FindByTenantAndID("default", job.ID); err == nil {
 		t.Fatal("expected job to be deleted from repository")
 	}
 }
@@ -753,7 +756,7 @@ func TestJobLifecycleUseCase_DeleteJob_TenantIsolation(t *testing.T) {
 	if repo.deleteCalls != 0 {
 		t.Fatalf("expected repository.Delete not to be called, got %d calls", repo.deleteCalls)
 	}
-	if _, ok := repo.FindByTenantAndID("tenant-a", job.ID); !ok {
+	if _, err := repo.FindByTenantAndID("tenant-a", job.ID); err != nil {
 		t.Fatal("expected tenant-a job to remain untouched")
 	}
 }
@@ -841,8 +844,8 @@ func TestJobLifecycleUseCase_CreateJobWithStops(t *testing.T) {
 		t.Fatalf("expected returned job to have 2 stops, got %#v", job.Stops)
 	}
 
-	saved, ok := repo.FindByTenantAndID("default", job.ID)
-	if !ok {
+	saved, err := repo.FindByTenantAndID("default", job.ID)
+	if err != nil {
 		t.Fatal("expected job to be saved")
 	}
 	if len(saved.Stops) != 2 || saved.Stops[0].Address != "Ojota Junction" || saved.Stops[1].Address != "Maryland" {
@@ -948,8 +951,8 @@ func (f assignFixture) assign(t *testing.T, driverID, vehicleID string) domain.J
 
 func (f assignFixture) stored(t *testing.T) domain.Job {
 	t.Helper()
-	job, ok := f.repository.FindByTenantAndID("default", f.job.ID)
-	if !ok {
+	job, err := f.repository.FindByTenantAndID("default", f.job.ID)
+	if err != nil {
 		t.Fatal("job missing from repository")
 	}
 	return job

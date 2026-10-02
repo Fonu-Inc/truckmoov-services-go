@@ -221,7 +221,7 @@ func main() {
 		clock,
 		idGenerator,
 		cfg.DefaultTenant,
-	)
+	).WithDeliveryLog(deliveryLogRepository)
 	sendWhatsAppTextMessageUseCase := application.NewSendWhatsAppTextMessageUseCase(
 		outboxRepository,
 		conversationRepository,
@@ -264,8 +264,15 @@ func main() {
 		return eventbus.Verified(handler, cfg.EventSigningSecret, eventbus.VerifyOptions{AcceptUnsigned: cfg.EventAcceptUnsigned}, log)
 	}
 	eventClaims := infrastructure.NewRedisEventClaims(redisClient)
+	tenantContacts := infrastructure.NewAuthTenantContactReader(cfg.AuthServiceURL, serviceCaller, nil)
+	preferencesRepository := infrastructure.NewPostgresNotificationPreferencesRepository(postgresDB)
+	if err := preferencesRepository.EnsureSchema(ctx); err != nil {
+		log.Error("notification_preferences_schema_failed", "error", err)
+	}
+	notificationPreferences := application.NewNotificationPreferencesUseCase(preferencesRepository, clock)
 	consumeJobOfferNotificationUseCase := application.NewConsumeJobOfferNotificationUseCase(sendMessageUseCase, eventClaims, log).
-		WithContacts(infrastructure.NewAuthTenantContactReader(cfg.AuthServiceURL, serviceCaller, nil))
+		WithContacts(tenantContacts).
+		WithChannels(notificationPreferences, whatsAppAccountRepository)
 	dispatchAlertUseCase := application.NewDispatchAlertUseCase(alertSettingsReader, sendMessageUseCase, eventClaims, log)
 	// Platform alerts ride the system tenant, so they are a separate subject
 	// from a tenant's own notifications and a separate consumer.
@@ -283,16 +290,23 @@ func main() {
 		log.Error("job_offer_responded_subscribe_failed", "error", subErr.Error())
 	}
 
+	instructionOutcomes := infrastructure.NewPostgresInstructionOutcomeRepository(postgresDB)
+	if err := instructionOutcomes.EnsureSchema(ctx); err != nil {
+		log.Error("instruction_outcome_schema_failed", "error", err)
+		instructionOutcomes = nil
+	}
 	wireDriverJobInstruction(ctx, driverJobInstructionWiring{
 		bus:      bus,
 		verified: verified,
 		log:      log,
+		outcomes: instructionOutcomeOutbox(instructionOutcomes),
 		deps: application.DriverJobInstructionDeps{
 			Text:          sendMessageUseCase,
 			Template:      sendJobInstructionUseCase,
 			Conversations: conversationRepository,
 			Recorder:      application.NewInstructionConversationRecorder(conversationRepository, clock, idGenerator),
 			Accounts:      whatsAppAccountRepository,
+			Outbox:        outboxRepository,
 			Drivers:       infrastructure.NewFleetDriverLookupClient(cfg.FleetServiceURL, serviceCaller, nil),
 			Charger:       usageCharger,
 			Reporter:      infrastructure.NewDispatchDriverInstructionReporter(cfg.DispatchServiceURL, serviceCaller, nil),
@@ -328,7 +342,7 @@ func main() {
 		cfg.WhatsAppTemplateLanguage,
 		usageCharger,
 		clock,
-	)
+	).WithPauseNotifier(application.NewEmailCampaignPauseNotifier(sendMessageUseCase, tenantContacts, log))
 	smsTemplateRepository := infrastructure.NewPostgresSMSTemplateRepository(postgresDB)
 	if err := smsTemplateRepository.EnsureSchema(ctx); err != nil {
 		log.Error("sms_template_schema_failed", "error", err)
@@ -399,6 +413,10 @@ func main() {
 		application.NewHandleSMSDeliveryReceiptUseCase(outboxRepository, deliveryLogRepository, deliveryPublisher, clock, idGenerator),
 		cfg.DotgoWebhookSecret,
 	)
+	handler = handler.WithPreferences(notificationPreferences)
+	handler = handler.WithDeadLetters(wireDeadLetters(ctx, deadLetterWiring{
+		bus: bus, verified: verified, log: log, db: postgresDB, claims: eventClaims, clock: clock, ids: idGenerator,
+	}))
 	handler = handler.WithCampaigns(
 		campaignRepository,
 		createCampaignUseCase,
@@ -458,7 +476,7 @@ func main() {
 	routes.Handle("/ready", []httpx.Audience{httpx.Public}, httpx.None(), readiness)
 	routes.Handle("/notify/ready", []httpx.Audience{httpx.Public}, httpx.None(), readiness)
 
-	handlerWithAuth := httpx.WithAuthContext(httpx.WithServiceCallers(httpx.WithCurrentAccess(metrics.Middleware(mux), accessClient), cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
+	handlerWithAuth := httpx.WithAuthContext(httpx.WithServiceCallers(httpx.WithCurrentAccess(metrics.Middleware(httpx.AlertRoute(mux)), accessClient), cfg.ServiceTokenVerifier(), httpx.ServiceRoles{
 		"auth":     "DISPATCHER",
 		"fleet":    "DISPATCHER",
 		"dispatch": "DISPATCHER",

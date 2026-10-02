@@ -65,6 +65,13 @@ func stableMessageID(envelopeID string) string {
 	return "msg-" + envelopeID
 }
 
+func stableConversationMessageID(envelopeID string) string {
+	if envelopeID == "" {
+		return ""
+	}
+	return "wam-" + envelopeID
+}
+
 // A refused charge never succeeds on redelivery, and the message is already
 // recorded as failed, so it is acked rather than looped.
 func isTerminalChargeRefusal(err error) bool {

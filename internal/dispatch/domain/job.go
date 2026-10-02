@@ -942,6 +942,22 @@ func (j Job) IsActive() bool {
 	return j.Status != StatusDelivered && j.Status != StatusCancelled
 }
 
+// TimelineDeliveredAt finds when the job reached delivered from its timeline,
+// for jobs delivered before DeliveredAt was stamped.
+func (j Job) TimelineDeliveredAt() *time.Time {
+	for i := len(j.Timeline) - 1; i >= 0; i-- {
+		entry := j.Timeline[i]
+		if entry.Type != "job_status_updated" && entry.Type != "driver_status_confirmed" {
+			continue
+		}
+		if entry.Metadata["to_status"] == string(StatusDelivered) || entry.Metadata["requested_status"] == string(StatusDelivered) {
+			occurredAt := entry.OccurredAt
+			return &occurredAt
+		}
+	}
+	return nil
+}
+
 // stampDelivered records when the job reached delivered, once, so revenue
 // reports can place it in the right month whatever is edited afterwards.
 func (j *Job) stampDelivered(now time.Time) {

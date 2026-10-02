@@ -11,6 +11,7 @@ const (
 	SkipTenantSuspended = "tenant_suspended"
 	SkipDeviceSuspended = "device_suspended"
 	SkipUnknownDevice   = "unknown_device"
+	SkipBlocked         = "blocked"
 
 	blockedLogEvery = 5 * time.Minute
 	seenWriteEvery  = time.Minute

@@ -39,11 +39,12 @@ func (s *instructionTemplateRecorder) Execute(ctx context.Context, command SendJ
 
 type instructionRecordCapture struct {
 	records []JobInstructionTextRecord
+	err     error
 }
 
 func (c *instructionRecordCapture) RecordJobInstructionText(_ context.Context, record JobInstructionTextRecord) error {
 	c.records = append(c.records, record)
-	return nil
+	return c.err
 }
 
 type stubConversationFinder struct {
@@ -334,5 +335,108 @@ func TestDriverInstruction_UnknownDriverNameFallsBack(t *testing.T) {
 
 	if got := h.template.commands[0].DriverName; got != "Driver" {
 		t.Fatalf("a driver of another tenant must not be used, got %q", got)
+	}
+}
+
+func TestDriverInstruction_TextRecordUsesAnIdDerivedFromTheEvent(t *testing.T) {
+	h := newInstructionHarness(stubAccountFinder{found: true}, openWindow())
+
+	_ = h.useCase.Handle(context.Background(), instructionEvent("evt-rec", nil))
+
+	if len(h.recorder.records) != 1 || h.recorder.records[0].MessageID != "wam-evt-rec" {
+		t.Fatalf("expected a record id derived from the event, got %+v", h.recorder.records)
+	}
+}
+
+func TestDriverInstruction_RedeliveryAfterACrashSkipsTheSendAndRecordsAgain(t *testing.T) {
+	h := newInstructionHarness(stubAccountFinder{found: true}, openWindow())
+	outbox := newFakeOutboxRepository()
+	_ = outbox.Save(domain.OutboxMessage{ID: "msg-evt-crash", TenantID: "tenant-a", Channel: "whatsapp", Recipient: "+2348012345678", Status: domain.StatusSent, ProviderMessageID: "wamid.first"})
+	h.useCase.outbox = outbox
+
+	if err := h.useCase.Handle(context.Background(), instructionEvent("evt-crash", nil)); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(h.text.commands) != 0 {
+		t.Fatalf("a message already on the wire must not be sent again, got %d sends", len(h.text.commands))
+	}
+	if len(h.recorder.records) != 1 || h.recorder.records[0].ProviderMessageID != "wamid.first" || h.recorder.records[0].MessageID != "wam-evt-crash" {
+		t.Fatalf("expected the earlier send to be recorded under the derived id, got %+v", h.recorder.records)
+	}
+	if h.onlyReport(t).Outcome != InstructionOutcomeSent {
+		t.Fatalf("expected sent, got %+v", h.reporter.reports)
+	}
+}
+
+func TestDriverInstruction_AFailedEarlierAttemptIsSentAgain(t *testing.T) {
+	h := newInstructionHarness(stubAccountFinder{found: true}, openWindow())
+	outbox := newFakeOutboxRepository()
+	_ = outbox.Save(domain.OutboxMessage{ID: "msg-evt-retry", TenantID: "tenant-a", Channel: "whatsapp", Recipient: "+2348012345678", Status: domain.StatusFailed})
+	h.useCase.outbox = outbox
+
+	_ = h.useCase.Handle(context.Background(), instructionEvent("evt-retry", nil))
+
+	if len(h.text.commands) != 1 {
+		t.Fatalf("an attempt that never left must be sent, got %d sends", len(h.text.commands))
+	}
+}
+
+func TestDriverInstruction_OutboxOfAnotherTenantDoesNotSuppressTheSend(t *testing.T) {
+	h := newInstructionHarness(stubAccountFinder{found: true}, openWindow())
+	outbox := newFakeOutboxRepository()
+	_ = outbox.Save(domain.OutboxMessage{ID: "msg-evt-x", TenantID: "tenant-b", Channel: "whatsapp", Recipient: "+2348012345678", Status: domain.StatusSent, ProviderMessageID: "wamid.other"})
+	h.useCase.outbox = outbox
+
+	_ = h.useCase.Handle(context.Background(), instructionEvent("evt-x", nil))
+
+	if len(h.text.commands) != 1 {
+		t.Fatalf("another tenant's message must not count as sent, got %d sends", len(h.text.commands))
+	}
+}
+
+func TestDriverInstruction_RecordFailureIsRetried(t *testing.T) {
+	h := newInstructionHarness(stubAccountFinder{found: true}, openWindow())
+	h.recorder.err = errors.New("db down")
+
+	if err := h.useCase.Handle(context.Background(), instructionEvent("evt-recfail", nil)); err == nil {
+		t.Fatal("expected the error so the event is redelivered and recorded again")
+	}
+	if len(h.reporter.reports) != 0 {
+		t.Fatal("nothing is reported until the instruction is recorded")
+	}
+
+	h.recorder.err = nil
+	if err := h.useCase.Handle(context.Background(), instructionEvent("evt-recfail", nil)); err != nil {
+		t.Fatalf("redelivery: %v", err)
+	}
+	if h.onlyReport(t).Outcome != InstructionOutcomeSent {
+		t.Fatalf("expected sent after the redelivery, got %+v", h.reporter.reports)
+	}
+}
+
+func TestDriverInstruction_TemplatePathCarriesStableIds(t *testing.T) {
+	h := newInstructionHarness(stubAccountFinder{found: true}, stubConversationFinder{})
+
+	_ = h.useCase.Handle(context.Background(), instructionEvent("evt-tpl", nil))
+
+	command := h.template.commands[0]
+	if command.MessageID != "msg-evt-tpl" || command.ConversationMessageID != "wam-evt-tpl" {
+		t.Fatalf("expected ids derived from the event, got %+v", command)
+	}
+	if h.onlyReport(t).EventID != "evt-tpl" {
+		t.Fatalf("the report must carry the event id, got %+v", h.reporter.reports)
+	}
+}
+
+func TestDriverInstruction_TemplateRecordFailureIsRetriedNotReportedFailed(t *testing.T) {
+	h := newInstructionHarness(stubAccountFinder{found: true}, stubConversationFinder{})
+	h.template.err = &ConversationRecordError{Err: errors.New("db down")}
+
+	if err := h.useCase.Handle(context.Background(), instructionEvent("evt-tplrec", nil)); err == nil {
+		t.Fatal("expected the error so the event is redelivered")
+	}
+	if len(h.reporter.reports) != 0 {
+		t.Fatalf("a template that left is not reported failed, got %+v", h.reporter.reports)
 	}
 }

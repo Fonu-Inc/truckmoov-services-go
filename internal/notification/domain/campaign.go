@@ -17,6 +17,9 @@ const (
 	CampaignStatusCompleted = "completed"
 	CampaignStatusFailed    = "failed"
 	CampaignStatusCancelled = "cancelled"
+	// PausedNoFunds is a scheduled campaign the tenant's wallet could not pay
+	// for on several runs in a row. It waits for a manual send after a top-up.
+	CampaignStatusPausedNoFunds = "paused_no_funds"
 )
 
 // Per-recipient delivery states. Read is only reachable on channels that report
@@ -59,8 +62,11 @@ type Campaign struct {
 	TemplateName string
 	Status       string
 	ScheduledFor *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	// ConsecutiveRefusals counts scheduled runs in a row that sent nothing
+	// because the wallet refused.
+	ConsecutiveRefusals int
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 func NewCampaign(params Campaign) (Campaign, error) {
@@ -138,11 +144,15 @@ type CampaignRecipient struct {
 	// matched back to this row.
 	ProviderMessageID string
 	FailureReason     string
-	SentAt            *time.Time
-	DeliveredAt       *time.Time
-	ReadAt            *time.Time
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// Interrupted marks a failure where a run died mid-send, so whether the
+	// message left is unknown. AutoRetried records the one automatic retry.
+	Interrupted bool
+	AutoRetried bool
+	SentAt      *time.Time
+	DeliveredAt *time.Time
+	ReadAt      *time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // CanRetry reports whether this recipient may be sent to again.
@@ -151,6 +161,13 @@ type CampaignRecipient struct {
 // message sends it twice and charges twice.
 func (r CampaignRecipient) CanRetry() bool {
 	return r.State == RecipientStateFailed
+}
+
+// ChannelReportsMessageID says whether a channel names the message it sent. A
+// recipient interrupted on one that does not cannot be told apart from one that
+// was delivered, so only the others are retried automatically.
+func ChannelReportsMessageID(channel string) bool {
+	return strings.ToLower(strings.TrimSpace(channel)) == "whatsapp"
 }
 
 // IsTerminal reports whether this recipient can still change on its own.

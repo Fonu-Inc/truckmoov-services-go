@@ -44,8 +44,8 @@ func newExtrasHarness(t *testing.T, createBody string) extrasHarness {
 
 func (h extrasHarness) stored(t *testing.T) domain.Job {
 	t.Helper()
-	job, ok := h.jobs.FindByTenantAndID("default", h.jobID)
-	if !ok {
+	job, err := h.jobs.FindByTenantAndID("default", h.jobID)
+	if err != nil {
 		t.Fatal("job missing")
 	}
 	return job

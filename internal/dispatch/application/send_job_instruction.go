@@ -166,12 +166,7 @@ func (u *SendJobInstructionUseCase) Execute(ctx context.Context, command SendJob
 
 func (u *SendJobInstructionUseCase) findJobForTenant(tenantID, jobID string) (domain.Job, error) {
 	resolvedTenant := u.resolveTenant(tenantID)
-	job, ok := u.repository.FindByTenantAndID(resolvedTenant, strings.TrimSpace(jobID))
-	if !ok {
-		return domain.Job{}, ErrJobNotFound
-	}
-
-	return job, nil
+	return u.repository.FindByTenantAndID(resolvedTenant, strings.TrimSpace(jobID))
 }
 
 func (u *SendJobInstructionUseCase) resolveTenant(tenantID string) string {

@@ -47,9 +47,9 @@ func NewCreateJobOfferUseCase(
 }
 
 func (u *CreateJobOfferUseCase) Execute(ctx context.Context, command CreateJobOfferCommand) (domain.JobOffer, error) {
-	job, found := u.jobs.FindByTenantAndID(command.OfferingTenantID, command.JobID)
-	if !found {
-		return domain.JobOffer{}, ErrJobNotFound
+	job, err := u.jobs.FindByTenantAndID(command.OfferingTenantID, command.JobID)
+	if err != nil {
+		return domain.JobOffer{}, err
 	}
 	if !job.IsActive() {
 		return domain.JobOffer{}, errors.New("a completed or cancelled job cannot be offered")

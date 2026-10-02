@@ -119,7 +119,10 @@ func (u *WeeklySettlementCloseUseCase) grossEarningsForPeriod(
 
 	var gross float64
 	for _, offer := range accepted {
-		job, found := offeredJob(u.jobs, offer)
+		job, found, err := offeredJobIfAny(u.jobs, offer)
+		if err != nil {
+			return 0, fmt.Errorf("load offered job: %w", err)
+		}
 		if !found || job.Status != domain.StatusDelivered {
 			continue
 		}

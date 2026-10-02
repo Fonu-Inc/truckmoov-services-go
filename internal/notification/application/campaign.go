@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -19,8 +20,12 @@ var (
 )
 
 const (
-	campaignStaleAfter  = 15 * time.Minute
-	campaignSendWorkers = 4
+	campaignStaleAfter     = 15 * time.Minute
+	campaignSendWorkers    = 4
+	campaignSettleAttempts = 3
+	// maxCampaignRefusals is how many scheduled runs in a row the wallet may
+	// refuse before the campaign is paused instead of tried again.
+	maxCampaignRefusals = 3
 )
 
 type CampaignRecipientInput struct {
@@ -138,6 +143,13 @@ type SendCampaignCommand struct {
 	CampaignID string
 	// RetryFailedOnly resends to the recipients that failed and nobody else.
 	RetryFailedOnly bool
+	// InterruptedOnly narrows a retry to recipients a dead run left unconfirmed.
+	InterruptedOnly bool
+	// RecipientIDs narrows a retry to these recipients.
+	RecipientIDs []string
+	// Scheduled is set by the scheduler, so a refused wallet counts toward
+	// pausing the campaign. A person pressing Send is told at once instead.
+	Scheduled bool
 }
 
 type SendCampaignResult struct {
@@ -157,6 +169,18 @@ type SendCampaignUseCase struct {
 	templateLanguage string
 	usageCharger     UsageCharger
 	clock            Clock
+	pauseNotifier    CampaignPauseNotifier
+}
+
+// CampaignPauseNotifier tells a tenant its campaign was paused for want of funds.
+type CampaignPauseNotifier interface {
+	CampaignPaused(ctx context.Context, campaign domain.Campaign)
+}
+
+// WithPauseNotifier tells the tenant once, when a campaign is paused.
+func (u *SendCampaignUseCase) WithPauseNotifier(notifier CampaignPauseNotifier) *SendCampaignUseCase {
+	u.pauseNotifier = notifier
+	return u
 }
 
 func NewSendCampaignUseCase(
@@ -198,6 +222,7 @@ func (u *SendCampaignUseCase) Execute(ctx context.Context, command SendCampaignC
 		return SendCampaignResult{}, ErrCampaignCancelled
 	}
 
+	command.RetryFailedOnly = command.RetryFailedOnly || command.InterruptedOnly
 	prior := campaign.Status
 	from := domain.RecipientStateFailed
 	claimed := !command.RetryFailedOnly
@@ -214,13 +239,13 @@ func (u *SendCampaignUseCase) Execute(ctx context.Context, command SendCampaignC
 	if err != nil {
 		return SendCampaignResult{}, err
 	}
-	pending := u.selectPending(recipients, command.RetryFailedOnly)
+	pending := u.selectPending(recipients, command)
 	if len(pending) == 0 && !claimed {
 		return SendCampaignResult{Campaign: campaign, Progress: domain.SummarizeRecipients(recipients)}, nil
 	}
 
 	attempted, chargeErr := u.deliverAll(ctx, campaign, pending, from)
-	result, err := u.settle(ctx, campaign, prior, attempted, chargeErr)
+	result, err := u.settle(ctx, campaign, runOutcome{prior: prior, command: command, attempted: attempted, chargeErr: chargeErr})
 	if err != nil {
 		return SendCampaignResult{}, err
 	}
@@ -275,30 +300,100 @@ func hasRecipientIn(recipients []domain.CampaignRecipient, state string) bool {
 	return false
 }
 
-// settle stores where the campaign ended up. A refused wallet puts an unstarted
-// campaign back to what it was, so topping up lets the next run pick it up
-// instead of waiting out the crash-recovery window.
-func (u *SendCampaignUseCase) settle(
-	ctx context.Context,
-	campaign domain.Campaign,
-	prior string,
-	attempted int,
-	chargeErr error,
-) (SendCampaignResult, error) {
-	updated, err := u.repository.ListRecipients(ctx, campaign.TenantID, campaign.ID)
-	if err != nil {
-		return SendCampaignResult{}, err
+type runOutcome struct {
+	prior     string
+	command   SendCampaignCommand
+	attempted int
+	chargeErr error
+}
+
+// settle stores where the campaign ended up. The write only lands while the
+// stored status is still the one this run saw, so a retry run cannot overwrite
+// the status a concurrent run just settled: on a conflict it reloads and
+// decides again from the recipients as they are now. A refused wallet puts an
+// unstarted campaign back to what it was, so topping up lets the next run pick
+// it up instead of waiting out the crash-recovery window.
+func (u *SendCampaignUseCase) settle(ctx context.Context, campaign domain.Campaign, outcome runOutcome) (SendCampaignResult, error) {
+	for range campaignSettleAttempts {
+		recipients, err := u.repository.ListRecipients(ctx, campaign.TenantID, campaign.ID)
+		if err != nil {
+			return SendCampaignResult{}, err
+		}
+		next, paused := u.nextCampaignState(campaign, recipients, outcome)
+		written, err := u.repository.SaveCampaignIfStatus(ctx, next, campaign.Status)
+		if err != nil {
+			return SendCampaignResult{}, fmt.Errorf("save campaign: %w", err)
+		}
+		if written {
+			if paused && u.pauseNotifier != nil {
+				u.pauseNotifier.CampaignPaused(ctx, next)
+			}
+			return SendCampaignResult{Campaign: next, Progress: domain.SummarizeRecipients(recipients), Attempted: outcome.attempted}, nil
+		}
+		reloaded, found, err := u.repository.FindCampaign(ctx, campaign.TenantID, campaign.ID)
+		if err != nil {
+			return SendCampaignResult{}, err
+		}
+		if !found {
+			return SendCampaignResult{}, ErrCampaignNotFound
+		}
+		campaign = reloaded
+		if !settlesFromRecipients(campaign.Status) {
+			return SendCampaignResult{Campaign: campaign, Progress: domain.SummarizeRecipients(recipients), Attempted: outcome.attempted}, nil
+		}
 	}
-	campaign.Status = domain.ResolveCampaignStatus(updated)
-	if chargeErr != nil && (prior == domain.CampaignStatusDraft || prior == domain.CampaignStatusScheduled) {
-		campaign.Status = prior
+	return SendCampaignResult{Campaign: campaign, Attempted: outcome.attempted}, nil
+}
+
+// settlesFromRecipients is whether a status is one a run derives from its
+// recipients. Draft, scheduled, paused and cancelled are decisions another run
+// or a person made, which a finishing run must leave alone.
+func settlesFromRecipients(status string) bool {
+	switch status {
+	case domain.CampaignStatusSending, domain.CampaignStatusCompleted, domain.CampaignStatusFailed:
+		return true
+	default:
+		return false
 	}
+}
+
+func (u *SendCampaignUseCase) nextCampaignState(campaign domain.Campaign, recipients []domain.CampaignRecipient, outcome runOutcome) (domain.Campaign, bool) {
+	campaign.Status = domain.ResolveCampaignStatus(recipients)
 	campaign.UpdatedAt = u.clock.Now()
-	saved, err := u.repository.SaveCampaign(ctx, campaign)
-	if err != nil {
-		return SendCampaignResult{}, fmt.Errorf("save campaign: %w", err)
+	if outcome.chargeErr == nil {
+		campaign.ConsecutiveRefusals = 0
+		return campaign, false
 	}
-	return SendCampaignResult{Campaign: saved, Progress: domain.SummarizeRecipients(updated), Attempted: attempted}, nil
+	if restoresOnRefusal(outcome.prior) {
+		campaign.Status = outcome.prior
+	}
+	if !errors.Is(outcome.chargeErr, ErrInsufficientFunds) {
+		return campaign, false
+	}
+	return countRefusal(campaign, outcome)
+}
+
+func restoresOnRefusal(prior string) bool {
+	return prior == domain.CampaignStatusDraft || prior == domain.CampaignStatusScheduled || prior == domain.CampaignStatusPausedNoFunds
+}
+
+// countRefusal pauses a scheduled campaign after its wallet refused several
+// runs in a row, so it stops retrying every tick. It reports true once, on the
+// run that pauses it.
+func countRefusal(campaign domain.Campaign, outcome runOutcome) (domain.Campaign, bool) {
+	if outcome.attempted > 0 {
+		campaign.ConsecutiveRefusals = 0
+		return campaign, false
+	}
+	if !outcome.command.Scheduled {
+		return campaign, false
+	}
+	campaign.ConsecutiveRefusals++
+	if campaign.ConsecutiveRefusals < maxCampaignRefusals {
+		return campaign, false
+	}
+	campaign.Status = domain.CampaignStatusPausedNoFunds
+	return campaign, true
 }
 
 // deliverAll bills and sends recipients on a few workers, so only recipients
@@ -381,6 +476,7 @@ func (u *SendCampaignUseCase) deliverOne(
 		recipient.State = from
 		return false, errors.Join(err, u.repository.SaveRecipient(ctx, recipient))
 	}
+	recipient.Interrupted = false
 	if err := u.repository.SaveRecipient(ctx, recipient); err != nil {
 		return false, fmt.Errorf("save recipient: %w", err)
 	}
@@ -389,14 +485,12 @@ func (u *SendCampaignUseCase) deliverOne(
 
 func (u *SendCampaignUseCase) selectPending(
 	recipients []domain.CampaignRecipient,
-	retryFailedOnly bool,
+	command SendCampaignCommand,
 ) []domain.CampaignRecipient {
 	pending := make([]domain.CampaignRecipient, 0, len(recipients))
 	for _, recipient := range recipients {
-		if retryFailedOnly {
-			// Suppressed is not a failure to retry: the recipient asked not to
-			// be contacted, and retrying would contact them.
-			if recipient.CanRetry() {
+		if command.RetryFailedOnly {
+			if wantsRetry(recipient, command) {
 				pending = append(pending, recipient)
 			}
 			continue
@@ -406,6 +500,19 @@ func (u *SendCampaignUseCase) selectPending(
 		}
 	}
 	return pending
+}
+
+// wantsRetry is whether a retry run should resend to this recipient. Suppressed
+// is not a failure to retry: the recipient asked not to be contacted, and
+// retrying would contact them.
+func wantsRetry(recipient domain.CampaignRecipient, command SendCampaignCommand) bool {
+	if !recipient.CanRetry() {
+		return false
+	}
+	if command.InterruptedOnly && !recipient.Interrupted {
+		return false
+	}
+	return len(command.RecipientIDs) == 0 || slices.Contains(command.RecipientIDs, recipient.ID)
 }
 
 // chargeRecipient debits one billable recipient just before their send. The

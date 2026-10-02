@@ -287,12 +287,28 @@ func (u *IngestLocationUseCase) Execute(
 	}, nil
 }
 
+// ResolveDevice answers who owns an IMEI through the same resolver as ingest.
+// A nil identity with no error means nobody registered it.
+func (u *IngestLocationUseCase) ResolveDevice(imei string) (*DeviceIdentity, error) {
+	if u.resolver == nil {
+		return nil, nil
+	}
+	identity, err := u.resolver.Resolve(imei)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrIdentityUnavailable, err)
+	}
+	return identity, nil
+}
+
 // screen decides whether a message is dropped before anything is stored or
 // published. An IMEI nobody registered is quarantined, never accepted.
 func (u *IngestLocationUseCase) screen(ctx context.Context, command IngestLocationCommand, resolved resolvedIdentity) (bool, string) {
 	reason := u.gate.Evaluate(resolved.tenantID, resolved.known, command.IMEI)
 	unknown := command.IMEI != "" && resolved.known == nil
 	if unknown && (reason == "" || reason == SkipUnknownDevice) {
+		if u.quarantine.IsBlocked(command.IMEI) {
+			return true, SkipBlocked
+		}
 		u.quarantine.Observe(ctx, command.IMEI)
 		if u.idMetrics != nil {
 			u.idMetrics.Quarantined()

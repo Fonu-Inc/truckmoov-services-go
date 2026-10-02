@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
@@ -87,12 +88,20 @@ type ComplianceSnapshot struct {
 	ComplianceRatePercent int
 }
 
+// offeredJobIfAny is offeredJob with a missing job reported as found=false.
+func offeredJobIfAny(jobs JobRepository, offer domain.JobOffer) (domain.Job, bool, error) {
+	job, err := offeredJob(jobs, offer)
+	if errors.Is(err, ErrJobNotFound) {
+		return domain.Job{}, false, nil
+	}
+	return job, err == nil, err
+}
+
 // offeredJob finds the job an offer is about under its current owner: the
 // offering tenant until the offer is accepted, the carrier after.
-func offeredJob(jobs JobRepository, offer domain.JobOffer) (domain.Job, bool) {
-	owner := offer.OfferingTenantID
+func offeredJob(jobs JobRepository, offer domain.JobOffer) (domain.Job, error) {
 	if offer.Status == domain.OfferStatusAccepted {
-		owner = offer.TargetTenantID
+		return jobs.FindByTenantAndID(offer.TargetTenantID, offer.CarrierJob())
 	}
-	return jobs.FindByTenantAndID(owner, offer.JobID)
+	return jobs.FindByTenantAndID(offer.OfferingTenantID, offer.JobID)
 }

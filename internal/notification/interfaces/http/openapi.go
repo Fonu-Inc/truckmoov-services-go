@@ -270,6 +270,67 @@ func notificationOpenAPISpec() map[string]any {
 					},
 				},
 			},
+			"/notify/preferences": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"notification"},
+					"summary":     "Read how the authenticated tenant is told about job offers",
+					"description": "The tenant comes from the token. Until a choice is saved, email is on and WhatsApp and SMS are off.",
+					"operationId": "getNotificationPreferences",
+					"responses": map[string]any{
+						"200": openAPIJSONResponse("Notification choices", map[string]any{"$ref": "#/components/schemas/NotificationPreferences"}),
+						"401": openAPIJSONResponse("Authentication required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"502": openAPIJSONResponse("Repository failure", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+					},
+				},
+				"put": map[string]any{
+					"tags":        []string{"notification"},
+					"summary":     "Choose how the authenticated tenant is told about job offers",
+					"description": "WhatsApp is sent from the tenant's own number and falls back to SMS when it cannot be delivered. At least one channel must stay on.",
+					"operationId": "putNotificationPreferences",
+					"requestBody": openAPIRequestBody("#/components/schemas/NotificationPreferencesRequest"),
+					"responses": map[string]any{
+						"200": openAPIJSONResponse("Saved choices", map[string]any{"$ref": "#/components/schemas/NotificationPreferences"}),
+						"400": openAPIJSONResponse("Validation error", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"401": openAPIJSONResponse("Authentication required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"502": openAPIJSONResponse("Repository failure", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+					},
+				},
+			},
+			"/notify/system/dead-letters": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"notification"},
+					"summary":     "List events the bus gave up delivering (platform staff only)",
+					"description": "Kept for 30 days. The event itself is not listed.",
+					"operationId": "listDeadLetters",
+					"parameters": []any{
+						map[string]any{"name": "page", "in": "query", "required": false, "schema": map[string]any{"type": "integer", "minimum": 1}},
+					},
+					"responses": map[string]any{
+						"200": openAPIJSONResponse("Dead letter page", map[string]any{"$ref": "#/components/schemas/DeadLetterPage"}),
+						"401": openAPIJSONResponse("Authentication required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"403": openAPIJSONResponse("Platform messaging permission required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+					},
+				},
+			},
+			"/notify/system/dead-letters/{id}/replay": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"notification"},
+					"summary":     "Publish a dead letter's original event again, once (platform staff only)",
+					"operationId": "replayDeadLetter",
+					"parameters": []any{
+						map[string]any{"name": "id", "in": "path", "required": true, "schema": map[string]any{"type": "string"}},
+					},
+					"responses": map[string]any{
+						"200": openAPIJSONResponse("Replayed", map[string]any{"$ref": "#/components/schemas/DeadLetter"}),
+						"401": openAPIJSONResponse("Authentication required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"403": openAPIJSONResponse("Platform messaging permission required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"404": openAPIJSONResponse("Dead letter not found", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"409": openAPIJSONResponse("Already replayed", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"422": openAPIJSONResponse("Cannot be replayed", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"502": openAPIJSONResponse("Publish failed", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+					},
+				},
+			},
 			"/notify/whatsapp/conversations": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"notification"},
@@ -717,6 +778,46 @@ func notificationOpenAPISpec() map[string]any {
 						"total":   map[string]any{"type": "integer", "description": "Entries matching the filters, not the page."},
 						"limit":   map[string]any{"type": "integer"},
 						"offset":  map[string]any{"type": "integer"},
+					},
+				},
+				"NotificationPreferences": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"tenant_id":  map[string]any{"type": "string"},
+						"email":      map[string]any{"type": "boolean"},
+						"whatsapp":   map[string]any{"type": "boolean"},
+						"sms":        map[string]any{"type": "boolean"},
+						"updated_at": map[string]any{"type": "string", "format": "date-time"},
+					},
+				},
+				"NotificationPreferencesRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"email", "whatsapp", "sms"},
+					"properties": map[string]any{
+						"email":    map[string]any{"type": "boolean"},
+						"whatsapp": map[string]any{"type": "boolean"},
+						"sms":      map[string]any{"type": "boolean"},
+					},
+				},
+				"DeadLetter": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":               map[string]any{"type": "string"},
+						"original_subject": map[string]any{"type": "string"},
+						"tenant_id":        map[string]any{"type": "string", "description": "The tenant of the event that failed."},
+						"event_type":       map[string]any{"type": "string"},
+						"attempts":         map[string]any{"type": "integer"},
+						"last_error":       map[string]any{"type": "string"},
+						"failed_at":        map[string]any{"type": "string", "format": "date-time"},
+						"replayed_at":      map[string]any{"type": "string", "format": "date-time", "nullable": true},
+					},
+				},
+				"DeadLetterPage": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"items": map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/DeadLetter"}},
+						"total": map[string]any{"type": "integer"},
+						"page":  map[string]any{"type": "integer"},
 					},
 				},
 				"DeliveryLogPageEnvelope": map[string]any{

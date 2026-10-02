@@ -236,9 +236,12 @@ func (u *RemoveOperatorUseCase) hasActiveSubDispatchedJobs(ctx context.Context, 
 		return false, fmt.Errorf("list accepted sub-dispatch offers: %w", err)
 	}
 	for _, offer := range accepted {
-		job, found := offeredJob(u.jobs, offer)
-		if !found {
+		job, err := offeredJob(u.jobs, offer)
+		if errors.Is(err, ErrJobNotFound) {
 			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("load offered job: %w", err)
 		}
 		if job.IsActive() {
 			return true, nil

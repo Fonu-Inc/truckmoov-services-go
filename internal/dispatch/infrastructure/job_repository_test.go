@@ -36,7 +36,7 @@ func TestInMemoryJobRepository_Delete_RemovesJob(t *testing.T) {
 		t.Fatalf("delete: %v", err)
 	}
 
-	if _, ok := repo.FindByTenantAndID(job.TenantID, job.ID); ok {
+	if _, err := repo.FindByTenantAndID(job.TenantID, job.ID); err == nil {
 		t.Fatalf("expected job to be gone after delete")
 	}
 }
@@ -52,7 +52,7 @@ func TestInMemoryJobRepository_Delete_NonExistentIsNoOp(t *testing.T) {
 		t.Fatalf("delete non-existent: %v", err)
 	}
 
-	if _, ok := repo.FindByTenantAndID(job.TenantID, job.ID); !ok {
+	if _, err := repo.FindByTenantAndID(job.TenantID, job.ID); err != nil {
 		t.Fatalf("expected unrelated job to remain after no-op delete")
 	}
 }
@@ -66,8 +66,8 @@ func TestInMemoryJobRepository_KeepsCreatedBy(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	stored, ok := repo.FindByTenantAndID(job.TenantID, job.ID)
-	if !ok || stored.CreatedBy == nil || *stored.CreatedBy != creator {
+	stored, err := repo.FindByTenantAndID(job.TenantID, job.ID)
+	if err != nil || stored.CreatedBy == nil || *stored.CreatedBy != creator {
 		t.Fatalf("expected created_by %q, got %v", creator, stored.CreatedBy)
 	}
 }

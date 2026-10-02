@@ -80,8 +80,9 @@ func TestIngestLocation_ResolvesIMEIToVehicle(t *testing.T) {
 }
 
 type fakeQuarantineStore struct {
-	counts map[string]int
-	fail   bool
+	counts  map[string]int
+	fail    bool
+	blocked []string
 }
 
 func (f *fakeQuarantineStore) Record(_ context.Context, imei string, count int, _ time.Time) error {
@@ -107,6 +108,19 @@ func (f *fakeQuarantineStore) Remove(_ context.Context, imei string) error {
 	delete(f.counts, imei)
 	return nil
 }
+
+func (f *fakeQuarantineStore) SetStatus(_ context.Context, imei, _ string, _ time.Time) error {
+	if _, ok := f.counts[imei]; !ok {
+		return ErrQuarantineNotFound
+	}
+	return nil
+}
+
+func (f *fakeQuarantineStore) BlockedIMEIs(_ context.Context) ([]string, error) {
+	return f.blocked, nil
+}
+
+func (f *fakeQuarantineStore) Prune(_ context.Context, _ time.Time) (int, error) { return 0, nil }
 
 func TestIngestLocation_UnknownIMEIIsQuarantinedNotStored(t *testing.T) {
 	publisher := &fakeTrackingPublisher{}

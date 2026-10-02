@@ -83,7 +83,7 @@ func TestPostgresJobRepository_Delete_RemovesJob(t *testing.T) {
 		t.Fatalf("delete: %v", err)
 	}
 
-	if _, ok := repo.FindByTenantAndID(tenantID, id); ok {
+	if _, err := repo.FindByTenantAndID(tenantID, id); err == nil {
 		t.Fatalf("expected job to be gone after delete")
 	}
 }
@@ -104,7 +104,7 @@ func TestPostgresJobRepository_Delete_WrongTenantIsNoOp(t *testing.T) {
 		t.Fatalf("delete under wrong tenant: %v", err)
 	}
 
-	if _, ok := repo.FindByTenantAndID(tenantID, id); !ok {
+	if _, err := repo.FindByTenantAndID(tenantID, id); err != nil {
 		t.Fatalf("expected job to remain when deleted under wrong tenant")
 	}
 }
@@ -139,8 +139,8 @@ func TestPostgresJobRepository_PersistsCreatedBy(t *testing.T) {
 	if err := repo.db.QueryRow(`SELECT created_by FROM dispatch_jobs WHERE tenant_id = $1 AND id = $2`, tenantID, id).Scan(&column); err != nil {
 		t.Fatalf("read created_by column: %v", err)
 	}
-	stored, ok := repo.FindByTenantAndID(tenantID, id)
-	if column.String != creator || !ok || stored.CreatedBy == nil || *stored.CreatedBy != creator {
+	stored, err := repo.FindByTenantAndID(tenantID, id)
+	if column.String != creator || err != nil || stored.CreatedBy == nil || *stored.CreatedBy != creator {
 		t.Fatalf("expected created_by %q in column and payload, got %q / %v", creator, column.String, stored.CreatedBy)
 	}
 }
@@ -167,8 +167,8 @@ func TestPostgresJobRepository_PersistsDeliveredAtAndCountsActive(t *testing.T) 
 	if err := repo.db.QueryRow(`SELECT delivered_at FROM dispatch_jobs WHERE tenant_id = $1 AND id = $2`, tenantID, deliveredID).Scan(&column); err != nil {
 		t.Fatalf("read delivered_at column: %v", err)
 	}
-	stored, ok := repo.FindByTenantAndID(tenantID, deliveredID)
-	if !column.Valid || !column.Time.Equal(deliveredAt) || !ok || stored.DeliveredAt == nil || !stored.DeliveredAt.Equal(deliveredAt) {
+	stored, err := repo.FindByTenantAndID(tenantID, deliveredID)
+	if !column.Valid || !column.Time.Equal(deliveredAt) || err != nil || stored.DeliveredAt == nil || !stored.DeliveredAt.Equal(deliveredAt) {
 		t.Fatalf("expected delivered_at %v in column and payload, got %v / %v", deliveredAt, column, stored.DeliveredAt)
 	}
 

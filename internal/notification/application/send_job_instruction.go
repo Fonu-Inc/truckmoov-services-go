@@ -42,6 +42,10 @@ type SendJobInstructionCommand struct {
 	HeaderMedia      *JobInstructionHeaderMedia
 	ButtonParameters []JobInstructionButtonParameter
 	BeforeSend       func(ctx context.Context) error
+	// MessageID and ConversationMessageID make a redelivered instruction
+	// reuse the message it already sent instead of sending it again.
+	MessageID             string
+	ConversationMessageID string
 }
 
 type SendJobInstructionUseCase struct {
@@ -50,6 +54,7 @@ type SendJobInstructionUseCase struct {
 	templateProvider       WhatsAppTemplateProvider
 	messageProvider        WhatsAppTemplateMessageProvider
 	eventPublisher         DeliveryEventPublisher
+	deliveryLog            DeliveryLogRepository
 	clock                  Clock
 	idGenerator            IDGenerator
 	defaultTenant          string
@@ -78,6 +83,29 @@ func NewSendJobInstructionUseCase(repository OutboxRepository, conversationRepos
 	return &SendJobInstructionUseCase{repository: repository, conversationRepository: conversationRepository, templateProvider: templateProvider, messageProvider: messageProvider, eventPublisher: eventPublisher, clock: clock, idGenerator: idGenerator, defaultTenant: defaultTenant}
 }
 
+// WithDeliveryLog makes every instruction, sent or refused, show in the
+// delivery log like any other tenant message.
+func (u *SendJobInstructionUseCase) WithDeliveryLog(deliveryLog DeliveryLogRepository) *SendJobInstructionUseCase {
+	u.deliveryLog = deliveryLog
+	return u
+}
+
+// ConversationRecordError says the template left but could not be recorded in
+// the conversation. A retry records it again without sending it twice.
+type ConversationRecordError struct{ Err error }
+
+func (e *ConversationRecordError) Error() string {
+	return "record job instruction in conversation: " + e.Err.Error()
+}
+
+func (e *ConversationRecordError) Unwrap() error { return e.Err }
+
+type preparedJobInstruction struct {
+	template   domain.WhatsAppTemplate
+	language   string
+	components []map[string]any
+}
+
 func (u *SendJobInstructionUseCase) Execute(ctx context.Context, command SendJobInstructionCommand) (domain.OutboxMessage, error) {
 	tenantID, err := resolveNotificationTenant(command.TenantID, u.defaultTenant)
 	if err != nil {
@@ -90,47 +118,21 @@ func (u *SendJobInstructionUseCase) Execute(ctx context.Context, command SendJob
 		return domain.OutboxMessage{}, ErrJobInstructionTemplateNameRequired
 	}
 
-	template, err := u.findTemplateByName(ctx, tenantID, strings.TrimSpace(command.TemplateName))
+	prepared, err := u.prepare(ctx, tenantID, command)
+	if err != nil {
+		return u.refuse(ctx, tenantID, command, err)
+	}
+	if existing, sent := u.alreadySent(tenantID, command); sent {
+		if err := u.recordConversation(ctx, tenantID, command, prepared, existing.Status, existing.ProviderMessageID); err != nil {
+			return existing, &ConversationRecordError{Err: err}
+		}
+		return existing, nil
+	}
+
+	message, err := u.queue(tenantID, command, prepared)
 	if err != nil {
 		return domain.OutboxMessage{}, err
 	}
-	if strings.EqualFold(strings.TrimSpace(template.Status), "APPROVED") == false {
-		return domain.OutboxMessage{}, ErrJobInstructionTemplateNotApproved
-	}
-	if hasMinimumJobAssignmentPlaceholders(template.Components) == false {
-		return domain.OutboxMessage{}, ErrJobInstructionTemplateNotCompatible
-	}
-
-	sendComponents, err := buildJobInstructionSendComponents(template, command)
-	if err != nil {
-		return domain.OutboxMessage{}, err
-	}
-
-	language := strings.TrimSpace(command.Language)
-	if language == "" {
-		language = strings.TrimSpace(template.Language)
-	}
-	if language == "" {
-		language = "en_US"
-	}
-
-	now := u.clock.Now()
-	content := buildJobInstructionContent(command, template.Name, language)
-	message, err := domain.NewOutboxMessage(domain.OutboxMessage{
-		ID:        u.idGenerator.New("msg"),
-		TenantID:  tenantID,
-		Channel:   "whatsapp",
-		Recipient: normalizeConversationPhone(command.Recipient),
-		Content:   content,
-		Status:    domain.StatusQueued,
-		Retries:   0,
-		CreatedAt: now,
-		UpdatedAt: now,
-	})
-	if err != nil {
-		return domain.OutboxMessage{}, fmt.Errorf("build outbox message: %w", err)
-	}
-
 	if err := u.repository.Save(message); err != nil {
 		return domain.OutboxMessage{}, fmt.Errorf("save queued outbox message: %w", err)
 	}
@@ -141,6 +143,7 @@ func (u *SendJobInstructionUseCase) Execute(ctx context.Context, command SendJob
 			if saveErr := u.repository.Save(message); saveErr != nil {
 				return domain.OutboxMessage{}, fmt.Errorf("save refused outbox message: %w", saveErr)
 			}
+			u.logDelivery(ctx, message, command, prepared.template.Name, err)
 			return message, err
 		}
 	}
@@ -148,9 +151,9 @@ func (u *SendJobInstructionUseCase) Execute(ctx context.Context, command SendJob
 	result, sendErr := u.messageProvider.SendTemplate(ctx, domain.WhatsAppTemplateMessageRequest{
 		TenantID:   tenantID,
 		Recipient:  strings.TrimSpace(command.Recipient),
-		Name:       template.Name,
-		Language:   language,
-		Components: sendComponents,
+		Name:       prepared.template.Name,
+		Language:   prepared.language,
+		Components: prepared.components,
 	})
 	if sendErr != nil {
 		message = message.MarkFailed(u.clock.Now())
@@ -161,6 +164,7 @@ func (u *SendJobInstructionUseCase) Execute(ctx context.Context, command SendJob
 	if err := u.repository.Save(message); err != nil {
 		return domain.OutboxMessage{}, fmt.Errorf("save delivered outbox message: %w", err)
 	}
+	u.logDelivery(ctx, message, command, prepared.template.Name, sendErr)
 
 	if publishErr := publishNotificationDeliveryEvent(ctx, u.eventPublisher, u.idGenerator, u.clock, message, sendErr); publishErr != nil {
 		// best effort
@@ -169,22 +173,119 @@ func (u *SendJobInstructionUseCase) Execute(ctx context.Context, command SendJob
 		return message, sendErr
 	}
 
-	_, _, err = recordOutboundConversationMessage(ctx, u.conversationRepository, u.clock, u.idGenerator, outboundConversationMessageParams{
+	if err := u.recordConversation(ctx, tenantID, command, prepared, result.Status, result.MessageID); err != nil {
+		return message, &ConversationRecordError{Err: err}
+	}
+	return message, nil
+}
+
+func (u *SendJobInstructionUseCase) prepare(ctx context.Context, tenantID string, command SendJobInstructionCommand) (preparedJobInstruction, error) {
+	template, err := u.findTemplateByName(ctx, tenantID, strings.TrimSpace(command.TemplateName))
+	if err != nil {
+		return preparedJobInstruction{}, err
+	}
+	if strings.EqualFold(strings.TrimSpace(template.Status), "APPROVED") == false {
+		return preparedJobInstruction{}, ErrJobInstructionTemplateNotApproved
+	}
+	if hasMinimumJobAssignmentPlaceholders(template.Components) == false {
+		return preparedJobInstruction{}, ErrJobInstructionTemplateNotCompatible
+	}
+	components, err := buildJobInstructionSendComponents(template, command)
+	if err != nil {
+		return preparedJobInstruction{}, err
+	}
+	language := strings.TrimSpace(command.Language)
+	if language == "" {
+		language = strings.TrimSpace(template.Language)
+	}
+	if language == "" {
+		language = "en_US"
+	}
+	return preparedJobInstruction{template: template, language: language, components: components}, nil
+}
+
+// refuse logs an instruction that could not even be built, so the log still
+// answers whether the driver was told.
+func (u *SendJobInstructionUseCase) refuse(ctx context.Context, tenantID string, command SendJobInstructionCommand, cause error) (domain.OutboxMessage, error) {
+	now := u.clock.Now()
+	message, err := domain.NewOutboxMessage(domain.OutboxMessage{
+		ID:        u.messageID(command),
+		TenantID:  tenantID,
+		Channel:   "whatsapp",
+		Recipient: normalizeConversationPhone(command.Recipient),
+		Content:   buildJobInstructionContent(command, strings.TrimSpace(command.TemplateName), strings.TrimSpace(command.Language)),
+		Status:    domain.StatusFailed,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err == nil {
+		u.logDelivery(ctx, message, command, strings.TrimSpace(command.TemplateName), cause)
+	}
+	return domain.OutboxMessage{}, cause
+}
+
+func (u *SendJobInstructionUseCase) messageID(command SendJobInstructionCommand) string {
+	if id := strings.TrimSpace(command.MessageID); id != "" {
+		return id
+	}
+	return u.idGenerator.New("msg")
+}
+
+func (u *SendJobInstructionUseCase) queue(tenantID string, command SendJobInstructionCommand, prepared preparedJobInstruction) (domain.OutboxMessage, error) {
+	now := u.clock.Now()
+	message, err := domain.NewOutboxMessage(domain.OutboxMessage{
+		ID:        u.messageID(command),
+		TenantID:  tenantID,
+		Channel:   "whatsapp",
+		Recipient: normalizeConversationPhone(command.Recipient),
+		Content:   buildJobInstructionContent(command, prepared.template.Name, prepared.language),
+		Status:    domain.StatusQueued,
+		Retries:   0,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		return domain.OutboxMessage{}, fmt.Errorf("build outbox message: %w", err)
+	}
+	return message, nil
+}
+
+func (u *SendJobInstructionUseCase) alreadySent(tenantID string, command SendJobInstructionCommand) (domain.OutboxMessage, bool) {
+	id := strings.TrimSpace(command.MessageID)
+	if id == "" {
+		return domain.OutboxMessage{}, false
+	}
+	message, found := u.repository.FindByTenantAndID(tenantID, id)
+	return message, found && message.ProviderMessageID != ""
+}
+
+func (u *SendJobInstructionUseCase) logDelivery(ctx context.Context, message domain.OutboxMessage, command SendJobInstructionCommand, templateName string, sendErr error) {
+	appendDeliveryLog(ctx, u.deliveryLog, message, domain.NotificationTypeJobAssignment, jobInstructionLogContent(command, templateName), sendErr)
+}
+
+func jobInstructionLogContent(command SendJobInstructionCommand, templateName string) string {
+	return fmt.Sprintf("Job %s from %s to %s sent as template %s", strings.TrimSpace(command.JobReference), strings.TrimSpace(command.PickupLocation), strings.TrimSpace(command.DeliveryLocation), templateName)
+}
+
+func (u *SendJobInstructionUseCase) recordConversation(ctx context.Context, tenantID string, command SendJobInstructionCommand, prepared preparedJobInstruction, status, providerMessageID string) error {
+	template := prepared.template
+	_, _, err := recordOutboundConversationMessage(ctx, u.conversationRepository, u.clock, u.idGenerator, outboundConversationMessageParams{
+		MessageID:         command.ConversationMessageID,
 		TenantID:          tenantID,
 		Recipient:         command.Recipient,
 		DriverName:        command.DriverName,
 		MessageType:       "template",
 		Text:              buildConversationPreview("template", "", template.Name, ""),
 		TemplateName:      template.Name,
-		ProviderMessageID: result.MessageID,
-		Status:            result.Status,
+		ProviderMessageID: providerMessageID,
+		Status:            status,
 		Payload: map[string]any{
 			"kind":              "job_instruction",
 			"type":              "template",
 			"job_id":            strings.TrimSpace(command.JobID),
 			"driver_id":         strings.TrimSpace(command.DriverID),
 			"template_name":     template.Name,
-			"language":          language,
+			"language":          prepared.language,
 			"driver_name":       strings.TrimSpace(command.DriverName),
 			"job_reference":     strings.TrimSpace(command.JobReference),
 			"pickup_location":   strings.TrimSpace(command.PickupLocation),
@@ -194,11 +295,7 @@ func (u *SendJobInstructionUseCase) Execute(ctx context.Context, command SendJob
 		},
 		SentTemplate: true,
 	})
-	if err != nil {
-		return domain.OutboxMessage{}, err
-	}
-
-	return message, nil
+	return err
 }
 
 func (u *SendJobInstructionUseCase) findTemplateByName(ctx context.Context, tenantID, templateName string) (domain.WhatsAppTemplate, error) {

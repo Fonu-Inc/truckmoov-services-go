@@ -94,19 +94,23 @@ func (b *Bridge) dispatch(ctx context.Context, conn *websocket.Conn, pt parsedTo
 		}
 		speed := p.Speed
 		heading := p.Heading
-		_, _ = b.ingest.Execute(ctx, application.IngestLocationCommand{
-			TenantID:  identity.SystemTenantID,
-			VehicleID: pt.imei,
-			DeviceID:  pt.imei,
+		result, err := b.ingest.Execute(ctx, application.IngestLocationCommand{
+			IMEI:      pt.imei,
 			Latitude:  p.Latitude,
 			Longitude: p.Longitude,
 			SpeedKPH:  &speed,
 			Heading:   &heading,
+			Protocol:  "ws",
 		})
+		if err != nil {
+			b.writeError(conn, "telemetry not accepted, retry")
+			return
+		}
 		b.write(conn, OutboundMessage{
 			Type:       "puback",
 			Topic:      msg.Topic,
-			EventCount: 1,
+			EventCount: publishedCount(result),
+			Message:    result.SkipReason,
 			Timestamp:  now(),
 		})
 
@@ -116,11 +120,20 @@ func (b *Bridge) dispatch(ctx context.Context, conn *websocket.Conn, pt parsedTo
 			b.writeError(conn, "invalid alert payload")
 			return
 		}
+		device, err := b.ingest.ResolveDevice(pt.imei)
+		if err != nil {
+			b.writeError(conn, "device lookup unavailable, retry")
+			return
+		}
+		if device == nil {
+			b.writeError(conn, "unknown device: "+pt.imei)
+			return
+		}
 		_, _ = b.alert.Execute(ctx, application.PublishAlertCommand{
-			TenantID:  identity.SystemTenantID,
+			TenantID:  device.TenantID,
 			AlertType: p.Type,
 			Severity:  p.Severity,
-			VehicleID: pt.imei,
+			VehicleID: firstNonEmpty(device.VehicleUUID, device.DeviceID),
 			Details: map[string]any{
 				"latitude":      p.Latitude,
 				"longitude":     p.Longitude,
@@ -145,6 +158,22 @@ func (b *Bridge) dispatch(ctx context.Context, conn *websocket.Conn, pt parsedTo
 	default:
 		b.writeError(conn, "unknown action: "+pt.action)
 	}
+}
+
+func publishedCount(result application.IngestLocationResult) int {
+	if result.Published {
+		return 1
+	}
+	return 0
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (b *Bridge) write(conn *websocket.Conn, msg OutboundMessage) {

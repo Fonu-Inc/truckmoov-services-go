@@ -21,6 +21,8 @@ type JobInstructionTextRecord struct {
 	DeliveryLocation  string
 	CargoDescription  string
 	Priority          string
+	// MessageID, when set, makes the conversation record idempotent.
+	MessageID string
 }
 
 type instructionConversationRecorder interface {
@@ -48,6 +50,7 @@ func (r *InstructionConversationRecorder) RecordJobInstructionText(ctx context.C
 	}
 	_, _, err = recordOutboundConversationMessage(ctx, r.repository, r.clock, r.idGenerator, outboundConversationMessageParams{
 		TenantID:          tenantID,
+		MessageID:         record.MessageID,
 		Recipient:         record.Recipient,
 		DriverName:        record.DriverName,
 		Conversation:      conversation,

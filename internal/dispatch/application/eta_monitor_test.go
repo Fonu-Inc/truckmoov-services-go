@@ -135,3 +135,40 @@ func TestEtaMonitor_RetriesAnAlertThePublisherRefused(t *testing.T) {
 		t.Fatalf("expected the refused alert to go out once on the next sweep, got %+v", publisher.alerts)
 	}
 }
+
+type storedLateAlerts struct {
+	JobRepository
+	marked map[string]map[string]bool
+}
+
+func (s *storedLateAlerts) LateAlertedJobIDs(_ context.Context, tenantID string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for id := range s.marked[tenantID] {
+		out[id] = true
+	}
+	return out, nil
+}
+
+func (s *storedLateAlerts) MarkLateAlerted(_ context.Context, tenantID, jobID string) error {
+	if s.marked[tenantID] == nil {
+		s.marked[tenantID] = map[string]bool{}
+	}
+	s.marked[tenantID][jobID] = true
+	return nil
+}
+
+func TestEtaMonitor_PersistedMarkerSurvivesARestart(t *testing.T) {
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	repository := newLifecycleRepository()
+	_ = repository.Save(lateJob(t, "tenant-a", "job-a", domain.StatusEnRoute, now.Add(-time.Hour)))
+	store := &storedLateAlerts{JobRepository: repository, marked: map[string]map[string]bool{}}
+	publisher := &fakeAlertPublisher{}
+	lister := fakeTenantLister{tenants: []string{"tenant-a"}}
+
+	NewEtaMonitorUseCase(store, lister, publisher, lifecycleClock{now: now}).Check(context.Background())
+	NewEtaMonitorUseCase(store, lister, publisher, lifecycleClock{now: now}).Check(context.Background())
+
+	if len(publisher.alerts) != 1 {
+		t.Fatalf("expected one alert across a restart, got %+v", publisher.alerts)
+	}
+}

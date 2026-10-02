@@ -83,7 +83,10 @@ func (u *OperatorPerformanceUseCase) Execute(ctx context.Context, aggregatorTena
 			}
 			accepted++
 
-			job, found := offeredJob(u.jobs, offer)
+			job, found, err := offeredJobIfAny(u.jobs, offer)
+			if err != nil {
+				return nil, fmt.Errorf("load offered job: %w", err)
+			}
 			if !found {
 				continue
 			}
@@ -136,17 +139,7 @@ func deliveredWithinDeadline(job domain.Job) bool {
 }
 
 func deliveredTimestamp(job domain.Job) *time.Time {
-	for i := len(job.Timeline) - 1; i >= 0; i-- {
-		entry := job.Timeline[i]
-		if entry.Type != "job_status_updated" && entry.Type != "driver_status_confirmed" {
-			continue
-		}
-		if entry.Metadata["to_status"] == string(domain.StatusDelivered) || entry.Metadata["requested_status"] == string(domain.StatusDelivered) {
-			occurredAt := entry.OccurredAt
-			return &occurredAt
-		}
-	}
-	return nil
+	return job.TimelineDeliveredAt()
 }
 
 // TopPerformingOperatorsUseCase ranks linked operators by completed job
@@ -195,7 +188,10 @@ func (u *TopPerformingOperatorsUseCase) Execute(ctx context.Context, aggregatorT
 			if offer.TargetTenantID != relationship.OperatorTenantID || offer.Status != domain.OfferStatusAccepted {
 				continue
 			}
-			job, found := offeredJob(u.jobs, offer)
+			job, found, err := offeredJobIfAny(u.jobs, offer)
+			if err != nil {
+				return nil, fmt.Errorf("load offered job: %w", err)
+			}
 			if found && job.Status == domain.StatusDelivered {
 				completed++
 			}

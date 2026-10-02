@@ -2,6 +2,7 @@ package infrastructure
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -159,14 +160,21 @@ func (r *InMemoryJobOfferRepository) Accept(
 		}
 	}
 
-	job, found := r.jobs.FindByTenantAndID(offer.OfferingTenantID, offer.JobID)
-	if !found {
-		return application.AcceptedOffer{}, application.ErrJobNotFound
+	job, err := r.jobs.FindByTenantAndID(offer.OfferingTenantID, offer.JobID)
+	if err != nil {
+		return application.AcceptedOffer{}, err
 	}
 	transferred, err := job.TransferToCarrier(targetTenantID, offer.OfferedRateNgn, now, "timeline-"+accepted.ID)
 	if err != nil {
 		return application.AcceptedOffer{}, err
 	}
+	_, lookupErr := r.jobs.FindByTenantAndID(targetTenantID, offer.JobID)
+	if lookupErr != nil && !errors.Is(lookupErr, domain.ErrJobNotFound) {
+		return application.AcceptedOffer{}, lookupErr
+	}
+	transferred.ID = carrierJobIDFor(offer, lookupErr == nil)
+	accepted.CarrierJobID = transferred.ID
+	r.offers[accepted.ID] = accepted
 	if err := r.jobs.Delete(offer.OfferingTenantID, offer.JobID); err != nil {
 		return application.AcceptedOffer{}, err
 	}

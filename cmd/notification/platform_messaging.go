@@ -98,6 +98,9 @@ func runScheduledSends(ctx context.Context, scheduled *application.PlatformSched
 			if _, err := campaigns.RunDue(ctx); err != nil {
 				log.Warn("platform_scheduled_campaign_failed", "error", err.Error())
 			}
+			if _, err := campaigns.RetryInterrupted(ctx); err != nil {
+				log.Warn("campaign_interrupted_retry_failed", "error", err.Error())
+			}
 		}
 	}
 }

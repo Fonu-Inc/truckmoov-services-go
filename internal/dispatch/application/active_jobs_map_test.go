@@ -14,8 +14,8 @@ type mapJobRepo struct {
 }
 
 func (r *mapJobRepo) Save(job domain.Job) error { return nil }
-func (r *mapJobRepo) FindByTenantAndID(tenantID, id string) (domain.Job, bool) {
-	return domain.Job{}, false
+func (r *mapJobRepo) FindByTenantAndID(tenantID, id string) (domain.Job, error) {
+	return domain.Job{}, domain.ErrJobNotFound
 }
 func (r *mapJobRepo) FindByTenant(tenantID string) ([]domain.Job, error) {
 	return r.jobs[tenantID], nil

@@ -155,3 +155,43 @@ func TestQuarantineList_OnlyAuthMayRead(t *testing.T) {
 		}
 	}
 }
+
+func TestQuarantineActions_OnlyAuthMayDismissOrBlock(t *testing.T) {
+	tests := []struct {
+		name, service, path string
+		status              int
+	}{
+		{"auth dismisses", "auth", "/tracking/internal/quarantine/359779090077777/dismiss", http.StatusOK},
+		{"auth blocks", "auth", "/tracking/internal/quarantine/359779090077777/block", http.StatusOK},
+		{"unknown imei", "auth", "/tracking/internal/quarantine/000/block", http.StatusNotFound},
+		{"unknown action", "auth", "/tracking/internal/quarantine/359779090077777/delete", http.StatusNotFound},
+		{"other service refused", "fleet", "/tracking/internal/quarantine/359779090077777/block", http.StatusNotFound},
+		{"no caller refused", "", "/tracking/internal/quarantine/359779090077777/block", http.StatusNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tt.path, nil)
+			callAs(tt.service, req)
+			res := httptest.NewRecorder()
+			quarantineServer().ServeHTTP(res, req)
+			if res.Code != tt.status {
+				t.Fatalf("want %d got %d: %s", tt.status, res.Code, res.Body.String())
+			}
+		})
+	}
+}
+
+func TestQuarantineList_ShowsStatusAfterBlock(t *testing.T) {
+	server := quarantineServer()
+	block := httptest.NewRequest(http.MethodPost, "/tracking/internal/quarantine/359779090077777/block", nil)
+	callAs("auth", block)
+	server.ServeHTTP(httptest.NewRecorder(), block)
+
+	list := httptest.NewRequest(http.MethodGet, "/tracking/internal/quarantine", nil)
+	callAs("auth", list)
+	res := httptest.NewRecorder()
+	server.ServeHTTP(res, list)
+	if !strings.Contains(res.Body.String(), `"status":"blocked"`) {
+		t.Fatalf("expected blocked status, got %s", res.Body.String())
+	}
+}

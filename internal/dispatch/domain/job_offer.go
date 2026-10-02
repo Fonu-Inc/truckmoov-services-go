@@ -24,8 +24,11 @@ const (
 // The same job can be offered to several carriers at once, so a job has many
 // offers and at most one of them may ever be accepted.
 type JobOffer struct {
-	ID               string
-	JobID            string
+	ID    string
+	JobID string
+	// CarrierJobID is the job's id under the carrier once accepted. It differs
+	// from JobID only when the carrier already held a job with that id.
+	CarrierJobID     string
 	OfferingTenantID string
 	TargetTenantID   string
 	// Separate from the job's own amount. The requirements note the two may
@@ -72,6 +75,7 @@ func NewJobOffer(params JobOffer) (JobOffer, error) {
 	return JobOffer{
 		ID:               strings.TrimSpace(params.ID),
 		JobID:            strings.TrimSpace(params.JobID),
+		CarrierJobID:     strings.TrimSpace(params.CarrierJobID),
 		OfferingTenantID: strings.TrimSpace(params.OfferingTenantID),
 		TargetTenantID:   strings.TrimSpace(params.TargetTenantID),
 		OfferedRateNgn:   params.OfferedRateNgn,
@@ -82,6 +86,14 @@ func NewJobOffer(params JobOffer) (JobOffer, error) {
 		CreatedAt:        params.CreatedAt,
 		UpdatedAt:        params.UpdatedAt,
 	}, nil
+}
+
+// CarrierJob is the job id the carrier sees after acceptance.
+func (o JobOffer) CarrierJob() string {
+	if o.CarrierJobID != "" {
+		return o.CarrierJobID
+	}
+	return o.JobID
 }
 
 // IsExpired reports whether the offer's window has passed.

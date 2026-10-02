@@ -158,11 +158,21 @@ func (u *SendMessageUseCase) recordDelivery(
 	notificationType string,
 	sendErr error,
 ) {
-	if u.deliveryLog == nil {
+	appendDeliveryLog(ctx, u.deliveryLog, message, notificationType, message.Content, sendErr)
+}
+
+func appendDeliveryLog(
+	ctx context.Context,
+	deliveryLog DeliveryLogRepository,
+	message domain.OutboxMessage,
+	notificationType, content string,
+	sendErr error,
+) {
+	if deliveryLog == nil {
 		return
 	}
 
-	subject, body := splitSubjectAndBody(message.Content)
+	subject, body := splitSubjectAndBody(content)
 	failureReason := ""
 	if sendErr != nil {
 		failureReason = sendErr.Error()
@@ -185,7 +195,7 @@ func (u *SendMessageUseCase) recordDelivery(
 	if err != nil {
 		return
 	}
-	_ = u.deliveryLog.Append(ctx, entry)
+	_ = deliveryLog.Append(ctx, entry)
 }
 
 // splitSubjectAndBody mirrors how the email provider reads content: a subject

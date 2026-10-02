@@ -24,3 +24,23 @@ func TestErrorAlertSeesTenantSetByInnerAuthMiddleware(t *testing.T) {
 		t.Fatalf("expected tenant t-77 recorded, got %+v", snapshot)
 	}
 }
+
+func TestErrorAlertRecordsTheRegisteredPatternNotTheCollapsedPath(t *testing.T) {
+	recent := NewRecentRequests(3)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/dispatch/jobs/{id}/status", func(w http.ResponseWriter, _ *http.Request) {
+		WriteError(w, http.StatusBadRequest, "bad")
+	})
+	copied := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		AlertRoute(mux).ServeHTTP(w, r.Clone(r.Context()))
+	})
+	handler := WithErrorAlerts(copied, alert.NewNtfyClient("", ""), recent, "svc")
+
+	request := httptest.NewRequest(http.MethodGet, "/dispatch/jobs/job-1/status", nil)
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	snapshot := recent.Snapshot()
+	if len(snapshot) != 1 || snapshot[0].Path != "/dispatch/jobs/{id}/status" {
+		t.Fatalf("expected the mux pattern recorded, got %+v", snapshot)
+	}
+}

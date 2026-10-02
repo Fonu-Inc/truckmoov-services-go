@@ -194,11 +194,14 @@ func (u *SubDispatchQueueUseCase) Execute(ctx context.Context, aggregatorTenantI
 	for jobID, offer := range latestOfferByJob {
 		entry, exists := entries[jobID]
 		if !exists {
-			job, found := offeredJob(u.jobs, offer)
-			if !found {
+			job, err := offeredJob(u.jobs, offer)
+			if errors.Is(err, ErrJobNotFound) {
 				continue
 			}
-			entry = SubDispatchQueueEntry{JobID: job.ID, Reference: job.Reference, Route: routeSummary(job), ValueNgn: job.AmountNgn}
+			if err != nil {
+				return nil, fmt.Errorf("load offered job: %w", err)
+			}
+			entry = SubDispatchQueueEntry{JobID: jobID, Reference: job.Reference, Route: routeSummary(job), ValueNgn: job.AmountNgn}
 		}
 
 		switch offer.Status {
@@ -208,8 +211,11 @@ func (u *SubDispatchQueueUseCase) Execute(ctx context.Context, aggregatorTenantI
 			entry.UpdatedAt = offer.UpdatedAt
 		case domain.OfferStatusAccepted:
 			entry.OperatorID = offer.TargetTenantID
-			job, found := offeredJob(u.jobs, offer)
-			if found {
+			job, err := offeredJob(u.jobs, offer)
+			if err != nil && !errors.Is(err, ErrJobNotFound) {
+				return nil, fmt.Errorf("load offered job: %w", err)
+			}
+			if err == nil {
 				entry.ValueNgn = job.AmountNgn
 				entry.UpdatedAt = job.UpdatedAt
 				if job.Status == domain.StatusDelivered {

@@ -114,7 +114,9 @@ func main() {
 	identitySync := application.NewIdentitySync(identitySource, imeiResolver, gate, warmup, identityMetrics, log)
 
 	// Keep the IMEI→{tenant,vehicle,device} cache fresh from fleet's identity events.
-	quarantine := application.NewQuarantine(quarantineStore, clock)
+	quarantine := application.NewQuarantine(quarantineStore, clock).
+		WithAlerter(infrastructure.NewQuarantineAlerter(bus, log)).WithLogger(log)
+	go quarantine.Run(ctx)
 	consumeDeviceIdentity := application.NewConsumeDeviceIdentityUseCase(identityResolver.EventSide(), log).WithQuarantine(quarantine)
 	if _, subErr := bus.Subscribe(ctx, "tm.*.device.identity.changed", "tracking-device-identity", eventbus.Verified(consumeDeviceIdentity.Handle, cfg.EventSigningSecret, eventbus.VerifyOptions{AcceptUnsigned: cfg.EventAcceptUnsigned}, log)); subErr != nil {
 		log.Warn("device_identity_subscribe_failed", "error", subErr.Error())

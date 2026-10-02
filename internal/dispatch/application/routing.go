@@ -155,11 +155,7 @@ func (u *RoutingUseCase) findJob(tenantID, jobID string) (domain.Job, error) {
 	if resolvedTenant == "" {
 		resolvedTenant = u.defaultTenant
 	}
-	job, ok := u.repository.FindByTenantAndID(resolvedTenant, strings.TrimSpace(jobID))
-	if !ok {
-		return domain.Job{}, ErrJobNotFound
-	}
-	return job, nil
+	return u.repository.FindByTenantAndID(resolvedTenant, strings.TrimSpace(jobID))
 }
 
 func (u *RoutingUseCase) planRoute(

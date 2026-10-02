@@ -73,8 +73,8 @@ func (h assignHarness) assign(t *testing.T, body string) (int, string, domain.Jo
 
 func (h assignHarness) stored(t *testing.T) domain.Job {
 	t.Helper()
-	job, ok := h.jobs.FindByTenantAndID("default", h.jobID)
-	if !ok {
+	job, err := h.jobs.FindByTenantAndID("default", h.jobID)
+	if err != nil {
 		t.Fatal("job missing")
 	}
 	return job

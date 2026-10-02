@@ -10,9 +10,13 @@ import (
 type CampaignRepository interface {
 	EnsureSchema(ctx context.Context) error
 	SaveCampaign(ctx context.Context, campaign domain.Campaign) (domain.Campaign, error)
+	// SaveCampaignIfStatus writes the campaign only while its stored status is
+	// still expected, and reports whether it did. A run that finds the status
+	// moved under it reloads and decides again instead of overwriting.
+	SaveCampaignIfStatus(ctx context.Context, campaign domain.Campaign, expected string) (bool, error)
 	FindCampaign(ctx context.Context, tenantID, campaignID string) (domain.Campaign, bool, error)
 	ListCampaigns(ctx context.Context, query ListCampaignsQuery) ([]domain.Campaign, int, error)
-	// ClaimCampaign atomically moves a draft or scheduled campaign to sending,
+	// ClaimCampaign atomically moves a draft, scheduled or paused campaign to sending,
 	// or a sending one whose run died (nothing touched since staleBefore, work
 	// still open), and reports whether this caller won it.
 	ClaimCampaign(ctx context.Context, tenantID, campaignID string, at, staleBefore time.Time) (domain.Campaign, bool, error)
@@ -31,6 +35,12 @@ type CampaignRepository interface {
 	// failures: whether the message left is unknown, so they are retried only
 	// on request.
 	FailInterruptedRecipients(ctx context.Context, tenantID, campaignID string, staleBefore, at time.Time) error
+	// ClaimInterruptedForRetry marks, for their one automatic retry, interrupted
+	// recipients that no provider message id was ever reported for, once they
+	// have waited since before interruptedBefore. It returns the rows it took.
+	ClaimInterruptedForRetry(ctx context.Context, interruptedBefore, at time.Time, limit int) ([]domain.CampaignRecipient, error)
+	// ReleaseAutoRetry gives the automatic retry back when it could not run.
+	ReleaseAutoRetry(ctx context.Context, tenantID string, recipientIDs []string) error
 	// Matches a provider receipt back to the recipient it belongs to. Receipts
 	// arrive late and out of order, so this is the only handle they carry.
 	FindRecipientByProviderMessageID(ctx context.Context, providerMessageID string) (domain.CampaignRecipient, bool, error)
