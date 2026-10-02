@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -68,5 +69,34 @@ func TestInMemoryJobRepository_KeepsCreatedBy(t *testing.T) {
 	stored, ok := repo.FindByTenantAndID(job.TenantID, job.ID)
 	if !ok || stored.CreatedBy == nil || *stored.CreatedBy != creator {
 		t.Fatalf("expected created_by %q, got %v", creator, stored.CreatedBy)
+	}
+}
+
+func TestInMemoryJobRepository_ListsTenantsWithActiveJobsAndCountsActive(t *testing.T) {
+	repo := NewInMemoryJobRepository()
+	save := func(tenantID, id string, status domain.JobStatus) {
+		job := newTestJob(t, tenantID, id)
+		job.Status = status
+		if err := repo.Save(job); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+	save("tenant-a", "j1", domain.StatusEnRoute)
+	save("tenant-a", "j2", domain.StatusCreated)
+	save("tenant-b", "j3", domain.StatusAssigned)
+	save("tenant-c", "j4", domain.StatusDelivered)
+	save("tenant-d", "j5", domain.StatusCreated)
+
+	tenants, err := repo.ListTenantsWithActiveJobs(context.Background())
+	if err != nil || len(tenants) != 2 || tenants[0] != "tenant-a" || tenants[1] != "tenant-b" {
+		t.Fatalf("expected tenant-a and tenant-b, got %v (err %v)", tenants, err)
+	}
+
+	count, err := repo.CountActive(context.Background(), "tenant-a")
+	if err != nil || count != 2 {
+		t.Fatalf("expected 2 active jobs for tenant-a, got %d (err %v)", count, err)
+	}
+	if count, _ := repo.CountActive(context.Background(), "tenant-c"); count != 0 {
+		t.Fatalf("a delivered job is not active, got %d", count)
 	}
 }

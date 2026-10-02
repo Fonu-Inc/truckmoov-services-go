@@ -33,6 +33,10 @@ type stopRequest struct {
 	Latitude     *float64 `json:"latitude,omitempty"`
 	Longitude    *float64 `json:"longitude,omitempty"`
 	Notes        string   `json:"notes,omitempty"`
+	CompanyName  string   `json:"company_name,omitempty"`
+	Date         string   `json:"date,omitempty"`
+	TimeFrom     string   `json:"time_from,omitempty"`
+	TimeTo       string   `json:"time_to,omitempty"`
 }
 
 type timeWindowRequest struct {
@@ -69,6 +73,7 @@ type createJobRequest struct {
 	EstimatedServiceMinutes int               `json:"estimated_service_minutes,omitempty"`
 	Priority                string            `json:"priority,omitempty"`
 	TimeWindow              timeWindowRequest `json:"time_window,omitempty"`
+	Cargo                   *cargoRequest     `json:"cargo,omitempty"`
 }
 
 type updateJobSchedulingRequest struct {
@@ -86,6 +91,8 @@ type updateJobDetailsRequest struct {
 	Deadline         *string        `json:"deadline,omitempty"`
 	LoadWeightKg     *float64       `json:"load_weight_kg,omitempty"`
 	LoadVolumeM3     *float64       `json:"load_volume_m3,omitempty"`
+	Cargo            *cargoRequest  `json:"cargo,omitempty"`
+	VehicleType      *string        `json:"required_vehicle_type,omitempty"`
 }
 
 func (r updateJobDetailsRequest) patch() (domain.JobDetailsPatch, error) {
@@ -104,6 +111,8 @@ func (r updateJobDetailsRequest) patch() (domain.JobDetailsPatch, error) {
 		ClearDeadline:    r.Deadline != nil && deadline == nil,
 		LoadWeightKg:     r.LoadWeightKg,
 		LoadVolumeM3:     r.LoadVolumeM3,
+		Cargo:            r.Cargo.toDomainPtr(),
+		VehicleType:      r.VehicleType,
 	}, nil
 }
 
@@ -257,6 +266,7 @@ type Handler struct {
 	paySettlementUseCase          *application.PaySettlementUseCase
 	listAggregatorActivityUseCase *application.ListAggregatorActivityUseCase
 	activeJobsMapUseCase          *application.ActiveJobsMapUseCase
+	jobAttachmentUseCase          *application.JobAttachmentUseCase
 }
 
 // WithAggregator attaches the aggregator network overview use cases. A
@@ -483,6 +493,7 @@ func (h *Handler) createJob(w http.ResponseWriter, r *http.Request) {
 		Stops:                   req.stops(),
 		CargoType:               req.CargoType,
 		CargoDescription:        req.CargoDescription,
+		Cargo:                   req.Cargo.toDomain(),
 		InitialNote:             req.initialNote(),
 		AmountNgn:               req.amountNgn(),
 		Deadline:                deadline,
@@ -756,7 +767,17 @@ func (h *Handler) jobResource(w http.ResponseWriter, r *http.Request) {
 		h.addPODAttachment(w, r, jobID)
 	case "notes":
 		h.addJobNote(w, r, jobID)
+	case "driver-instruction-outcome":
+		h.recordDriverInstructionOutcome(w, r, jobID)
+	case "resend-instruction":
+		h.resendDriverInstruction(w, r, jobID)
+	case "attachments":
+		h.addJobAttachment(w, r, jobID)
 	default:
+		if attachmentID, isAttachment := strings.CutPrefix(action, "attachments/"); isAttachment {
+			h.openJobAttachment(w, r, jobID, strings.Trim(attachmentID, "/"))
+			return
+		}
 		if strings.HasPrefix(action, "driver-status-requests/") && strings.HasSuffix(action, "/confirm") {
 			requestID := strings.TrimSuffix(strings.TrimPrefix(action, "driver-status-requests/"), "/confirm")
 			requestID = strings.Trim(requestID, "/")
@@ -1479,6 +1500,14 @@ func respondLifecycleError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	if errors.Is(err, application.ErrJobInstructionStatusNotSendable) {
+		httpx.WriteError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if errors.Is(err, application.ErrJobInstructionDriverMismatch) {
+		httpx.WriteError(w, http.StatusConflict, err.Error())
+		return
+	}
 	if strings.Contains(strings.ToLower(err.Error()), "already has a pending driver status request") ||
 		strings.Contains(strings.ToLower(err.Error()), "must be the next workflow status") ||
 		strings.Contains(strings.ToLower(err.Error()), "belongs to a different driver") ||
@@ -1516,6 +1545,10 @@ func (s stopRequest) toDomain() domain.JobStop {
 		Latitude:     s.Latitude,
 		Longitude:    s.Longitude,
 		Notes:        s.Notes,
+		CompanyName:  s.CompanyName,
+		Date:         s.Date,
+		TimeFrom:     s.TimeFrom,
+		TimeTo:       s.TimeTo,
 	}
 }
 

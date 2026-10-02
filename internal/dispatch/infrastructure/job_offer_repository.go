@@ -213,8 +213,9 @@ func (r *PostgresJobOfferRepository) Save(ctx context.Context, offer domain.JobO
 	_, err := r.db.ExecContext(ctx, `
         UPDATE job_offers SET
             status = $1, response_note = $2, responded_at = $3, updated_at = $4
-        WHERE id = $5`,
+        WHERE id = $5 AND offering_tenant_id = $6 AND target_tenant_id = $7`,
 		offer.Status, offer.ResponseNote, offer.RespondedAt, offer.UpdatedAt, offer.ID,
+		offer.OfferingTenantID, offer.TargetTenantID,
 	)
 	return err
 }
@@ -337,12 +338,12 @@ func (r *PostgresJobOfferRepository) Accept(
         INSERT INTO dispatch_jobs (
             tenant_id, id, reference, status, priority, pickup_address, dropoff_address,
             cargo_type, cargo_description, assigned_driver_id, assigned_driver_phone,
-            assigned_vehicle_id, deadline, created_at, updated_at, payload
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+            assigned_vehicle_id, created_by, deadline, delivered_at, created_at, updated_at, payload
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
 		transferred.TenantID, transferred.ID, transferred.Reference, transferred.Status,
 		transferred.Priority, transferred.Pickup.Address, transferred.Dropoff.Address,
 		transferred.CargoType, transferred.CargoDescription, transferred.AssignedDriverID,
-		transferred.AssignedDriverPhone, transferred.AssignedVehicleID, deadline,
+		transferred.AssignedDriverPhone, transferred.AssignedVehicleID, transferred.CreatedBy, deadline, nil,
 		transferred.CreatedAt, transferred.UpdatedAt, newPayload,
 	); err != nil {
 		return application.AcceptedOffer{}, fmt.Errorf("insert job under carrier tenant: %w", err)

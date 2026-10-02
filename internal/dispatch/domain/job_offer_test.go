@@ -170,3 +170,26 @@ func TestJobIsActiveExcludesOnlyTerminalStates(t *testing.T) {
 		t.Fatal("an assigned job is still in progress and counts as active")
 	}
 }
+
+func TestJobTransferToCarrierClearsTheOldDriverAndVehicle(t *testing.T) {
+	job := validJobFixture(t)
+	now := job.UpdatedAt.Add(time.Hour)
+	assigned, err := job.Assign("driver-1", "+2348012345678", "vehicle-1", now, "t1")
+	if err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+
+	transferred, err := assigned.TransferToCarrier("tenant-carrier", now.Add(time.Hour), "t2")
+	if err != nil {
+		t.Fatalf("transfer: %v", err)
+	}
+	if transferred.AssignedDriverID != "" || transferred.AssignedDriverPhone != "" || transferred.AssignedVehicleID != "" {
+		t.Fatalf("expected the old assignment cleared, got %+v", transferred)
+	}
+	if transferred.Status != StatusCreated {
+		t.Fatalf("expected status created, got %s", transferred.Status)
+	}
+	if assigned.AssignedDriverID != "driver-1" {
+		t.Fatal("expected the original job to be unchanged")
+	}
+}

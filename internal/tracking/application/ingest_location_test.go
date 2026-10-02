@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -19,6 +20,19 @@ func (f *fakeTrackingPublisher) PublishLocationUpdate(_ context.Context, event d
 
 func (f *fakeTrackingPublisher) PublishAlertTriggered(_ context.Context, _ domain.AlertTriggered) error {
 	return nil
+}
+
+type failOncePublisher struct {
+	fakeTrackingPublisher
+	failures int
+}
+
+func (f *failOncePublisher) PublishLocationUpdate(ctx context.Context, event domain.LocationUpdate) error {
+	if f.failures > 0 {
+		f.failures--
+		return errors.New("bus down")
+	}
+	return f.fakeTrackingPublisher.PublishLocationUpdate(ctx, event)
 }
 
 type fakeLatestLocationRepository struct {
@@ -179,5 +193,41 @@ func TestIngestLocationUseCase_Execute_SkipsDuplicateVendorPosition(t *testing.T
 	}
 	if second.Published {
 		t.Fatalf("expected retried delivery not to be published")
+	}
+}
+
+func TestIngestLocationUseCase_Execute_FailedPublishStaysRetryable(t *testing.T) {
+	publisher := &failOncePublisher{failures: 1}
+	repository := &fakeLatestLocationRepository{}
+	useCase := NewIngestLocationUseCase(
+		publisher,
+		repository,
+		fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)},
+		fixedTrackingIDGenerator{value: "evt-1"},
+		"default",
+		&fakeLocationHistoryRepository{},
+		TelemetryConfig{},
+		nil,
+		nil,
+	)
+	command := IngestLocationCommand{
+		VehicleID:        "vehicle-1",
+		DeviceID:         "device-1",
+		Latitude:         6.5,
+		Longitude:        3.4,
+		FixTime:          "2026-02-02T11:00:00Z",
+		VendorPositionID: "traccar-pos-7",
+	}
+
+	if _, err := useCase.Execute(context.Background(), command); err == nil {
+		t.Fatalf("expected publish failure")
+	}
+	if len(repository.byKey) != 0 {
+		t.Fatalf("nothing may be recorded when publish failed")
+	}
+
+	retry, err := useCase.Execute(context.Background(), command)
+	if err != nil || !retry.Published || retry.Skipped {
+		t.Fatalf("expected the retry to publish, got %+v err=%v", retry, err)
 	}
 }

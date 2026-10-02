@@ -1,12 +1,15 @@
 package trackinghttp
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/truckmoov/services-go/internal/tracking/application"
+	"github.com/truckmoov/services-go/internal/tracking/infrastructure"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 	"github.com/truckmoov/services-go/pkg/identity"
 )
@@ -123,5 +126,32 @@ func TestBlockedDevices_Endpoint(t *testing.T) {
 				t.Fatalf("body %s", res.Body.String())
 			}
 		})
+	}
+}
+
+func quarantineServer() http.Handler {
+	mux := http.NewServeMux()
+	clock := tickingClock{now: &time.Time{}}
+	quarantine := application.NewQuarantine(infrastructure.NewInMemoryQuarantineRepository(), clock)
+	quarantine.Observe(context.Background(), "359779090077777")
+	handler := NewHandler(nil, nil, nil, nil, "", nil, nil).WithQuarantine(quarantine)
+	handler.RegisterRoutes(httpx.NewRoutes(mux, true, nil, nil))
+	roles := httpx.ServiceRoles{"auth": "FLEET_ADMIN", "fleet": "FLEET_ADMIN"}
+	return httpx.WithServiceCallers(mux, identity.NewServiceTokenVerifier("tracking", devSecret), roles)
+}
+
+func TestQuarantineList_OnlyAuthMayRead(t *testing.T) {
+	server := quarantineServer()
+	for service, want := range map[string]int{"auth": http.StatusOK, "fleet": http.StatusNotFound, "": http.StatusNotFound} {
+		req := httptest.NewRequest(http.MethodGet, "/tracking/internal/quarantine", nil)
+		callAs(service, req)
+		res := httptest.NewRecorder()
+		server.ServeHTTP(res, req)
+		if res.Code != want {
+			t.Fatalf("service %q: want %d got %d", service, want, res.Code)
+		}
+		if service == "auth" && !strings.Contains(res.Body.String(), "359779090077777") {
+			t.Fatalf("expected quarantined device in body, got %s", res.Body.String())
+		}
 	}
 }

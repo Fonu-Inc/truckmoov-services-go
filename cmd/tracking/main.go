@@ -18,6 +18,7 @@ import (
 	"github.com/truckmoov/services-go/pkg/activitylog"
 	"github.com/truckmoov/services-go/pkg/alert"
 	"github.com/truckmoov/services-go/pkg/config"
+	dbpool "github.com/truckmoov/services-go/pkg/db"
 	"github.com/truckmoov/services-go/pkg/eventbus"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 	"github.com/truckmoov/services-go/pkg/identity"
@@ -80,10 +81,12 @@ func main() {
 	// best-effort: if it is unreachable the live path (Redis + NATS) still works and
 	// telemetry history is simply disabled until it recovers.
 	var telemetryStore application.TelemetryStore
+	var quarantineStore application.QuarantineStore = infrastructure.NewInMemoryQuarantineRepository()
 	if timescaleDB, openErr := sql.Open("pgx", cfg.TimescaleDSN()); openErr != nil {
 		log.Warn("timescale_open_failed", "error", openErr.Error())
 	} else {
 		defer func() { _ = timescaleDB.Close() }()
+		dbpool.ConfigurePool(timescaleDB)
 		if pingErr := timescaleDB.PingContext(ctx); pingErr != nil {
 			log.Warn("timescale_ping_failed", "error", pingErr.Error())
 		} else {
@@ -94,11 +97,13 @@ func main() {
 				telemetryStore = repo
 				log.Info("telemetry_store_ready")
 			}
+			quarantineStore = buildQuarantineStore(ctx, timescaleDB, quarantineStore, log)
 		}
 	}
 
 	// Keep the IMEI→{tenant,vehicle,device} cache fresh from fleet's identity events.
-	consumeDeviceIdentity := application.NewConsumeDeviceIdentityUseCase(imeiResolver, log)
+	quarantine := application.NewQuarantine(quarantineStore, clock)
+	consumeDeviceIdentity := application.NewConsumeDeviceIdentityUseCase(imeiResolver, log).WithQuarantine(quarantine)
 	if _, subErr := bus.Subscribe(ctx, "tm.*.device.identity.changed", "tracking-device-identity", eventbus.Verified(consumeDeviceIdentity.Handle, cfg.EventSigningSecret, eventbus.VerifyOptions{AcceptUnsigned: cfg.EventAcceptUnsigned}, log)); subErr != nil {
 		log.Warn("device_identity_subscribe_failed", "error", subErr.Error())
 	}
@@ -134,7 +139,7 @@ func main() {
 		},
 		imeiResolver,
 		telemetryStore,
-	).WithGate(gate).WithMessageRate(messageRate)
+	).WithGate(gate).WithMessageRate(messageRate).WithQuarantine(quarantine)
 	publishAlertUseCase := application.NewPublishAlertUseCase(
 		eventPublisher,
 		clock,
@@ -160,7 +165,10 @@ func main() {
 		)
 	}
 
-	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, deviceTelemetryQueryUseCase, cfg.GPSAPIKey, userTokens, activityPublisher).WithGate(gate).WithMessageRate(messageRate)
+	openIngest := os.Getenv("ALLOW_UNAUTHENTICATED_INGEST") == "true"
+	warnIfIngestUnguarded(cfg, openIngest, log)
+	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, deviceTelemetryQueryUseCase, cfg.GPSAPIKey, userTokens, activityPublisher).
+		WithGate(gate).WithMessageRate(messageRate).WithQuarantine(quarantine).WithOpenIngest(openIngest && !cfg.IsProduction())
 	accessClient := identity.NewAccessClient(cfg.AuthServiceURL, serviceCaller)
 	if broadcaster, ok := bus.(eventbus.Broadcaster); ok {
 		if _, subErr := broadcaster.SubscribeEveryInstance(identity.AccessChangedSubject, func(_ context.Context, e eventbus.EventEnvelope) error {
@@ -253,4 +261,24 @@ func subscribeTenantSuspension(bus eventbus.EventBus, consumer *application.Cons
 	if _, err := broadcaster.SubscribeEveryInstance("tm.*.tenant.reinstated", eventbus.Verified(consumer.HandleReinstated, secret, opts, log)); err != nil {
 		log.Warn("tenant_reinstated_subscribe_failed", "error", err.Error())
 	}
+}
+
+func buildQuarantineStore(ctx context.Context, db *sql.DB, fallback application.QuarantineStore, log *slog.Logger) application.QuarantineStore {
+	repo := infrastructure.NewPostgresQuarantineRepository(db)
+	if err := repo.EnsureSchema(ctx); err != nil {
+		log.Warn("quarantine_schema_failed", "error", err.Error(), "detail", "unknown devices are listed from memory only")
+		return fallback
+	}
+	return repo
+}
+
+func warnIfIngestUnguarded(cfg config.Config, openIngest bool, log *slog.Logger) {
+	if cfg.GPSAPIKey != "" {
+		return
+	}
+	if openIngest && !cfg.IsProduction() {
+		log.Warn("ingest_unauthenticated", "detail", "GPS_API_KEY is unset and ALLOW_UNAUTHENTICATED_INGEST=true; ingest is open")
+		return
+	}
+	log.Error("gps_api_key_unset", "detail", "GPS_API_KEY is unset; all ingest is refused with 503 until it is set")
 }

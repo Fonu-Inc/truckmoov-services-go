@@ -17,6 +17,7 @@ import (
 	"github.com/truckmoov/services-go/pkg/activitylog"
 	"github.com/truckmoov/services-go/pkg/alert"
 	"github.com/truckmoov/services-go/pkg/config"
+	dbpool "github.com/truckmoov/services-go/pkg/db"
 	"github.com/truckmoov/services-go/pkg/eventbus"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 	"github.com/truckmoov/services-go/pkg/identity"
@@ -74,6 +75,7 @@ func main() {
 	defer func() {
 		_ = postgresDB.Close()
 	}()
+	dbpool.ConfigurePool(postgresDB)
 	if err := postgresDB.PingContext(ctx); err != nil {
 		log.Error("postgres_ping_failed", "error", err.Error())
 		os.Exit(1)
@@ -169,9 +171,9 @@ func main() {
 	alertPublisher := infrastructure.NewAlertEventPublisher(bus)
 	etaMonitor := application.NewEtaMonitorUseCase(
 		jobRepository,
+		jobRepository,
 		alertPublisher,
 		infrastructure.SystemClock{},
-		cfg.DefaultTenant,
 	)
 	go func() {
 		ticker := time.NewTicker(time.Minute)
@@ -195,15 +197,7 @@ func main() {
 	}
 	entitlementsReader := infrastructure.NewAuthEntitlementsReader(cfg.AuthServiceURL, serviceCaller, nil)
 	jobOfferPublisher := infrastructure.NewJobOfferEventPublisher(bus)
-	activeJobCounter := func(_ context.Context, tenantID string) (int, error) {
-		count := 0
-		for _, job := range jobRepository.FindByTenant(tenantID) {
-			if job.IsActive() {
-				count++
-			}
-		}
-		return count, nil
-	}
+	activeJobCounter := jobRepository.CountActive
 
 	createJobOfferUseCase := application.NewCreateJobOfferUseCase(
 		jobOfferRepository, jobRepository, jobOfferPublisher,
@@ -300,6 +294,12 @@ func main() {
 		fleetClient,
 	)
 	handler = handler.WithActiveJobsMap(activeJobsMapUseCase)
+	handler = handler.WithJobAttachments(application.NewJobAttachmentUseCase(
+		jobRepository,
+		infrastructure.NewPostgresJobAttachmentStore(postgresDB),
+		infrastructure.SystemClock{},
+		infrastructure.TimeIDGenerator{},
+	))
 	handler = handler.WithJobOffers(
 		createJobOfferUseCase,
 		acceptJobOfferUseCase,

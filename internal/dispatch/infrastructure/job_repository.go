@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -36,19 +37,6 @@ func (r *InMemoryJobRepository) FindByTenantAndID(tenantID, id string) (domain.J
 	return job, ok
 }
 
-// FindByID looks a job up by id alone. See PostgresJobRepository.FindByID.
-func (r *InMemoryJobRepository) FindByID(id string) (domain.Job, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	normalizedID := strings.TrimSpace(id)
-	for _, job := range r.jobs {
-		if job.ID == normalizedID {
-			return job, true
-		}
-	}
-	return domain.Job{}, false
-}
-
 func (r *InMemoryJobRepository) FindByTenant(tenantID string) []domain.Job {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -67,6 +55,35 @@ func (r *InMemoryJobRepository) FindByTenant(tenantID string) []domain.Job {
 		return results[i].CreatedAt.Before(results[j].CreatedAt)
 	})
 	return results
+}
+
+func (r *InMemoryJobRepository) ListTenantsWithActiveJobs(_ context.Context) ([]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	seen := map[string]bool{}
+	tenants := make([]string, 0)
+	for _, job := range r.jobs {
+		if job.IsActive() && job.Status != domain.StatusCreated && !seen[job.TenantID] {
+			seen[job.TenantID] = true
+			tenants = append(tenants, job.TenantID)
+		}
+	}
+	sort.Strings(tenants)
+	return tenants, nil
+}
+
+func (r *InMemoryJobRepository) CountActive(_ context.Context, tenantID string) (int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	count := 0
+	for _, job := range r.jobs {
+		if job.TenantID == strings.TrimSpace(tenantID) && job.IsActive() {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (r *InMemoryJobRepository) Delete(tenantID, id string) error {

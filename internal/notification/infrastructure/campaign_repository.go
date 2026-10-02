@@ -75,7 +75,7 @@ func (r *PostgresCampaignRepository) SaveCampaign(ctx context.Context, campaign 
 		return domain.Campaign{}, err
 	}
 
-	_, err = r.db.ExecContext(ctx, `
+	result, err := r.db.ExecContext(ctx, `
         INSERT INTO campaigns (id, tenant_id, name, channels, bodies, template_name, status, scheduled_for, created_at, updated_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         ON CONFLICT (id) DO UPDATE SET
@@ -85,13 +85,17 @@ func (r *PostgresCampaignRepository) SaveCampaign(ctx context.Context, campaign 
             template_name = EXCLUDED.template_name,
             status = EXCLUDED.status,
             scheduled_for = EXCLUDED.scheduled_for,
-            updated_at = EXCLUDED.updated_at`,
+            updated_at = EXCLUDED.updated_at
+        WHERE campaigns.tenant_id = EXCLUDED.tenant_id`,
 		campaign.ID, campaign.TenantID, campaign.Name, channels, bodies,
 		campaign.TemplateName, campaign.Status, campaign.ScheduledFor,
 		campaign.CreatedAt, campaign.UpdatedAt,
 	)
 	if err != nil {
 		return domain.Campaign{}, fmt.Errorf("save campaign: %w", err)
+	}
+	if err := requireRowWritten(result, "campaign"); err != nil {
+		return domain.Campaign{}, err
 	}
 	return campaign, nil
 }
@@ -209,7 +213,7 @@ func (r *PostgresCampaignRepository) SaveRecipients(ctx context.Context, recipie
 }
 
 func (r *PostgresCampaignRepository) SaveRecipient(ctx context.Context, recipient domain.CampaignRecipient) error {
-	_, err := r.db.ExecContext(ctx, `
+	result, err := r.db.ExecContext(ctx, `
         INSERT INTO campaign_recipients
             (id, campaign_id, tenant_id, driver_id, channel, destination, state,
              provider_message_id, failure_reason, sent_at, delivered_at, read_at, created_at, updated_at)
@@ -221,7 +225,8 @@ func (r *PostgresCampaignRepository) SaveRecipient(ctx context.Context, recipien
             sent_at = EXCLUDED.sent_at,
             delivered_at = EXCLUDED.delivered_at,
             read_at = EXCLUDED.read_at,
-            updated_at = EXCLUDED.updated_at`,
+            updated_at = EXCLUDED.updated_at
+        WHERE campaign_recipients.tenant_id = EXCLUDED.tenant_id`,
 		recipient.ID, recipient.CampaignID, recipient.TenantID, recipient.DriverID,
 		recipient.Channel, recipient.Destination, recipient.State,
 		recipient.ProviderMessageID, recipient.FailureReason,
@@ -230,6 +235,15 @@ func (r *PostgresCampaignRepository) SaveRecipient(ctx context.Context, recipien
 	)
 	if err != nil {
 		return fmt.Errorf("save campaign recipient: %w", err)
+	}
+	return requireRowWritten(result, "campaign recipient")
+}
+
+// requireRowWritten turns an upsert that matched another tenant's row, and so
+// wrote nothing, into an error instead of a silent success.
+func requireRowWritten(result sql.Result, what string) error {
+	if written, err := result.RowsAffected(); err == nil && written == 0 {
+		return fmt.Errorf("save %s: id already belongs to another tenant", what)
 	}
 	return nil
 }

@@ -178,14 +178,14 @@ func (u *AcceptAggregatorInviteUseCase) Execute(ctx context.Context, command Acc
 type RemoveOperatorUseCase struct {
 	relationships AggregatorRelationshipRepository
 	offers        JobOfferRepository
-	jobs          JobByIDLookup
+	jobs          JobRepository
 	clock         Clock
 }
 
 func NewRemoveOperatorUseCase(
 	relationships AggregatorRelationshipRepository,
 	offers JobOfferRepository,
-	jobs JobByIDLookup,
+	jobs JobRepository,
 	clock Clock,
 ) *RemoveOperatorUseCase {
 	return &RemoveOperatorUseCase{relationships: relationships, offers: offers, jobs: jobs, clock: clock}
@@ -236,7 +236,7 @@ func (u *RemoveOperatorUseCase) hasActiveSubDispatchedJobs(ctx context.Context, 
 		return false, fmt.Errorf("list accepted sub-dispatch offers: %w", err)
 	}
 	for _, offer := range accepted {
-		job, found := u.jobs.FindByID(offer.JobID)
+		job, found := offeredJob(u.jobs, offer)
 		if !found {
 			continue
 		}

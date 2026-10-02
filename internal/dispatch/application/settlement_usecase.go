@@ -23,7 +23,7 @@ var (
 type WeeklySettlementCloseUseCase struct {
 	relationships AggregatorRelationshipRepository
 	offers        JobOfferRepository
-	jobs          JobByIDLookup
+	jobs          JobRepository
 	settlements   SettlementRepository
 	clock         Clock
 	idGen         IDGenerator
@@ -32,7 +32,7 @@ type WeeklySettlementCloseUseCase struct {
 func NewWeeklySettlementCloseUseCase(
 	relationships AggregatorRelationshipRepository,
 	offers JobOfferRepository,
-	jobs JobByIDLookup,
+	jobs JobRepository,
 	settlements SettlementRepository,
 	clock Clock,
 	idGen IDGenerator,
@@ -119,7 +119,7 @@ func (u *WeeklySettlementCloseUseCase) grossEarningsForPeriod(
 
 	var gross float64
 	for _, offer := range accepted {
-		job, found := u.jobs.FindByID(offer.JobID)
+		job, found := offeredJob(u.jobs, offer)
 		if !found || job.Status != domain.StatusDelivered {
 			continue
 		}

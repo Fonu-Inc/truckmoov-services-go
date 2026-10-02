@@ -150,10 +150,10 @@ type SubDispatchQueueEntry struct {
 // offered out, wherever those jobs currently live.
 type SubDispatchQueueUseCase struct {
 	offers JobOfferRepository
-	jobs   JobRepositoryWithLookup
+	jobs   JobRepository
 }
 
-func NewSubDispatchQueueUseCase(offers JobOfferRepository, jobs JobRepositoryWithLookup) *SubDispatchQueueUseCase {
+func NewSubDispatchQueueUseCase(offers JobOfferRepository, jobs JobRepository) *SubDispatchQueueUseCase {
 	return &SubDispatchQueueUseCase{offers: offers, jobs: jobs}
 }
 
@@ -187,7 +187,7 @@ func (u *SubDispatchQueueUseCase) Execute(ctx context.Context, aggregatorTenantI
 	for jobID, offer := range latestOfferByJob {
 		entry, exists := entries[jobID]
 		if !exists {
-			job, found := u.jobs.FindByID(jobID)
+			job, found := offeredJob(u.jobs, offer)
 			if !found {
 				continue
 			}
@@ -201,7 +201,7 @@ func (u *SubDispatchQueueUseCase) Execute(ctx context.Context, aggregatorTenantI
 			entry.UpdatedAt = offer.UpdatedAt
 		case domain.OfferStatusAccepted:
 			entry.OperatorID = offer.TargetTenantID
-			job, found := u.jobs.FindByID(jobID)
+			job, found := offeredJob(u.jobs, offer)
 			if found {
 				entry.ValueNgn = job.AmountNgn
 				entry.UpdatedAt = job.UpdatedAt

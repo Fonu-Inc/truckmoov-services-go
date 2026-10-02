@@ -16,6 +16,7 @@ import (
 	"github.com/truckmoov/services-go/pkg/activitylog"
 	"github.com/truckmoov/services-go/pkg/alert"
 	"github.com/truckmoov/services-go/pkg/config"
+	dbpool "github.com/truckmoov/services-go/pkg/db"
 	"github.com/truckmoov/services-go/pkg/eventbus"
 	httpx "github.com/truckmoov/services-go/pkg/http"
 	"github.com/truckmoov/services-go/pkg/identity"
@@ -63,6 +64,7 @@ func main() {
 	defer func() {
 		_ = postgresDB.Close()
 	}()
+	dbpool.ConfigurePool(postgresDB)
 	if err := postgresDB.PingContext(ctx); err != nil {
 		log.Error("postgres_ping_failed", "error", err.Error())
 		os.Exit(1)
@@ -262,7 +264,8 @@ func main() {
 		return eventbus.Verified(handler, cfg.EventSigningSecret, eventbus.VerifyOptions{AcceptUnsigned: cfg.EventAcceptUnsigned}, log)
 	}
 	eventClaims := infrastructure.NewRedisEventClaims(redisClient)
-	consumeJobOfferNotificationUseCase := application.NewConsumeJobOfferNotificationUseCase(sendMessageUseCase, eventClaims, log)
+	consumeJobOfferNotificationUseCase := application.NewConsumeJobOfferNotificationUseCase(sendMessageUseCase, eventClaims, log).
+		WithContacts(infrastructure.NewAuthTenantContactReader(cfg.AuthServiceURL, serviceCaller, nil))
 	dispatchAlertUseCase := application.NewDispatchAlertUseCase(alertSettingsReader, sendMessageUseCase, eventClaims, log)
 	// Platform alerts ride the system tenant, so they are a separate subject
 	// from a tenant's own notifications and a separate consumer.
@@ -279,6 +282,24 @@ func main() {
 	if _, subErr := bus.Subscribe(ctx, "tm.*.job.offer.responded", "job-offer-responded-notifications", verified(consumeJobOfferNotificationUseCase.Handle)); subErr != nil {
 		log.Error("job_offer_responded_subscribe_failed", "error", subErr.Error())
 	}
+
+	wireDriverJobInstruction(ctx, driverJobInstructionWiring{
+		bus:      bus,
+		verified: verified,
+		log:      log,
+		deps: application.DriverJobInstructionDeps{
+			Text:          sendMessageUseCase,
+			Template:      sendJobInstructionUseCase,
+			Conversations: conversationRepository,
+			Accounts:      whatsAppAccountRepository,
+			Drivers:       infrastructure.NewFleetDriverLookupClient(cfg.FleetServiceURL, serviceCaller, nil),
+			Charger:       usageCharger,
+			Reporter:      infrastructure.NewDispatchDriverInstructionReporter(cfg.DispatchServiceURL, serviceCaller, nil),
+			Claims:        eventClaims,
+			Clock:         clock,
+			Language:      cfg.WhatsAppTemplateLanguage,
+		},
+	})
 
 	listDeliveryLogUseCase := application.NewListDeliveryLogUseCase(deliveryLogRepository)
 

@@ -27,11 +27,11 @@ type JobStatusChangedEmitter interface {
 	Execute(ctx context.Context, command PublishJobStatusChangedCommand) (PublishJobStatusChangedResult, error)
 }
 
+// DriverInstructionNotifier asks the notification service to message the
+// job's assigned driver. It only queues the request: whether the message
+// reached the driver is reported back through RecordDriverInstructionOutcome.
 type DriverInstructionNotifier interface {
-	NotifyJobInstruction(
-		ctx context.Context,
-		tenantID, jobID, driverID, message string,
-	) error
+	NotifyJobInstruction(ctx context.Context, job domain.Job, message string) error
 }
 
 type CreateJobCommand struct {
@@ -43,6 +43,7 @@ type CreateJobCommand struct {
 	Stops                   []domain.JobStop
 	CargoType               string
 	CargoDescription        string
+	Cargo                   domain.JobCargoDetails
 	InitialNote             string
 	AmountNgn               float64
 	Deadline                *time.Time
@@ -100,6 +101,23 @@ type UpdateJobStatusCommand struct {
 	Status   string
 }
 
+type DriverInstructionOutcome string
+
+const (
+	DriverInstructionSent    DriverInstructionOutcome = "sent"
+	DriverInstructionFailed  DriverInstructionOutcome = "failed"
+	DriverInstructionNotSent DriverInstructionOutcome = "not_sent"
+)
+
+type RecordDriverInstructionOutcomeCommand struct {
+	TenantID string
+	JobID    string
+	DriverID string
+	Outcome  DriverInstructionOutcome
+	Channel  string
+	Reason   string
+}
+
 type CreateDriverStatusRequestCommand struct {
 	TenantID        string
 	JobID           string
@@ -149,7 +167,10 @@ type ListJobsFilter struct {
 	Scope        *JobScope
 }
 
-var ErrDriverStatusRequestNotFound = errors.New("driver status request not found")
+var (
+	ErrDriverStatusRequestNotFound     = errors.New("driver status request not found")
+	ErrDriverInstructionOutcomeInvalid = errors.New("outcome must be sent, failed or not_sent")
+)
 
 type JobLifecycleUseCase struct {
 	repository    JobRepository
@@ -256,6 +277,7 @@ func (u *JobLifecycleUseCase) CreateJob(ctx context.Context, command CreateJobCo
 		Stops:                   command.Stops,
 		CargoType:               command.CargoType,
 		CargoDescription:        command.CargoDescription,
+		JobCargoDetails:         command.Cargo,
 		AmountNgn:               command.AmountNgn,
 		Deadline:                command.Deadline,
 		RequiredVehicleType:     command.RequiredVehicleType,
@@ -387,15 +409,67 @@ func (u *JobLifecycleUseCase) announceAssignment(ctx context.Context, before, af
 }
 
 // instructDriver is best effort: assignment never fails because messaging is
-// unavailable.
+// unavailable. Nothing is written to the timeline here, because nothing has
+// reached the driver yet; the notification service reports the real outcome.
 func (u *JobLifecycleUseCase) instructDriver(ctx context.Context, job domain.Job) domain.Job {
-	message := buildDriverInstructionMessage(job)
-	if err := u.notifyDriverInstruction(ctx, job.TenantID, job.ID, job.AssignedDriverID, message); err != nil {
+	if u.notifier == nil {
 		return job
 	}
-	sent := job.MarkDriverInstructionSent("whatsapp", u.clock.Now(), u.idGenerator.New())
-	_ = u.repository.Save(sent)
-	return sent
+	if err := u.notifier.NotifyJobInstruction(ctx, job, buildDriverInstructionMessage(job)); err != nil {
+		return u.saveInstructionOutcome(job, job.MarkDriverInstructionNotSent("whatsapp", "the message could not be queued", u.clock.Now(), u.idGenerator.New()))
+	}
+	return job
+}
+
+// ResendDriverInstruction asks again for the assigned driver to be messaged,
+// for when the first attempt failed or never had a number to send to. Only an
+// assigned job qualifies: after that the driver already has the job.
+func (u *JobLifecycleUseCase) ResendDriverInstruction(ctx context.Context, tenantID, jobID string) (domain.Job, error) {
+	job, err := u.findJobForTenant(tenantID, jobID)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	if job.Status != domain.StatusAssigned || job.AssignedDriverID == "" {
+		return domain.Job{}, ErrJobInstructionStatusNotSendable
+	}
+	return u.instructDriver(ctx, job), nil
+}
+
+func (u *JobLifecycleUseCase) saveInstructionOutcome(fallback, updated domain.Job) domain.Job {
+	if err := u.repository.Save(updated); err != nil {
+		return fallback
+	}
+	return updated
+}
+
+// RecordDriverInstructionOutcome writes what happened to a driver instruction
+// on the timeline. An outcome for a driver who is no longer assigned is
+// refused, so a late report cannot decorate the new driver's history.
+func (u *JobLifecycleUseCase) RecordDriverInstructionOutcome(_ context.Context, command RecordDriverInstructionOutcomeCommand) (domain.Job, error) {
+	job, err := u.findJobForTenant(command.TenantID, command.JobID)
+	if err != nil {
+		return domain.Job{}, err
+	}
+	if strings.TrimSpace(command.DriverID) != job.AssignedDriverID {
+		return domain.Job{}, ErrJobInstructionDriverMismatch
+	}
+
+	now, timelineID := u.clock.Now(), u.idGenerator.New()
+	var updated domain.Job
+	switch command.Outcome {
+	case DriverInstructionSent:
+		updated = job.MarkDriverInstructionSent(command.Channel, now, timelineID)
+	case DriverInstructionFailed:
+		updated = job.MarkDriverInstructionFailed(command.Channel, command.Reason, now, timelineID)
+	case DriverInstructionNotSent:
+		updated = job.MarkDriverInstructionNotSent(command.Channel, command.Reason, now, timelineID)
+	default:
+		return domain.Job{}, ErrDriverInstructionOutcomeInvalid
+	}
+	if err := u.repository.Save(updated); err != nil {
+		return domain.Job{}, fmt.Errorf("save driver instruction outcome: %w", err)
+	}
+	return updated, nil
 }
 
 func (u *JobLifecycleUseCase) CancelJob(ctx context.Context, command CancelJobCommand) (domain.Job, error) {
@@ -731,22 +805,6 @@ func (u *JobLifecycleUseCase) emitStatusChanged(ctx context.Context, command Pub
 		return
 	}
 	_, _ = u.statusEmitter.Execute(ctx, command)
-}
-
-func (u *JobLifecycleUseCase) notifyDriverInstruction(
-	ctx context.Context,
-	tenantID, jobID, driverID, message string,
-) error {
-	if u.notifier == nil {
-		return nil
-	}
-	return u.notifier.NotifyJobInstruction(
-		ctx,
-		tenantID,
-		jobID,
-		driverID,
-		message,
-	)
 }
 
 func buildDriverInstructionMessage(job domain.Job) string {

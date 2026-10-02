@@ -132,3 +132,47 @@ func TestPostgresJobRepository_PersistsCreatedBy(t *testing.T) {
 		t.Fatalf("expected created_by %q in column and payload, got %q / %v", creator, column.String, stored.CreatedBy)
 	}
 }
+
+func TestPostgresJobRepository_PersistsDeliveredAtAndCountsActive(t *testing.T) {
+	repo := newTestPostgresRepo(t)
+	tenantID := fmt.Sprintf("tenant-pg-delivered-%d", time.Now().UnixNano())
+	deliveredID, activeID := "job-delivered", "job-active"
+	t.Cleanup(func() { _ = repo.Delete(tenantID, deliveredID); _ = repo.Delete(tenantID, activeID) })
+
+	delivered := newTestJob(t, tenantID, deliveredID)
+	deliveredAt := time.Date(2026, 4, 5, 9, 0, 0, 0, time.UTC)
+	delivered.Status = domain.StatusDelivered
+	delivered.DeliveredAt = &deliveredAt
+	active := newTestJob(t, tenantID, activeID)
+	active.Status = domain.StatusEnRoute
+	for _, job := range []domain.Job{delivered, active} {
+		if err := repo.Save(job); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+
+	var column sql.NullTime
+	if err := repo.db.QueryRow(`SELECT delivered_at FROM dispatch_jobs WHERE tenant_id = $1 AND id = $2`, tenantID, deliveredID).Scan(&column); err != nil {
+		t.Fatalf("read delivered_at column: %v", err)
+	}
+	stored, ok := repo.FindByTenantAndID(tenantID, deliveredID)
+	if !column.Valid || !column.Time.Equal(deliveredAt) || !ok || stored.DeliveredAt == nil || !stored.DeliveredAt.Equal(deliveredAt) {
+		t.Fatalf("expected delivered_at %v in column and payload, got %v / %v", deliveredAt, column, stored.DeliveredAt)
+	}
+
+	count, err := repo.CountActive(context.Background(), tenantID)
+	if err != nil || count != 1 {
+		t.Fatalf("expected one active job, got %d (err %v)", count, err)
+	}
+	tenants, err := repo.ListTenantsWithActiveJobs(context.Background())
+	if err != nil {
+		t.Fatalf("list tenants: %v", err)
+	}
+	found := false
+	for _, id := range tenants {
+		found = found || id == tenantID
+	}
+	if !found {
+		t.Fatalf("expected %s among tenants with active jobs, got %v", tenantID, tenants)
+	}
+}

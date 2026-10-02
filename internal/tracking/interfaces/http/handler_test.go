@@ -90,7 +90,7 @@ func buildTrackingTestHandler() (*Handler, *fakeTrackingActivityPublisher) {
 	)
 	deviceQueryUseCase := application.NewDeviceTelemetryQueryUseCase(telemetryRepo, clock, 600, nil)
 
-	return NewHandler(ingestUseCase, alertUseCase, queryUseCase, deviceQueryUseCase, "", nil, activityPublisher), activityPublisher
+	return NewHandler(ingestUseCase, alertUseCase, queryUseCase, deviceQueryUseCase, "", nil, activityPublisher).WithOpenIngest(true), activityPublisher
 }
 
 func TestHandler_IngestContract(t *testing.T) {

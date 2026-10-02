@@ -19,7 +19,7 @@ var (
 // network overview screen.
 type RateOperatorUseCase struct {
 	offers  JobOfferRepository
-	jobs    JobByIDLookup
+	jobs    JobRepository
 	ratings OperatorRatingRepository
 	clock   Clock
 	idGen   IDGenerator
@@ -27,7 +27,7 @@ type RateOperatorUseCase struct {
 
 func NewRateOperatorUseCase(
 	offers JobOfferRepository,
-	jobs JobByIDLookup,
+	jobs JobRepository,
 	ratings OperatorRatingRepository,
 	clock Clock,
 	idGen IDGenerator,
@@ -50,7 +50,7 @@ func (u *RateOperatorUseCase) Execute(ctx context.Context, command RateOperatorC
 		return domain.OperatorRating{}, ErrRatingAlreadyExists
 	}
 
-	job, found := u.jobs.FindByID(command.JobID)
+	job, found := u.jobs.FindByTenantAndID(command.OperatorTenantID, command.JobID)
 	if !found {
 		return domain.OperatorRating{}, ErrSubDispatchJobNotFound
 	}

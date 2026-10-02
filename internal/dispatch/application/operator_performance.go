@@ -25,7 +25,7 @@ type OperatorPerformanceEntry struct {
 type OperatorPerformanceUseCase struct {
 	relationships AggregatorRelationshipRepository
 	offers        JobOfferRepository
-	jobs          JobByIDLookup
+	jobs          JobRepository
 	ratings       OperatorRatingRepository
 	clock         Clock
 	window        time.Duration
@@ -34,7 +34,7 @@ type OperatorPerformanceUseCase struct {
 func NewOperatorPerformanceUseCase(
 	relationships AggregatorRelationshipRepository,
 	offers JobOfferRepository,
-	jobs JobByIDLookup,
+	jobs JobRepository,
 	ratings OperatorRatingRepository,
 	clock Clock,
 ) *OperatorPerformanceUseCase {
@@ -83,7 +83,7 @@ func (u *OperatorPerformanceUseCase) Execute(ctx context.Context, aggregatorTena
 			}
 			accepted++
 
-			job, found := u.jobs.FindByID(offer.JobID)
+			job, found := offeredJob(u.jobs, offer)
 			if !found {
 				continue
 			}
@@ -154,14 +154,14 @@ func deliveredTimestamp(job domain.Job) *time.Time {
 type TopPerformingOperatorsUseCase struct {
 	relationships AggregatorRelationshipRepository
 	offers        JobOfferRepository
-	jobs          JobByIDLookup
+	jobs          JobRepository
 	ratings       OperatorRatingRepository
 }
 
 func NewTopPerformingOperatorsUseCase(
 	relationships AggregatorRelationshipRepository,
 	offers JobOfferRepository,
-	jobs JobByIDLookup,
+	jobs JobRepository,
 	ratings OperatorRatingRepository,
 ) *TopPerformingOperatorsUseCase {
 	return &TopPerformingOperatorsUseCase{relationships: relationships, offers: offers, jobs: jobs, ratings: ratings}
@@ -195,7 +195,7 @@ func (u *TopPerformingOperatorsUseCase) Execute(ctx context.Context, aggregatorT
 			if offer.TargetTenantID != relationship.OperatorTenantID || offer.Status != domain.OfferStatusAccepted {
 				continue
 			}
-			job, found := u.jobs.FindByID(offer.JobID)
+			job, found := offeredJob(u.jobs, offer)
 			if found && job.Status == domain.StatusDelivered {
 				completed++
 			}

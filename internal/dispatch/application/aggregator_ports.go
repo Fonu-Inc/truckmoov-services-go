@@ -87,19 +87,12 @@ type ComplianceSnapshot struct {
 	ComplianceRatePercent int
 }
 
-// JobByIDLookup finds a job by its ID alone, with no tenant scoping needed —
-// useful once a job may have moved to a different tenant than the one asking
-// (an aggregator looking up a job it sub-dispatched, now owned by the
-// operator it went to).
-type JobByIDLookup interface {
-	FindByID(id string) (domain.Job, bool)
-}
-
-// JobRepositoryWithLookup is JobRepository plus JobByIDLookup — every real
-// job repository implementation satisfies both, this just names the
-// combination for use cases that need to both list a tenant's jobs and
-// resolve a job that may now belong to a different one.
-type JobRepositoryWithLookup interface {
-	JobRepository
-	JobByIDLookup
+// offeredJob finds the job an offer is about under its current owner: the
+// offering tenant until the offer is accepted, the carrier after.
+func offeredJob(jobs JobRepository, offer domain.JobOffer) (domain.Job, bool) {
+	owner := offer.OfferingTenantID
+	if offer.Status == domain.OfferStatusAccepted {
+		owner = offer.TargetTenantID
+	}
+	return jobs.FindByTenantAndID(owner, offer.JobID)
 }

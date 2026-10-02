@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS dispatch_jobs (
     assigned_vehicle_id TEXT NOT NULL DEFAULT '',
     created_by TEXT NULL,
     deadline TIMESTAMPTZ NULL,
+    delivered_at TIMESTAMPTZ NULL,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     payload JSONB NOT NULL,
@@ -38,6 +39,12 @@ CREATE INDEX IF NOT EXISTS idx_dispatch_jobs_tenant_created_at
 
 CREATE INDEX IF NOT EXISTS idx_dispatch_jobs_tenant_status_created_at
     ON dispatch_jobs (tenant_id, status, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_dispatch_jobs_id
+    ON dispatch_jobs (id);
+
+CREATE INDEX IF NOT EXISTS idx_dispatch_jobs_tenant_status
+    ON dispatch_jobs (tenant_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_dispatch_jobs_tenant_driver
     ON dispatch_jobs (tenant_id, assigned_driver_id)
@@ -62,6 +69,9 @@ func (r *PostgresJobRepository) EnsureSchema(ctx context.Context) error {
 	if _, err := r.db.ExecContext(ctx, dispatchJobSchema); err != nil {
 		return fmt.Errorf("ensure dispatch job schema: %w", err)
 	}
+	if _, err := r.db.ExecContext(ctx, jobAttachmentSchema); err != nil {
+		return fmt.Errorf("ensure job attachment schema: %w", err)
+	}
 	if _, err := r.db.ExecContext(ctx, `
 ALTER TABLE dispatch_jobs
     ADD COLUMN IF NOT EXISTS assigned_driver_phone TEXT NOT NULL DEFAULT ''
@@ -73,6 +83,12 @@ ALTER TABLE dispatch_jobs
     ADD COLUMN IF NOT EXISTS created_by TEXT NULL
 `); err != nil {
 		return fmt.Errorf("ensure created by column: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+ALTER TABLE dispatch_jobs
+    ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ NULL
+`); err != nil {
+		return fmt.Errorf("ensure delivered at column: %w", err)
 	}
 
 	// Canonicalize older persisted priority values so the database, API responses,
@@ -117,9 +133,12 @@ func (r *PostgresJobRepository) Save(job domain.Job) error {
 		return fmt.Errorf("marshal job: %w", err)
 	}
 
-	var deadline any
+	var deadline, deliveredAt any
 	if job.Deadline != nil {
 		deadline = job.Deadline.UTC()
+	}
+	if job.DeliveredAt != nil {
+		deliveredAt = job.DeliveredAt.UTC()
 	}
 
 	_, err = r.db.ExecContext(
@@ -140,11 +159,12 @@ INSERT INTO dispatch_jobs (
     assigned_vehicle_id,
     created_by,
     deadline,
+    delivered_at,
     created_at,
     updated_at,
     payload
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
 )
 ON CONFLICT (tenant_id, id) DO UPDATE SET
     reference = EXCLUDED.reference,
@@ -158,6 +178,7 @@ ON CONFLICT (tenant_id, id) DO UPDATE SET
     assigned_driver_phone = EXCLUDED.assigned_driver_phone,
     assigned_vehicle_id = EXCLUDED.assigned_vehicle_id,
     deadline = EXCLUDED.deadline,
+    delivered_at = EXCLUDED.delivered_at,
     updated_at = EXCLUDED.updated_at,
     payload = EXCLUDED.payload
 `,
@@ -175,6 +196,7 @@ ON CONFLICT (tenant_id, id) DO UPDATE SET
 		strings.TrimSpace(job.AssignedVehicleID),
 		job.CreatedBy,
 		deadline,
+		deliveredAt,
 		job.CreatedAt.UTC(),
 		job.UpdatedAt.UTC(),
 		payload,
@@ -198,27 +220,6 @@ func (r *PostgresJobRepository) FindByTenantAndID(tenantID, id string) (domain.J
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Job{}, false
 		}
-		return domain.Job{}, false
-	}
-
-	job, err := decodeStoredJob(payload)
-	if err != nil {
-		return domain.Job{}, false
-	}
-	return job, true
-}
-
-// FindByID looks a job up by id alone, with no tenant filter. Needed once a
-// job may have moved to a different tenant than the one asking — an
-// aggregator looking up a job it sub-dispatched, now owned by the operator.
-func (r *PostgresJobRepository) FindByID(id string) (domain.Job, bool) {
-	var payload []byte
-	err := r.db.QueryRowContext(
-		context.Background(),
-		`SELECT payload FROM dispatch_jobs WHERE id = $1`,
-		strings.TrimSpace(id),
-	).Scan(&payload)
-	if err != nil {
 		return domain.Job{}, false
 	}
 
@@ -257,17 +258,50 @@ func (r *PostgresJobRepository) FindByTenant(tenantID string) []domain.Job {
 	return results
 }
 
-func (r *PostgresJobRepository) Delete(tenantID, id string) error {
-	_, err := r.db.ExecContext(
-		context.Background(),
-		`DELETE FROM dispatch_jobs WHERE tenant_id = $1 AND id = $2`,
+// ListTenantsWithActiveJobs names every tenant with a job still in progress.
+func (r *PostgresJobRepository) ListTenantsWithActiveJobs(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT DISTINCT tenant_id FROM dispatch_jobs WHERE status NOT IN ('created', 'delivered', 'cancelled')`)
+	if err != nil {
+		return nil, fmt.Errorf("list tenants with active jobs: %w", err)
+	}
+	defer rows.Close()
+
+	tenants := make([]string, 0)
+	for rows.Next() {
+		var tenantID string
+		if err := rows.Scan(&tenantID); err != nil {
+			return nil, err
+		}
+		tenants = append(tenants, tenantID)
+	}
+	return tenants, rows.Err()
+}
+
+// CountActive counts a tenant's jobs that are not yet delivered or cancelled.
+func (r *PostgresJobRepository) CountActive(ctx context.Context, tenantID string) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM dispatch_jobs WHERE tenant_id = $1 AND status NOT IN ('delivered', 'cancelled')`,
 		strings.TrimSpace(tenantID),
-		strings.TrimSpace(id),
-	)
+	).Scan(&count)
+	return count, err
+}
+
+func (r *PostgresJobRepository) Delete(tenantID, id string) error {
+	tenantID, id = strings.TrimSpace(tenantID), strings.TrimSpace(id)
+	ctx := context.Background()
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("delete dispatch job: %w", err)
 	}
-	return nil
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM dispatch_job_attachments WHERE tenant_id = $1 AND job_id = $2`, tenantID, id); err != nil {
+		return fmt.Errorf("delete dispatch job attachments: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM dispatch_jobs WHERE tenant_id = $1 AND id = $2`, tenantID, id); err != nil {
+		return fmt.Errorf("delete dispatch job: %w", err)
+	}
+	return tx.Commit()
 }
 
 func decodeStoredJob(payload []byte) (domain.Job, error) {

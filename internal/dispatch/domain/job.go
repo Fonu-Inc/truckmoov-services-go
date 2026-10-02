@@ -38,6 +38,36 @@ type JobStop struct {
 	Latitude     *float64 `json:"latitude,omitempty"`
 	Longitude    *float64 `json:"longitude,omitempty"`
 	Notes        string   `json:"notes,omitempty"`
+	CompanyName  string   `json:"company_name,omitempty"`
+	Date         string   `json:"date,omitempty"`
+	TimeFrom     string   `json:"time_from,omitempty"`
+	TimeTo       string   `json:"time_to,omitempty"`
+}
+
+type JobDimensions struct {
+	LengthCm float64 `json:"length_cm,omitempty"`
+	WidthCm  float64 `json:"width_cm,omitempty"`
+	HeightCm float64 `json:"height_cm,omitempty"`
+}
+
+// JobCargoDetails is what the job wizard collects beyond the core cargo
+// fields. Stored in the job payload, so it needs no column of its own.
+type JobCargoDetails struct {
+	Category        string         `json:"cargo_category,omitempty"`
+	PackagesCount   int            `json:"packages_count,omitempty"`
+	Unit            string         `json:"cargo_unit,omitempty"`
+	ValueNgn        float64        `json:"cargo_value_ngn,omitempty"`
+	Dimensions      *JobDimensions `json:"dimensions,omitempty"`
+	SpecialHandling []string       `json:"special_handling,omitempty"`
+	Equipment       []string       `json:"equipment,omitempty"`
+}
+
+type JobAttachment struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	ContentType string    `json:"content_type,omitempty"`
+	SizeBytes   int64     `json:"size_bytes"`
+	UploadedAt  time.Time `json:"uploaded_at"`
 }
 
 // JobPunctuality records how a delivered job met its deadline. Stored at
@@ -104,14 +134,16 @@ type DriverStatusRequest struct {
 }
 
 type Job struct {
-	ID                      string                `json:"id"`
-	Reference               string                `json:"reference,omitempty"`
-	TenantID                string                `json:"tenant_id"`
-	Pickup                  JobStop               `json:"pickup"`
-	Dropoff                 JobStop               `json:"dropoff"`
-	Stops                   []JobStop             `json:"stops,omitempty"`
-	CargoType               string                `json:"cargo_type,omitempty"`
-	CargoDescription        string                `json:"cargo_description,omitempty"`
+	ID               string    `json:"id"`
+	Reference        string    `json:"reference,omitempty"`
+	TenantID         string    `json:"tenant_id"`
+	Pickup           JobStop   `json:"pickup"`
+	Dropoff          JobStop   `json:"dropoff"`
+	Stops            []JobStop `json:"stops,omitempty"`
+	CargoType        string    `json:"cargo_type,omitempty"`
+	CargoDescription string    `json:"cargo_description,omitempty"`
+	JobCargoDetails
+	Attachments             []JobAttachment       `json:"attachments"`
 	AmountNgn               float64               `json:"amount_ngn,omitempty"`
 	Deadline                *time.Time            `json:"deadline,omitempty"`
 	RequiredVehicleType     string                `json:"required_vehicle_type,omitempty"`
@@ -126,6 +158,7 @@ type Job struct {
 	AssignedVehicleID       string                `json:"assigned_vehicle_id,omitempty"`
 	CancellationReason      string                `json:"cancellation_reason,omitempty"`
 	AcknowledgedAt          *time.Time            `json:"acknowledged_at,omitempty"`
+	DeliveredAt             *time.Time            `json:"delivered_at,omitempty"`
 	Notes                   []JobNote             `json:"notes"`
 	PODAttachments          []JobPODAttachment    `json:"pod_attachments"`
 	DriverStatusRequests    []DriverStatusRequest `json:"driver_status_requests"`
@@ -165,6 +198,10 @@ func NewJob(params Job) (Job, error) {
 		return Job{}, errors.New("estimated_service_minutes cannot be negative")
 	}
 
+	if err := validateCargoDetails(params.JobCargoDetails); err != nil {
+		return Job{}, err
+	}
+
 	priority, err := NormalizePriority(string(params.Priority))
 	if err != nil {
 		return Job{}, err
@@ -191,6 +228,8 @@ func NewJob(params Job) (Job, error) {
 		Stops:                   normalizeStops(params.Stops),
 		CargoType:               strings.TrimSpace(params.CargoType),
 		CargoDescription:        strings.TrimSpace(params.CargoDescription),
+		JobCargoDetails:         normalizeCargoDetails(params.JobCargoDetails),
+		Attachments:             append([]JobAttachment{}, params.Attachments...),
 		AmountNgn:               params.AmountNgn,
 		Deadline:                normalizeOptionalTime(params.Deadline),
 		RequiredVehicleType:     strings.TrimSpace(params.RequiredVehicleType),
@@ -205,6 +244,7 @@ func NewJob(params Job) (Job, error) {
 		AssignedVehicleID:       strings.TrimSpace(params.AssignedVehicleID),
 		CancellationReason:      strings.TrimSpace(params.CancellationReason),
 		AcknowledgedAt:          params.AcknowledgedAt,
+		DeliveredAt:             normalizeOptionalTime(params.DeliveredAt),
 		Notes:                   append([]JobNote{}, params.Notes...),
 		PODAttachments:          append([]JobPODAttachment{}, params.PODAttachments...),
 		DriverStatusRequests:    append([]DriverStatusRequest{}, params.DriverStatusRequests...),
@@ -274,6 +314,8 @@ type JobDetailsUpdate struct {
 	Deadline         *time.Time
 	LoadWeightKg     float64
 	LoadVolumeM3     float64
+	Cargo            JobCargoDetails
+	VehicleType      string
 }
 
 // JobDetailsPatch carries only the fields a caller sent. Nil keeps the job's
@@ -289,6 +331,8 @@ type JobDetailsPatch struct {
 	ClearDeadline    bool
 	LoadWeightKg     *float64
 	LoadVolumeM3     *float64
+	Cargo            *JobCargoDetails
+	VehicleType      *string
 }
 
 func (j Job) PatchDetails(patch JobDetailsPatch, now time.Time, timelineID string) (Job, error) {
@@ -306,6 +350,8 @@ func (j Job) details() JobDetailsUpdate {
 		Deadline:         j.Deadline,
 		LoadWeightKg:     j.LoadWeightKg,
 		LoadVolumeM3:     j.LoadVolumeM3,
+		Cargo:            j.JobCargoDetails,
+		VehicleType:      j.RequiredVehicleType,
 	}
 }
 
@@ -319,6 +365,8 @@ func (p JobDetailsPatch) over(base JobDetailsUpdate) JobDetailsUpdate {
 	setIfSent(&merged.AmountNgn, p.AmountNgn)
 	setIfSent(&merged.LoadWeightKg, p.LoadWeightKg)
 	setIfSent(&merged.LoadVolumeM3, p.LoadVolumeM3)
+	setIfSent(&merged.Cargo, p.Cargo)
+	setIfSent(&merged.VehicleType, p.VehicleType)
 	if p.Deadline != nil {
 		merged.Deadline = p.Deadline
 	}
@@ -353,6 +401,9 @@ func (j Job) UpdateDetails(update JobDetailsUpdate, now time.Time, timelineID st
 	if update.LoadVolumeM3 < 0 {
 		return Job{}, errors.New("load_volume_m3 cannot be negative")
 	}
+	if err := validateCargoDetails(update.Cargo); err != nil {
+		return Job{}, err
+	}
 
 	updated := j
 	updated.Pickup = normalizeStop(update.Pickup)
@@ -364,6 +415,8 @@ func (j Job) UpdateDetails(update JobDetailsUpdate, now time.Time, timelineID st
 	updated.Deadline = normalizeOptionalTime(update.Deadline)
 	updated.LoadWeightKg = update.LoadWeightKg
 	updated.LoadVolumeM3 = update.LoadVolumeM3
+	updated.JobCargoDetails = normalizeCargoDetails(update.Cargo)
+	updated.RequiredVehicleType = strings.TrimSpace(update.VehicleType)
 	updated.UpdatedAt = now.UTC()
 	updated.appendTimeline(JobTimelineEntry{
 		ID:         strings.TrimSpace(timelineID),
@@ -418,6 +471,15 @@ func (j Job) Assign(driverID, driverPhone, vehicleID string, now time.Time, time
 // before: newly assigned or replaced.
 func (j Job) DriverChangedFrom(before Job) bool {
 	return j.AssignedDriverID != before.AssignedDriverID
+}
+
+func (j *Job) clearAssignment() {
+	j.AssignedDriverID = ""
+	j.AssignedDriverPhone = ""
+	j.AssignedVehicleID = ""
+	j.DriverStatusRequests = []DriverStatusRequest{}
+	j.AcknowledgedAt = nil
+	j.Status = StatusCreated
 }
 
 func (j *Job) applyAssignment(driverID, driverPhone, vehicleID string) {
@@ -521,6 +583,7 @@ func (j Job) UpdateStatus(status JobStatus, now time.Time, timelineID string) (J
 	updated := j
 	previousStatus := updated.Status
 	updated.Status = status
+	updated.stampDelivered(now)
 	updated.UpdatedAt = now.UTC()
 	updated.appendTimeline(JobTimelineEntry{
 		ID:         strings.TrimSpace(timelineID),
@@ -653,6 +716,7 @@ func (j Job) ConfirmDriverStatusRequest(requestID, confirmedBy string, now time.
 
 	previousStatus := updated.Status
 	updated.Status = request.RequestedStatus
+	updated.stampDelivered(confirmedAt)
 	updated.UpdatedAt = confirmedAt
 	updated.appendTimeline(JobTimelineEntry{
 		ID:         strings.TrimSpace(confirmationTimelineID),
@@ -746,19 +810,53 @@ func (j Job) AddNote(note JobNote, now time.Time, timelineID string) (Job, error
 }
 
 func (j Job) MarkDriverInstructionSent(channel string, now time.Time, timelineID string) Job {
+	return j.recordInstructionOutcome("driver_instruction_sent", "Driver instruction delivered", channel, "", now, timelineID)
+}
+
+func (j Job) MarkDriverInstructionFailed(channel, reason string, now time.Time, timelineID string) Job {
+	return j.recordInstructionOutcome("driver_instruction_failed", "Driver instruction not delivered", channel, reason, now, timelineID)
+}
+
+func (j Job) MarkDriverInstructionNotSent(channel, reason string, now time.Time, timelineID string) Job {
+	return j.recordInstructionOutcome("driver_instruction_not_sent", "Driver instruction not sent", channel, reason, now, timelineID)
+}
+
+func (j Job) recordInstructionOutcome(entryType, summary, channel, reason string, now time.Time, timelineID string) Job {
 	updated := j
+	updated.UpdatedAt = now.UTC()
+	metadata := map[string]string{
+		"channel":   strings.TrimSpace(channel),
+		"driver_id": updated.AssignedDriverID,
+	}
+	if reason = strings.TrimSpace(reason); reason != "" {
+		metadata["reason"] = reason
+	}
+	updated.appendTimeline(JobTimelineEntry{
+		ID:         strings.TrimSpace(timelineID),
+		Type:       entryType,
+		Summary:    summary,
+		OccurredAt: now.UTC(),
+		Metadata:   metadata,
+	})
+	return updated
+}
+
+func (j Job) AddAttachment(attachment JobAttachment, now time.Time, timelineID string) (Job, error) {
+	if strings.TrimSpace(attachment.ID) == "" || strings.TrimSpace(attachment.Name) == "" {
+		return Job{}, errors.New("attachment id and name are required")
+	}
+	updated := j
+	attachment.UploadedAt = now.UTC()
+	updated.Attachments = append(append([]JobAttachment{}, j.Attachments...), attachment)
 	updated.UpdatedAt = now.UTC()
 	updated.appendTimeline(JobTimelineEntry{
 		ID:         strings.TrimSpace(timelineID),
-		Type:       "driver_instruction_sent",
-		Summary:    "Driver instruction delivered",
+		Type:       "job_attachment_added",
+		Summary:    "Attachment added to job",
 		OccurredAt: now.UTC(),
-		Metadata: map[string]string{
-			"channel":   strings.TrimSpace(channel),
-			"driver_id": updated.AssignedDriverID,
-		},
+		Metadata:   map[string]string{"attachment_id": attachment.ID, "name": attachment.Name},
 	})
-	return updated
+	return updated, nil
 }
 
 // TransferToCarrier hands operational ownership of the job to another tenant.
@@ -767,7 +865,9 @@ func (j Job) MarkDriverInstructionSent(channel string, now time.Time, timelineID
 // becomes the carrier's to dispatch. It does not pick a driver or vehicle —
 // the carrier has neither yet, and choosing one is their own dispatcher's job
 // afterwards through the ordinary Assign flow. Conflating the two would need a
-// driver selected before the carrier has even seen the job.
+// driver selected before the carrier has even seen the job. The previous
+// owner's driver and vehicle ids mean nothing in the carrier's fleet, so they
+// are cleared and the job goes back to created.
 func (j Job) TransferToCarrier(carrierTenantID string, now time.Time, timelineID string) (Job, error) {
 	carrierTenantID = strings.TrimSpace(carrierTenantID)
 	if carrierTenantID == "" {
@@ -783,6 +883,7 @@ func (j Job) TransferToCarrier(carrierTenantID string, now time.Time, timelineID
 	updated := j
 	previousTenant := updated.TenantID
 	updated.TenantID = carrierTenantID
+	updated.clearAssignment()
 	updated.UpdatedAt = now.UTC()
 	updated.appendTimeline(JobTimelineEntry{
 		ID:         strings.TrimSpace(timelineID),
@@ -804,6 +905,16 @@ func (j Job) IsActive() bool {
 	return j.Status != StatusDelivered && j.Status != StatusCancelled
 }
 
+// stampDelivered records when the job reached delivered, once, so revenue
+// reports can place it in the right month whatever is edited afterwards.
+func (j *Job) stampDelivered(now time.Time) {
+	if j.Status != StatusDelivered || j.DeliveredAt != nil {
+		return
+	}
+	deliveredAt := now.UTC()
+	j.DeliveredAt = &deliveredAt
+}
+
 func (j *Job) appendTimeline(entry JobTimelineEntry) {
 	if entry.ID == "" {
 		entry.ID = fmt.Sprintf("timeline-%d", time.Now().UnixNano())
@@ -819,7 +930,45 @@ func normalizeStop(stop JobStop) JobStop {
 		Latitude:     stop.Latitude,
 		Longitude:    stop.Longitude,
 		Notes:        strings.TrimSpace(stop.Notes),
+		CompanyName:  strings.TrimSpace(stop.CompanyName),
+		Date:         strings.TrimSpace(stop.Date),
+		TimeFrom:     strings.TrimSpace(stop.TimeFrom),
+		TimeTo:       strings.TrimSpace(stop.TimeTo),
 	}
+}
+
+func normalizeCargoDetails(details JobCargoDetails) JobCargoDetails {
+	details.Category = strings.TrimSpace(details.Category)
+	details.Unit = strings.TrimSpace(details.Unit)
+	details.SpecialHandling = normalizeTextList(details.SpecialHandling)
+	details.Equipment = normalizeTextList(details.Equipment)
+	if details.Dimensions != nil && *details.Dimensions == (JobDimensions{}) {
+		details.Dimensions = nil
+	}
+	return details
+}
+
+func validateCargoDetails(details JobCargoDetails) error {
+	if details.PackagesCount < 0 || details.ValueNgn < 0 {
+		return errors.New("packages and cargo value cannot be negative")
+	}
+	if d := details.Dimensions; d != nil && (d.LengthCm < 0 || d.WidthCm < 0 || d.HeightCm < 0) {
+		return errors.New("dimensions cannot be negative")
+	}
+	return nil
+}
+
+func normalizeTextList(values []string) []string {
+	cleaned := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			cleaned = append(cleaned, trimmed)
+		}
+	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+	return cleaned
 }
 
 func normalizeStops(stops []JobStop) []JobStop {

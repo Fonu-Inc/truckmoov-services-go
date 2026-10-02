@@ -38,7 +38,7 @@ func TestHandler_SuspendedMessagesAreDroppedOnEveryHTTPPath(t *testing.T) {
 			}, clock.now)
 			ingest := application.NewIngestLocationUseCase(&fakeTrackingPublisher{}, latest, clock, fixedTrackingID{value: "1"},
 				"default", history, application.TelemetryConfig{}, resolver, telemetry).WithGate(gate)
-			handler := NewHandler(ingest, nil, application.NewTrackingQueryUseCase(latest, history, "default"), nil, "", nil, &fakeTrackingActivityPublisher{})
+			handler := NewHandler(ingest, nil, application.NewTrackingQueryUseCase(latest, history, "default"), nil, "", nil, &fakeTrackingActivityPublisher{}).WithOpenIngest(true)
 			mux := http.NewServeMux()
 			handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 

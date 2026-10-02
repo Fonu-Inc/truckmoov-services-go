@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -37,6 +38,8 @@ type IngestLocationCommand struct {
 	VendorPositionID string
 }
 
+var ErrIdentityUnavailable = errors.New("device identity lookup unavailable")
+
 type IngestLocationResult struct {
 	Published  bool   `json:"published"`
 	Subject    string `json:"subject,omitempty"`
@@ -57,6 +60,7 @@ type IngestLocationUseCase struct {
 	telemetryStore TelemetryStore
 	gate           *IngestGate
 	rate           *MessageRate
+	quarantine     *Quarantine
 }
 
 func NewIngestLocationUseCase(
@@ -93,17 +97,22 @@ func (u *IngestLocationUseCase) WithMessageRate(rate *MessageRate) *IngestLocati
 	return u
 }
 
+func (u *IngestLocationUseCase) WithQuarantine(quarantine *Quarantine) *IngestLocationUseCase {
+	u.quarantine = quarantine
+	return u
+}
+
 type resolvedIdentity struct {
 	tenantID  string
 	vehicleID string
 	deviceID  string
 	known     *DeviceIdentity
+	lookupErr error
 }
 
 // resolveIdentity rekeys an IMEI-bearing command onto the canonical fleet
-// tenant/vehicle/device. When the IMEI is unknown (resolver miss or cache cold)
-// it falls back to IMEI keying so telemetry still flows — fixing the prior bug
-// where the IMEI was stuffed into both vehicle_id and device_id unconditionally.
+// tenant/vehicle/device. An IMEI the resolver does not know stays unresolved
+// (known == nil) and Execute quarantines it.
 func (u *IngestLocationUseCase) resolveIdentity(command IngestLocationCommand) resolvedIdentity {
 	resolved := resolvedIdentity{tenantID: command.TenantID, vehicleID: command.VehicleID, deviceID: command.DeviceID}
 
@@ -111,7 +120,9 @@ func (u *IngestLocationUseCase) resolveIdentity(command IngestLocationCommand) r
 		resolved.deviceID = command.IMEI
 		resolved.vehicleID = command.IMEI
 		if u.resolver != nil {
-			if identity, err := u.resolver.Resolve(command.IMEI); err == nil && identity != nil {
+			identity, err := u.resolver.Resolve(command.IMEI)
+			resolved.lookupErr = err
+			if err == nil && identity != nil {
 				resolved.known = identity
 				if identity.TenantID != "" {
 					resolved.tenantID = identity.TenantID
@@ -137,7 +148,10 @@ func (u *IngestLocationUseCase) Execute(
 	command IngestLocationCommand,
 ) (IngestLocationResult, error) {
 	resolved := u.resolveIdentity(command)
-	if reason := u.gate.Evaluate(resolved.tenantID, resolved.known, command.IMEI); reason != "" {
+	if resolved.lookupErr != nil {
+		return IngestLocationResult{}, fmt.Errorf("%w: %v", ErrIdentityUnavailable, resolved.lookupErr)
+	}
+	if skipped, reason := u.screen(ctx, command, resolved); skipped {
 		return IngestLocationResult{Skipped: true, SkipReason: reason}, nil
 	}
 	tenantID, vehicleID, deviceID := resolved.tenantID, resolved.vehicleID, resolved.deviceID
@@ -175,6 +189,12 @@ func (u *IngestLocationUseCase) Execute(
 	})
 	if err != nil {
 		return IngestLocationResult{}, fmt.Errorf("build location event: %w", err)
+	}
+
+	// The dedupe key lives in the stored latest location, so it is written only
+	// after the event is out: a failed publish must stay retryable.
+	if err := u.publisher.PublishLocationUpdate(ctx, locationUpdate); err != nil {
+		return IngestLocationResult{}, fmt.Errorf("publish location event: %w", err)
 	}
 
 	if err := u.locationStore.Save(LatestLocation{
@@ -240,10 +260,6 @@ func (u *IngestLocationUseCase) Execute(
 		})
 	}
 
-	if err := u.publisher.PublishLocationUpdate(ctx, locationUpdate); err != nil {
-		return IngestLocationResult{}, fmt.Errorf("publish location event: %w", err)
-	}
-
 	u.rate.Record(u.clock.Now())
 
 	return IngestLocationResult{
@@ -251,4 +267,16 @@ func (u *IngestLocationUseCase) Execute(
 		Subject:   locationUpdate.Subject(),
 		EventID:   locationUpdate.EventID,
 	}, nil
+}
+
+// screen decides whether a message is dropped before anything is stored or
+// published. An IMEI nobody registered is quarantined, never accepted.
+func (u *IngestLocationUseCase) screen(ctx context.Context, command IngestLocationCommand, resolved resolvedIdentity) (bool, string) {
+	reason := u.gate.Evaluate(resolved.tenantID, resolved.known, command.IMEI)
+	unknown := command.IMEI != "" && resolved.known == nil
+	if unknown && (reason == "" || reason == SkipUnknownDevice) {
+		u.quarantine.Observe(ctx, command.IMEI)
+		return true, SkipUnknownDevice
+	}
+	return reason != "", reason
 }

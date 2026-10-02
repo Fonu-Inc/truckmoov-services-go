@@ -47,15 +47,6 @@ func (r *lifecycleRepository) FindByTenant(tenantID string) []domain.Job {
 	return results
 }
 
-func (r *lifecycleRepository) FindByID(id string) (domain.Job, bool) {
-	for _, job := range r.data {
-		if job.ID == id {
-			return job, true
-		}
-	}
-	return domain.Job{}, false
-}
-
 type lifecycleEmitter struct {
 	commands []PublishJobStatusChangedCommand
 }
@@ -75,7 +66,8 @@ type lifecycleNotifier struct {
 
 func (n *lifecycleNotifier) NotifyJobInstruction(
 	_ context.Context,
-	_, _, _, _ string,
+	_ domain.Job,
+	_ string,
 ) error {
 	n.calls++
 	return n.err
@@ -1046,5 +1038,167 @@ func TestAssignJob_DriverChangeInstructsTheNewDriver(t *testing.T) {
 	}
 	if last := f.emitter.commands[1]; last.AssignedDriverID != "driver-2" {
 		t.Fatalf("expected event for driver-2, got %q", last.AssignedDriverID)
+	}
+}
+
+func timelineTypes(job domain.Job) []string {
+	types := make([]string, 0, len(job.Timeline))
+	for _, entry := range job.Timeline {
+		types = append(types, entry.Type)
+	}
+	return types
+}
+
+func lastTimeline(job domain.Job) domain.JobTimelineEntry {
+	return job.Timeline[len(job.Timeline)-1]
+}
+
+func TestAssignJob_DoesNotClaimTheDriverWasMessaged(t *testing.T) {
+	f := newAssignFixture(t, knownFleet())
+
+	assigned := f.assign(t, "driver-1", "")
+
+	for _, entryType := range timelineTypes(assigned) {
+		if entryType == "driver_instruction_sent" {
+			t.Fatalf("nothing has reached the driver yet, got %v", timelineTypes(assigned))
+		}
+	}
+	if f.notifier.calls != 1 {
+		t.Fatalf("expected the instruction request queued once, got %d", f.notifier.calls)
+	}
+}
+
+func TestAssignJob_RecordsNotSentWhenTheRequestCannotBeQueued(t *testing.T) {
+	f := newAssignFixture(t, knownFleet())
+	f.notifier.err = errors.New("bus down")
+
+	assigned := f.assign(t, "driver-1", "")
+
+	if got := lastTimeline(assigned); got.Type != "driver_instruction_not_sent" {
+		t.Fatalf("expected a not-sent entry, got %+v", got)
+	}
+	if got := lastTimeline(f.stored(t)); got.Type != "driver_instruction_not_sent" {
+		t.Fatalf("expected the entry to be saved, got %+v", got)
+	}
+}
+
+func TestRecordDriverInstructionOutcome(t *testing.T) {
+	cases := []struct {
+		outcome DriverInstructionOutcome
+		want    string
+		reason  string
+	}{
+		{DriverInstructionSent, "driver_instruction_sent", ""},
+		{DriverInstructionFailed, "driver_instruction_failed", "template rejected"},
+		{DriverInstructionNotSent, "driver_instruction_not_sent", "no WhatsApp number"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.outcome), func(t *testing.T) {
+			f := newAssignFixture(t, knownFleet())
+			f.assign(t, "driver-1", "")
+
+			job, err := f.useCase.RecordDriverInstructionOutcome(context.Background(), RecordDriverInstructionOutcomeCommand{
+				JobID: f.job.ID, DriverID: "driver-1", Outcome: tc.outcome, Channel: "whatsapp", Reason: tc.reason,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := lastTimeline(job); got.Type != tc.want || got.Metadata["reason"] != tc.reason {
+				t.Fatalf("unexpected entry %+v", got)
+			}
+			if got := lastTimeline(f.stored(t)); got.Type != tc.want {
+				t.Fatalf("expected the entry to be saved, got %+v", got)
+			}
+		})
+	}
+}
+
+func TestRecordDriverInstructionOutcome_RefusesAStaleDriverAndAnUnknownOutcome(t *testing.T) {
+	f := newAssignFixture(t, knownFleet())
+	f.assign(t, "driver-1", "")
+	f.assign(t, "driver-2", "")
+	before := len(f.stored(t).Timeline)
+
+	_, err := f.useCase.RecordDriverInstructionOutcome(context.Background(), RecordDriverInstructionOutcomeCommand{
+		JobID: f.job.ID, DriverID: "driver-1", Outcome: DriverInstructionSent,
+	})
+	if !errors.Is(err, ErrJobInstructionDriverMismatch) {
+		t.Fatalf("expected a driver mismatch, got %v", err)
+	}
+
+	_, err = f.useCase.RecordDriverInstructionOutcome(context.Background(), RecordDriverInstructionOutcomeCommand{
+		JobID: f.job.ID, DriverID: "driver-2", Outcome: "delivered",
+	})
+	if !errors.Is(err, ErrDriverInstructionOutcomeInvalid) {
+		t.Fatalf("expected an invalid outcome, got %v", err)
+	}
+	if len(f.stored(t).Timeline) != before {
+		t.Fatal("a refused outcome must not change the timeline")
+	}
+}
+
+func TestCreateJob_KeepsWizardDetails(t *testing.T) {
+	f := newAssignFixture(t, knownFleet())
+
+	job, err := f.useCase.CreateJob(context.Background(), CreateJobCommand{
+		JobID:   "job-2",
+		Pickup:  domain.JobStop{Address: "Apapa", ContactName: "Ada", ContactPhone: "+2348011111111", CompanyName: "Acme"},
+		Dropoff: domain.JobStop{Address: "Ikeja"},
+		Cargo: domain.JobCargoDetails{
+			Category: "Electronics", PackagesCount: 3, SpecialHandling: []string{"Fragile"},
+			Dimensions: &domain.JobDimensions{LengthCm: 120, WidthCm: 80, HeightCm: 60},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create job failed: %v", err)
+	}
+
+	stored, _ := f.repository.FindByTenantAndID("default", job.ID)
+	if stored.Category != "Electronics" || stored.PackagesCount != 3 || stored.Dimensions == nil || stored.Dimensions.HeightCm != 60 {
+		t.Fatalf("cargo details not stored: %+v", stored.JobCargoDetails)
+	}
+	if stored.Pickup.ContactName != "Ada" || stored.Pickup.CompanyName != "Acme" {
+		t.Fatalf("stop contacts not stored: %+v", stored.Pickup)
+	}
+}
+
+func TestUpdateStatus_StampsDeliveredAt(t *testing.T) {
+	f := newAssignFixture(t, knownFleet())
+	f.assign(t, "driver-1", "")
+	var job domain.Job
+	for _, status := range []string{"en-route", "arrived", "loaded", "delivered"} {
+		var err error
+		job, err = f.useCase.UpdateJobStatus(context.Background(), UpdateJobStatusCommand{JobID: f.job.ID, Status: status})
+		if err != nil {
+			t.Fatalf("status %s: %v", status, err)
+		}
+	}
+	if job.DeliveredAt == nil || f.stored(t).DeliveredAt == nil {
+		t.Fatal("expected delivered_at to be stamped and stored")
+	}
+}
+
+func TestResendDriverInstruction_QueuesAgainOnlyForAnAssignedJob(t *testing.T) {
+	f := newAssignFixture(t, knownFleet())
+	if _, err := f.useCase.ResendDriverInstruction(context.Background(), "default", f.job.ID); !errors.Is(err, ErrJobInstructionStatusNotSendable) {
+		t.Fatalf("an unassigned job cannot be resent, got %v", err)
+	}
+	f.assign(t, "driver-1", "")
+	before := f.notifier.calls
+
+	if _, err := f.useCase.ResendDriverInstruction(context.Background(), "default", f.job.ID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if f.notifier.calls != before+1 {
+		t.Fatalf("expected the instruction queued again, got %d -> %d", before, f.notifier.calls)
+	}
+
+	for _, status := range []string{"en-route"} {
+		if _, err := f.useCase.UpdateJobStatus(context.Background(), UpdateJobStatusCommand{JobID: f.job.ID, Status: status}); err != nil {
+			t.Fatalf("status %s: %v", status, err)
+		}
+	}
+	if _, err := f.useCase.ResendDriverInstruction(context.Background(), "default", f.job.ID); !errors.Is(err, ErrJobInstructionStatusNotSendable) {
+		t.Fatalf("a job already under way cannot be resent, got %v", err)
 	}
 }

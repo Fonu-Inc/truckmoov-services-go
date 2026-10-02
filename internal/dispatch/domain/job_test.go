@@ -338,3 +338,118 @@ func TestJob_PatchDetails_StillRejectsBlankPickup(t *testing.T) {
 		t.Fatal("expected an error when pickup is sent blank")
 	}
 }
+
+func TestJob_UpdateStatus_StampsDeliveredAtOnce(t *testing.T) {
+	job := validJobFixture(t)
+	now := job.UpdatedAt.Add(time.Hour)
+	for index, status := range []JobStatus{StatusAssigned, StatusEnRoute, StatusArrived, StatusLoaded} {
+		next, err := job.UpdateStatus(status, now, "t")
+		if err != nil {
+			t.Fatalf("status %s: %v", status, err)
+		}
+		if next.DeliveredAt != nil {
+			t.Fatalf("step %d: delivered_at set before delivery", index)
+		}
+		job = next
+	}
+
+	deliveredAt := now.Add(2 * time.Hour)
+	delivered, err := job.UpdateStatus(StatusDelivered, deliveredAt, "t")
+	if err != nil {
+		t.Fatalf("deliver: %v", err)
+	}
+	if delivered.DeliveredAt == nil || !delivered.DeliveredAt.Equal(deliveredAt) {
+		t.Fatalf("expected delivered_at %v, got %v", deliveredAt, delivered.DeliveredAt)
+	}
+
+	again, err := delivered.UpdateStatus(StatusDelivered, deliveredAt.Add(time.Hour), "t")
+	if err != nil {
+		t.Fatalf("repeat deliver: %v", err)
+	}
+	if !again.DeliveredAt.Equal(deliveredAt) {
+		t.Fatalf("expected delivered_at to stay %v, got %v", deliveredAt, again.DeliveredAt)
+	}
+}
+
+func TestJob_ConfirmDriverStatusRequest_StampsDeliveredAt(t *testing.T) {
+	job := validJobFixture(t)
+	now := job.UpdatedAt.Add(time.Hour)
+	job, _ = job.Assign("driver-1", "", "", now, "a")
+	job.Status = StatusLoaded
+
+	reported, request, err := job.ReportDriverStatusRequest(StatusDelivered, "driver-1", "", "delivered", "", "msg-1", "whatsapp", now, "req-1", "t1")
+	if err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	confirmed, _, err := reported.ConfirmDriverStatusRequest(request.ID, "dispatcher", now.Add(time.Minute), "t2", "t3")
+	if err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if confirmed.DeliveredAt == nil || !confirmed.DeliveredAt.Equal(now.Add(time.Minute)) {
+		t.Fatalf("expected delivered_at at confirmation, got %v", confirmed.DeliveredAt)
+	}
+}
+
+func TestJob_DriverInstructionOutcomesAreRecorded(t *testing.T) {
+	job := validJobFixture(t)
+	now := job.UpdatedAt.Add(time.Hour)
+	job, _ = job.Assign("driver-1", "+2348012345678", "", now, "a")
+
+	notSent := job.MarkDriverInstructionNotSent("whatsapp", "no WhatsApp number", now, "n1")
+	last := notSent.Timeline[len(notSent.Timeline)-1]
+	if last.Type != "driver_instruction_not_sent" || last.Metadata["reason"] != "no WhatsApp number" {
+		t.Fatalf("unexpected entry %+v", last)
+	}
+
+	failed := job.MarkDriverInstructionFailed("whatsapp", "template rejected", now, "n2")
+	if got := failed.Timeline[len(failed.Timeline)-1].Type; got != "driver_instruction_failed" {
+		t.Fatalf("unexpected entry type %s", got)
+	}
+
+	sent := job.MarkDriverInstructionSent("whatsapp", now, "n3")
+	if _, hasReason := sent.Timeline[len(sent.Timeline)-1].Metadata["reason"]; hasReason {
+		t.Fatal("a sent entry carries no reason")
+	}
+}
+
+func TestJob_CargoDetailsAreKeptAndValidated(t *testing.T) {
+	now := time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC)
+	job, err := NewJob(Job{
+		ID: "job-1", TenantID: "tenant-a",
+		Pickup:  JobStop{Address: "Apapa", ContactName: " Ada ", CompanyName: "Acme", TimeFrom: "08:00"},
+		Dropoff: JobStop{Address: "Ikeja"},
+		JobCargoDetails: JobCargoDetails{
+			Category: " Electronics ", PackagesCount: 4, SpecialHandling: []string{" Fragile ", ""},
+			Dimensions: &JobDimensions{LengthCm: 10},
+		},
+		CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if job.Category != "Electronics" || len(job.SpecialHandling) != 1 || job.Dimensions.LengthCm != 10 {
+		t.Fatalf("cargo details not kept: %+v", job.JobCargoDetails)
+	}
+	if job.Pickup.ContactName != "Ada" || job.Pickup.CompanyName != "Acme" || job.Pickup.TimeFrom != "08:00" {
+		t.Fatalf("stop details not kept: %+v", job.Pickup)
+	}
+
+	if _, err := NewJob(Job{
+		ID: "job-2", TenantID: "tenant-a", Pickup: JobStop{Address: "A"}, Dropoff: JobStop{Address: "B"},
+		JobCargoDetails: JobCargoDetails{PackagesCount: -1}, CreatedAt: now, UpdatedAt: now,
+	}); err == nil {
+		t.Fatal("expected negative packages to be refused")
+	}
+}
+
+func TestJob_AddAttachmentKeepsMetadata(t *testing.T) {
+	job := validJobFixture(t)
+	now := job.UpdatedAt.Add(time.Hour)
+	updated, err := job.AddAttachment(JobAttachment{ID: "att-1", Name: "bol.pdf", SizeBytes: 10}, now, "t1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(updated.Attachments) != 1 || !updated.Attachments[0].UploadedAt.Equal(now) || len(job.Attachments) != 0 {
+		t.Fatalf("unexpected attachments %+v", updated.Attachments)
+	}
+}

@@ -638,6 +638,106 @@ func dispatchOpenAPISpec() map[string]any {
 					},
 				},
 			},
+			"/dispatch/jobs/{jobId}/driver-instruction-outcome": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Record whether the driver instruction reached the driver",
+					"description": "Called by the notification service after it tries to message the driver. Writes a sent, failed or not-sent entry on the job timeline. Refused when the driver is no longer the assigned one.",
+					"operationId": "recordDriverInstructionOutcome",
+					"parameters":  []any{jobIDParameter},
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/DriverInstructionOutcomeRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Outcome recorded",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/JobResponse"},
+								},
+							},
+						},
+						"400": map[string]any{"description": "Validation error"},
+						"404": map[string]any{"description": "Job not found"},
+						"409": map[string]any{"description": "The driver is no longer assigned to the job"},
+					},
+				},
+			},
+			"/dispatch/jobs/{jobId}/resend-instruction": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Message the assigned driver again",
+					"description": "Queues the driver instruction again, for when the first attempt failed or could not be sent. Allowed only while the job is assigned. The result is written to the timeline by the notification service.",
+					"operationId": "resendDriverInstruction",
+					"parameters":  []any{jobIDParameter},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Instruction queued",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/JobResponse"},
+								},
+							},
+						},
+						"404": map[string]any{"description": "Job not found"},
+						"409": map[string]any{"description": "The job is not assigned to a driver"},
+					},
+				},
+			},
+			"/dispatch/jobs/{jobId}/attachments": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Attach a file to a job",
+					"description": "At most 10 files per job, 3 MB each.",
+					"operationId": "addJobAttachment",
+					"parameters":  []any{jobIDParameter},
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/AddJobAttachmentRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"201": map[string]any{
+							"description": "Attachment added",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/JobResponse"},
+								},
+							},
+						},
+						"400": map[string]any{"description": "Validation error"},
+						"404": map[string]any{"description": "Job not found"},
+						"413": map[string]any{"description": "File is larger than 3 MB"},
+					},
+				},
+			},
+			"/dispatch/jobs/{jobId}/attachments/{attachmentId}": map[string]any{
+				"get": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Download a job attachment",
+					"operationId": "getJobAttachment",
+					"parameters":  []any{jobIDParameter, map[string]any{"name": "attachmentId", "in": "path", "required": true, "schema": map[string]any{"type": "string"}}},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Attachment with its content",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/JobAttachmentContent"},
+								},
+							},
+						},
+						"404": map[string]any{"description": "Job or attachment not found"},
+					},
+				},
+			},
 			"/dispatch/jobs/{jobId}/timeline": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"dispatch"},
@@ -730,8 +830,65 @@ func dispatchOpenAPISpec() map[string]any {
 						"latitude":      map[string]any{"type": "number"},
 						"longitude":     map[string]any{"type": "number"},
 						"notes":         map[string]any{"type": "string"},
+						"company_name":  map[string]any{"type": "string"},
+						"date":          map[string]any{"type": "string", "description": "Planned date at this stop, YYYY-MM-DD."},
+						"time_from":     map[string]any{"type": "string", "description": "Window start, HH:MM."},
+						"time_to":       map[string]any{"type": "string", "description": "Window end, HH:MM."},
 					},
 					"required": []string{"address"},
+				},
+				"JobCargo": map[string]any{
+					"type":        "object",
+					"description": "What the job wizard collects beyond the core cargo fields. When sent on update it replaces the stored cargo details.",
+					"properties": map[string]any{
+						"category":         map[string]any{"type": "string"},
+						"packages_count":   map[string]any{"type": "integer"},
+						"unit":             map[string]any{"type": "string"},
+						"value_ngn":        map[string]any{"type": "number"},
+						"dimensions":       map[string]any{"type": "object", "properties": map[string]any{"length_cm": map[string]any{"type": "number"}, "width_cm": map[string]any{"type": "number"}, "height_cm": map[string]any{"type": "number"}}},
+						"special_handling": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"equipment":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					},
+				},
+				"JobAttachment": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":           map[string]any{"type": "string"},
+						"name":         map[string]any{"type": "string"},
+						"content_type": map[string]any{"type": "string"},
+						"size_bytes":   map[string]any{"type": "integer"},
+						"uploaded_at":  map[string]any{"type": "string", "format": "date-time"},
+					},
+				},
+				"JobAttachmentContent": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":             map[string]any{"type": "string"},
+						"name":           map[string]any{"type": "string"},
+						"content_type":   map[string]any{"type": "string"},
+						"size_bytes":     map[string]any{"type": "integer"},
+						"uploaded_at":    map[string]any{"type": "string", "format": "date-time"},
+						"content_base64": map[string]any{"type": "string"},
+					},
+				},
+				"AddJobAttachmentRequest": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"name":           map[string]any{"type": "string"},
+						"content_type":   map[string]any{"type": "string"},
+						"content_base64": map[string]any{"type": "string", "description": "File content, at most 3 MB before encoding."},
+					},
+					"required": []string{"name", "content_base64"},
+				},
+				"DriverInstructionOutcomeRequest": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"driver_id": map[string]any{"type": "string"},
+						"outcome":   map[string]any{"type": "string", "enum": []string{"sent", "failed", "not_sent"}},
+						"channel":   map[string]any{"type": "string"},
+						"reason":    map[string]any{"type": "string"},
+					},
+					"required": []string{"driver_id", "outcome"},
 				},
 				"JobTimeWindow": map[string]any{
 					"type": "object",
@@ -746,15 +903,17 @@ func dispatchOpenAPISpec() map[string]any {
 					"type":        "object",
 					"description": "Partial update: only the fields sent change, the rest keep their current values. stops, when sent, replaces the whole list. Send deadline as an empty string to clear it.",
 					"properties": map[string]any{
-						"pickup":            map[string]any{"$ref": "#/components/schemas/Stop"},
-						"dropoff":           map[string]any{"$ref": "#/components/schemas/Stop"},
-						"stops":             map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/Stop"}},
-						"cargo_type":        map[string]any{"type": "string"},
-						"cargo_description": map[string]any{"type": "string"},
-						"amount":            map[string]any{"type": "number"},
-						"deadline":          map[string]any{"type": "string", "format": "date-time"},
-						"load_weight_kg":    map[string]any{"type": "number"},
-						"load_volume_m3":    map[string]any{"type": "number"},
+						"pickup":                map[string]any{"$ref": "#/components/schemas/Stop"},
+						"dropoff":               map[string]any{"$ref": "#/components/schemas/Stop"},
+						"stops":                 map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/Stop"}},
+						"cargo_type":            map[string]any{"type": "string"},
+						"cargo_description":     map[string]any{"type": "string"},
+						"amount":                map[string]any{"type": "number"},
+						"deadline":              map[string]any{"type": "string", "format": "date-time"},
+						"load_weight_kg":        map[string]any{"type": "number"},
+						"load_volume_m3":        map[string]any{"type": "number"},
+						"cargo":                 map[string]any{"$ref": "#/components/schemas/JobCargo"},
+						"required_vehicle_type": map[string]any{"type": "string"},
 					},
 				},
 				"CreateJobRequest": map[string]any{
@@ -792,6 +951,7 @@ func dispatchOpenAPISpec() map[string]any {
 						"time_window":               map[string]any{"$ref": "#/components/schemas/JobTimeWindow"},
 						"pickup":                    map[string]any{"$ref": "#/components/schemas/Stop"},
 						"dropoff":                   map[string]any{"$ref": "#/components/schemas/Stop"},
+						"cargo":                     map[string]any{"$ref": "#/components/schemas/JobCargo"},
 					},
 					"required": []string{"pickupLocation", "deliveryLocation"},
 				},
@@ -1117,9 +1277,21 @@ func dispatchOpenAPISpec() map[string]any {
 						"assigned_vehicle_model":    map[string]any{"type": "string", "nullable": true},
 						"cancellation_reason":       map[string]any{"type": "string"},
 						"acknowledged_at":           map[string]any{"type": "string", "format": "date-time"},
-						"created_by":                map[string]any{"type": "string", "nullable": true, "description": "Subject of the token that created the job. Null for jobs created before it was recorded."},
-						"created_at":                map[string]any{"type": "string", "format": "date-time"},
-						"updated_at":                map[string]any{"type": "string", "format": "date-time"},
+						"delivered_at":              map[string]any{"type": "string", "format": "date-time", "description": "Set once, when the job first reaches delivered."},
+						"cargo_category":            map[string]any{"type": "string"},
+						"packages_count":            map[string]any{"type": "integer"},
+						"cargo_unit":                map[string]any{"type": "string"},
+						"cargo_value_ngn":           map[string]any{"type": "number"},
+						"dimensions":                map[string]any{"type": "object", "properties": map[string]any{"length_cm": map[string]any{"type": "number"}, "width_cm": map[string]any{"type": "number"}, "height_cm": map[string]any{"type": "number"}}},
+						"special_handling":          map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"equipment":                 map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"attachments": map[string]any{
+							"type":  "array",
+							"items": map[string]any{"$ref": "#/components/schemas/JobAttachment"},
+						},
+						"created_by": map[string]any{"type": "string", "nullable": true, "description": "Subject of the token that created the job. Null for jobs created before it was recorded."},
+						"created_at": map[string]any{"type": "string", "format": "date-time"},
+						"updated_at": map[string]any{"type": "string", "format": "date-time"},
 						"timeline": map[string]any{
 							"type":  "array",
 							"items": map[string]any{"$ref": "#/components/schemas/JobTimelineEntry"},

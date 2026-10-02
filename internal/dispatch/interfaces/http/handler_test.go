@@ -78,7 +78,8 @@ func makeDispatchBearerToken(secret, tenantID, role string) string {
 
 func (f *fakeDriverInstructionNotifier) NotifyJobInstruction(
 	_ context.Context,
-	_, _, _, _ string,
+	_ domain.Job,
+	_ string,
 ) error {
 	return nil
 }

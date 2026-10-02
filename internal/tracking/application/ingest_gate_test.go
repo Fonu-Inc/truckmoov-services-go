@@ -162,7 +162,7 @@ func TestIngestGate_DeviceBlocking(t *testing.T) {
 		{"cold cache imei in list", nil, []string{imei}, IngestLocationCommand{IMEI: imei, TenantID: "t9"}, SkipDeviceSuspended},
 		{"spoofed body tenant loses to resolved tenant", &DeviceIdentity{IMEI: imei, TenantID: "bad"}, nil, IngestLocationCommand{IMEI: imei, TenantID: "good"}, SkipTenantSuspended},
 		{"warm identity not suspended beats stale list", &DeviceIdentity{IMEI: imei, TenantID: "t1"}, []string{imei}, IngestLocationCommand{IMEI: imei}, ""},
-		{"unknown imei default policy passes", nil, nil, IngestLocationCommand{IMEI: imei, TenantID: "t9"}, ""},
+		{"unknown imei is quarantined even on default policy", nil, nil, IngestLocationCommand{IMEI: imei, TenantID: "t9"}, SkipUnknownDevice},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -197,7 +197,7 @@ func TestIngestGate_UnknownIMEI(t *testing.T) {
 		list   []string
 		want   string
 	}{
-		{"default policy passes clean tenant", "default", "t1", nil, ""},
+		{"default policy quarantines clean tenant", "default", "t1", nil, SkipUnknownDevice},
 		{"default policy blocks suspended body tenant", "default", "t-bad", nil, SkipTenantSuspended},
 		{"default policy blocks listed imei", "default", "t1", []string{"999"}, SkipDeviceSuspended},
 		{"reject policy drops", "reject", "t1", nil, SkipUnknownDevice},

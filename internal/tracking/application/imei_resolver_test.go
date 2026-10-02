@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -78,23 +79,53 @@ func TestIngestLocation_ResolvesIMEIToVehicle(t *testing.T) {
 	}
 }
 
-func TestIngestLocation_UnresolvedIMEIFallsBack(t *testing.T) {
+type fakeQuarantineStore struct {
+	counts map[string]int
+	fail   bool
+}
+
+func (f *fakeQuarantineStore) Record(_ context.Context, imei string, count int, _ time.Time) error {
+	if f.fail {
+		return errors.New("store down")
+	}
+	if f.counts == nil {
+		f.counts = map[string]int{}
+	}
+	f.counts[imei] += count
+	return nil
+}
+
+func (f *fakeQuarantineStore) List(_ context.Context, _ int) ([]QuarantinedDevice, error) {
+	out := []QuarantinedDevice{}
+	for imei, count := range f.counts {
+		out = append(out, QuarantinedDevice{IMEI: imei, MessageCount: count})
+	}
+	return out, nil
+}
+
+func (f *fakeQuarantineStore) Remove(_ context.Context, imei string) error {
+	delete(f.counts, imei)
+	return nil
+}
+
+func TestIngestLocation_UnknownIMEIIsQuarantinedNotStored(t *testing.T) {
 	publisher := &fakeTrackingPublisher{}
 	repository := &fakeLatestLocationRepository{}
-	historyRepo := &fakeLocationHistoryRepository{}
+	store := &fakeQuarantineStore{}
+	clock := fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)}
 	useCase := NewIngestLocationUseCase(
 		publisher,
 		repository,
-		fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)},
+		clock,
 		fixedTrackingIDGenerator{value: "evt-1"},
 		"default",
-		historyRepo,
+		&fakeLocationHistoryRepository{},
 		TelemetryConfig{},
 		newFakeIMEIResolver(),
 		nil,
-	)
+	).WithQuarantine(NewQuarantine(store, clock))
 
-	_, err := useCase.Execute(context.Background(), IngestLocationCommand{
+	result, err := useCase.Execute(context.Background(), IngestLocationCommand{
 		IMEI:      "359779090099999",
 		Latitude:  6.5,
 		Longitude: 3.4,
@@ -102,9 +133,124 @@ func TestIngestLocation_UnresolvedIMEIFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+	if !result.Skipped || result.SkipReason != SkipUnknownDevice || result.Published {
+		t.Fatalf("expected unknown_device skip, got %+v", result)
+	}
+	if len(repository.byKey) != 0 || publisher.location.EventID != "" {
+		t.Fatalf("unknown IMEI must not be stored or published")
+	}
+	if store.counts["359779090099999"] != 1 {
+		t.Fatalf("expected quarantine record, got %v", store.counts)
+	}
+}
 
-	if repository.entry.VehicleID != "359779090099999" || repository.entry.DeviceID != "359779090099999" {
-		t.Fatalf("expected IMEI fallback keying, got vehicle=%s device=%s", repository.entry.VehicleID, repository.entry.DeviceID)
+func TestQuarantine_BatchesWritesAndRetriesAfterFailure(t *testing.T) {
+	now := time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)
+	store := &fakeQuarantineStore{}
+	quarantine := NewQuarantine(store, tickClock{now: &now})
+	ctx := context.Background()
+
+	quarantine.Observe(ctx, "imei-1")
+	quarantine.Observe(ctx, "imei-1")
+	quarantine.Observe(ctx, "imei-1")
+	if store.counts["imei-1"] != 1 {
+		t.Fatalf("expected one write inside the flush window, got %d", store.counts["imei-1"])
+	}
+	now = now.Add(quarantineFlushEvery)
+	quarantine.Observe(ctx, "imei-1")
+	if store.counts["imei-1"] != 4 {
+		t.Fatalf("expected batched count 4, got %d", store.counts["imei-1"])
+	}
+
+	store.fail = true
+	now = now.Add(quarantineFlushEvery)
+	quarantine.Observe(ctx, "imei-1")
+	store.fail = false
+	quarantine.Observe(ctx, "imei-1")
+	if store.counts["imei-1"] != 6 {
+		t.Fatalf("expected failed write to be carried forward, got %d", store.counts["imei-1"])
+	}
+}
+
+func TestIngestLocation_ResolverOutageIsNotQuarantine(t *testing.T) {
+	store := &fakeQuarantineStore{}
+	clock := fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)}
+	useCase := NewIngestLocationUseCase(
+		&fakeTrackingPublisher{},
+		&fakeLatestLocationRepository{},
+		clock,
+		fixedTrackingIDGenerator{value: "evt-1"},
+		"default",
+		&fakeLocationHistoryRepository{},
+		TelemetryConfig{},
+		failingIMEIResolver{},
+		nil,
+	).WithQuarantine(NewQuarantine(store, clock))
+
+	_, err := useCase.Execute(context.Background(), IngestLocationCommand{IMEI: "359779090099999", Latitude: 6.5, Longitude: 3.4})
+	if !errors.Is(err, ErrIdentityUnavailable) {
+		t.Fatalf("expected ErrIdentityUnavailable, got %v", err)
+	}
+	if len(store.counts) != 0 {
+		t.Fatalf("outage must not quarantine: %v", store.counts)
+	}
+}
+
+type failingIMEIResolver struct{}
+
+func (failingIMEIResolver) Resolve(string) (*DeviceIdentity, error) {
+	return nil, errors.New("redis down")
+}
+func (failingIMEIResolver) Upsert(DeviceIdentity) error { return nil }
+func (failingIMEIResolver) Evict(string) error          { return nil }
+
+type tickClock struct{ now *time.Time }
+
+func (c tickClock) Now() time.Time { return *c.now }
+
+func TestConsumeDeviceIdentity_KeepsFirstTenantUntilItReleases(t *testing.T) {
+	resolver := newFakeIMEIResolver()
+	useCase := NewConsumeDeviceIdentityUseCase(resolver, logger.New("test"))
+	event := func(tenant, action, device string) eventbus.EventEnvelope {
+		return eventbus.EventEnvelope{TenantID: tenant, Data: map[string]any{"imei": "359779090011111", "device_id": device, "action": action}}
+	}
+	ctx := context.Background()
+
+	_ = useCase.Handle(ctx, event("tenant-a", "registered", "dev-a"))
+	_ = useCase.Handle(ctx, event("tenant-b", "registered", "dev-b"))
+	if got, _ := resolver.Resolve("359779090011111"); got == nil || got.TenantID != "tenant-a" {
+		t.Fatalf("first tenant must keep the IMEI, got %#v", got)
+	}
+
+	_ = useCase.Handle(ctx, event("tenant-b", "deleted", "dev-b"))
+	if got, _ := resolver.Resolve("359779090011111"); got == nil || got.TenantID != "tenant-a" {
+		t.Fatalf("another tenant must not clear the cache, got %#v", got)
+	}
+
+	_ = useCase.Handle(ctx, event("tenant-a", "decommissioned", "dev-a"))
+	if got, _ := resolver.Resolve("359779090011111"); got != nil {
+		t.Fatalf("owner decommission must clear the cache, got %#v", got)
+	}
+	_ = useCase.Handle(ctx, event("tenant-b", "registered", "dev-b"))
+	if got, _ := resolver.Resolve("359779090011111"); got == nil || got.TenantID != "tenant-b" {
+		t.Fatalf("expected tenant-b after release, got %#v", got)
+	}
+}
+
+func TestConsumeDeviceIdentity_RegistrationClearsQuarantine(t *testing.T) {
+	store := &fakeQuarantineStore{counts: map[string]int{"359779090011111": 3}}
+	clock := fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)}
+	useCase := NewConsumeDeviceIdentityUseCase(newFakeIMEIResolver(), logger.New("test")).WithQuarantine(NewQuarantine(store, clock))
+
+	err := useCase.Handle(context.Background(), eventbus.EventEnvelope{
+		TenantID: "tenant-a",
+		Data:     map[string]any{"imei": "359779090011111", "device_id": "dev-a", "action": "registered"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.counts) != 0 {
+		t.Fatalf("expected quarantine cleared, got %v", store.counts)
 	}
 }
 

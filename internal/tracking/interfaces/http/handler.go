@@ -2,7 +2,9 @@ package trackinghttp
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -50,6 +52,19 @@ type Handler struct {
 	wsBridge                    *trackingws.Bridge
 	gate                        *application.IngestGate
 	rate                        *application.MessageRate
+	quarantine                  *application.Quarantine
+	allowOpenIngest             bool
+}
+
+func (h *Handler) WithQuarantine(quarantine *application.Quarantine) *Handler {
+	h.quarantine = quarantine
+	return h
+}
+
+// WithOpenIngest lets ingest run with no GPS_API_KEY. Dev only.
+func (h *Handler) WithOpenIngest(allow bool) *Handler {
+	h.allowOpenIngest = allow
+	return h
 }
 
 func (h *Handler) WithGate(gate *application.IngestGate) *Handler {
@@ -96,20 +111,27 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 	routes.HandleFunc("/tracking/devices/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.devices"), h.deviceResource)
 	routes.HandleFunc("/tracking/ws", []httpx.Audience{httpx.Admin}, httpx.On("admin.devices"), h.wsBridge.ServeHTTP)
 	routes.HandleFunc("/tracking/internal/gate/blocked-devices", []httpx.Audience{httpx.Service}, httpx.None(), h.blockedDevices)
+	routes.HandleFunc("/tracking/internal/quarantine", []httpx.Audience{httpx.Service}, httpx.None(), h.quarantineList)
 	routes.HandleFunc("/tracking/internal/messages/hourly", []httpx.Audience{httpx.Service}, httpx.None(), h.messagesHourly)
 	routes.HandleFunc("/health", []httpx.Audience{httpx.Public}, httpx.None(), h.health)
 }
 
 func (h *Handler) withAPIKey(next http.Handler) http.Handler {
 	if h.gpsAPIKey == "" {
-		return next
+		if h.allowOpenIngest {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			httpx.WriteError(w, http.StatusServiceUnavailable, "ingest is not configured")
+		})
 	}
+	expected := []byte(h.gpsAPIKey)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("X-Api-Key")
 		if key == "" {
 			key = r.URL.Query().Get("api_key")
 		}
-		if key != h.gpsAPIKey {
+		if subtle.ConstantTimeCompare([]byte(key), expected) != 1 {
 			httpx.WriteError(w, http.StatusUnauthorized, "invalid or missing api key")
 			return
 		}
@@ -150,6 +172,10 @@ func (h *Handler) ingestWithAdapter(w http.ResponseWriter, r *http.Request, adap
 		return
 	}
 	result, err := h.ingestLocationUseCase.Execute(r.Context(), cmd)
+	if errors.Is(err, application.ErrIdentityUnavailable) {
+		httpx.WriteError(w, http.StatusServiceUnavailable, "device lookup unavailable, retry")
+		return
+	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
@@ -408,4 +434,22 @@ func (h *Handler) messagesHourly(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteOK(w, http.StatusOK, h.rate.Report(time.Now()))
+}
+
+func (h *Handler) quarantineList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	claims, ok := httpx.ClaimsFromRequest(r)
+	if !ok || claims == nil || claims.Service != "auth" {
+		httpx.NotFound(w, r)
+		return
+	}
+	devices, err := h.quarantine.List(r.Context())
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "quarantine list unavailable")
+		return
+	}
+	httpx.WriteOK(w, http.StatusOK, map[string]any{"devices": devices})
 }

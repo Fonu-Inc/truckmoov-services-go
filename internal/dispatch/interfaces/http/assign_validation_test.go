@@ -29,7 +29,7 @@ func (s stubFleetDirectory) VehicleExists(_ context.Context, _, vehicleID string
 
 type countingInstructionNotifier struct{ calls int }
 
-func (n *countingInstructionNotifier) NotifyJobInstruction(_ context.Context, _, _, _, _ string) error {
+func (n *countingInstructionNotifier) NotifyJobInstruction(_ context.Context, _ domain.Job, _ string) error {
 	n.calls++
 	return nil
 }

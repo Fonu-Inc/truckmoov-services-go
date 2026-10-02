@@ -289,6 +289,7 @@ ON CONFLICT (provider_message_id) DO UPDATE SET
     status = EXCLUDED.status,
     raw_payload = EXCLUDED.raw_payload,
     updated_at = EXCLUDED.updated_at
+WHERE whatsapp_conversation_messages.tenant_id = EXCLUDED.tenant_id
 RETURNING
     id,
     tenant_id,
@@ -334,7 +335,11 @@ RETURNING
 		message.CreatedAt.UTC(),
 		message.UpdatedAt.UTC(),
 	)
-	return scanConversationMessage(row)
+	saved, err := scanConversationMessage(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.WhatsAppConversationMessage{}, errors.New("provider message id already belongs to another tenant")
+	}
+	return saved, err
 }
 
 func (r *PostgresWhatsAppConversationRepository) ListMessagesByConversation(ctx context.Context, tenantID, conversationID string) ([]domain.WhatsAppConversationMessage, error) {
