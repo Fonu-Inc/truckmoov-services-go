@@ -115,7 +115,10 @@ func (u *ActiveJobsMapUseCase) Execute(ctx context.Context, tenantID string, sco
 		return ActiveJobsMap{}, fmt.Errorf("tenant id is required")
 	}
 
-	jobs := u.repository.FindByTenant(resolvedTenant)
+	jobs, err := u.repository.FindByTenant(resolvedTenant)
+	if err != nil {
+		return ActiveJobsMap{}, fmt.Errorf("list jobs: %w", err)
+	}
 
 	result := ActiveJobsMap{Jobs: []ActiveJobMapEntry{}}
 	for _, job := range jobs {

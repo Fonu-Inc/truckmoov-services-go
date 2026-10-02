@@ -68,7 +68,7 @@ func (r *fakeRelationshipRepository) Save(_ context.Context, rel domain.Aggregat
 }
 
 type fakeRatingRepository struct {
-	ratings map[string]domain.OperatorRating // keyed by job id
+	ratings map[string]domain.OperatorRating // keyed by operator tenant + job id
 }
 
 func newFakeRatingRepository() *fakeRatingRepository {
@@ -78,12 +78,12 @@ func newFakeRatingRepository() *fakeRatingRepository {
 func (r *fakeRatingRepository) EnsureSchema(context.Context) error { return nil }
 
 func (r *fakeRatingRepository) Create(_ context.Context, rating domain.OperatorRating) (domain.OperatorRating, error) {
-	r.ratings[rating.JobID] = rating
+	r.ratings[rating.OperatorTenantID+"/"+rating.JobID] = rating
 	return rating, nil
 }
 
-func (r *fakeRatingRepository) FindByJob(_ context.Context, jobID string) (domain.OperatorRating, bool, error) {
-	rating, ok := r.ratings[jobID]
+func (r *fakeRatingRepository) FindByJob(_ context.Context, operatorTenantID, jobID string) (domain.OperatorRating, bool, error) {
+	rating, ok := r.ratings[operatorTenantID+"/"+jobID]
 	return rating, ok, nil
 }
 

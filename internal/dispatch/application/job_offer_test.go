@@ -108,7 +108,7 @@ func (r *fakeOfferRepository) Accept(
 	if !found {
 		return AcceptedOffer{}, ErrJobNotFound
 	}
-	transferred, err := job.TransferToCarrier(targetTenantID, now, "t")
+	transferred, err := job.TransferToCarrier(targetTenantID, offer.OfferedRateNgn, now, "t")
 	if err != nil {
 		return AcceptedOffer{}, err
 	}
@@ -225,7 +225,8 @@ func TestAcceptJobOfferRefusesOverTheActiveJobCap(t *testing.T) {
 
 	activeJobs := func(_ context.Context, tenantID string) (int, error) {
 		count := 0
-		for _, job := range jobs.FindByTenant(tenantID) {
+		tenantJobs, _ := jobs.FindByTenant(tenantID)
+		for _, job := range tenantJobs {
 			if job.IsActive() {
 				count++
 			}
@@ -266,7 +267,8 @@ func TestAcceptJobOfferAllowsExactlyUpToTheCap(t *testing.T) {
 
 	activeJobs := func(_ context.Context, tenantID string) (int, error) {
 		count := 0
-		for _, job := range jobs.FindByTenant(tenantID) {
+		tenantJobs, _ := jobs.FindByTenant(tenantID)
+		for _, job := range tenantJobs {
 			if job.IsActive() {
 				count++
 			}

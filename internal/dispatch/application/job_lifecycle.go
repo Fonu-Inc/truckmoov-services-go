@@ -19,7 +19,7 @@ var (
 type JobRepository interface {
 	Save(job domain.Job) error
 	FindByTenantAndID(tenantID, id string) (domain.Job, bool)
-	FindByTenant(tenantID string) []domain.Job
+	FindByTenant(tenantID string) ([]domain.Job, error)
 	Delete(tenantID, id string) error
 }
 
@@ -59,8 +59,8 @@ type CreateJobCommand struct {
 type UpdateJobSchedulingCommand struct {
 	TenantID   string
 	JobID      string
-	Priority   string
-	TimeWindow domain.JobTimeWindow
+	Priority   *string
+	TimeWindow *domain.JobTimeWindow
 }
 
 type AssignJobCommand struct {
@@ -324,12 +324,16 @@ func (u *JobLifecycleUseCase) UpdateScheduling(_ context.Context, command Update
 		return domain.Job{}, err
 	}
 
-	priority, err := domain.NormalizePriority(command.Priority)
-	if err != nil {
-		return domain.Job{}, err
+	patch := domain.SchedulingPatch{TimeWindow: command.TimeWindow}
+	if command.Priority != nil {
+		priority, err := domain.NormalizePriority(*command.Priority)
+		if err != nil {
+			return domain.Job{}, err
+		}
+		patch.Priority = &priority
 	}
 
-	updatedJob, err := job.SetScheduling(priority, command.TimeWindow, u.clock.Now(), u.idGenerator.New())
+	updatedJob, err := job.SetScheduling(patch, u.clock.Now(), u.idGenerator.New())
 	if err != nil {
 		return domain.Job{}, err
 	}
@@ -676,7 +680,11 @@ func (u *JobLifecycleUseCase) GetJob(_ context.Context, tenantID, jobID string) 
 }
 
 func (u *JobLifecycleUseCase) ListJobs(_ context.Context, tenantID string, filter ListJobsFilter) ([]domain.Job, error) {
-	jobs := append([]domain.Job{}, u.repository.FindByTenant(u.resolveTenant(tenantID))...)
+	tenantJobs, err := u.repository.FindByTenant(u.resolveTenant(tenantID))
+	if err != nil {
+		return nil, fmt.Errorf("list jobs: %w", err)
+	}
+	jobs := append([]domain.Job{}, tenantJobs...)
 
 	statusMatcher, err := buildJobStatusMatcher(filter.Status)
 	if err != nil {

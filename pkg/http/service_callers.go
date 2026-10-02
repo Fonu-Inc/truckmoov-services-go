@@ -1,7 +1,6 @@
 package httpx
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
@@ -20,7 +19,7 @@ type ServiceRoles map[string]string
 func WithServiceCallers(next http.Handler, verifier *identity.ServiceTokenVerifier, roles ServiceRoles) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if claims, ok := serviceClaims(r, verifier, roles); ok {
-			r = r.WithContext(context.WithValue(r.Context(), authClaimsContextKey{}, claims))
+			r = r.WithContext(setClaims(r.Context(), claims))
 		}
 		next.ServeHTTP(w, r)
 	})

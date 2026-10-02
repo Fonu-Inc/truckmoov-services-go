@@ -1,6 +1,7 @@
 package application
 
 type DeviceSIM struct {
+	TenantID    string  `json:"-"`
 	DeviceID    string  `json:"device_id"`
 	ICCID       string  `json:"iccid"`
 	MSISDN      string  `json:"msisdn"`
@@ -13,7 +14,7 @@ type DeviceSIM struct {
 }
 
 type SIMResolver interface {
-	Resolve(deviceID string) (*DeviceSIM, error)
+	Resolve(tenantID, deviceID string) (*DeviceSIM, error)
 	Upsert(sim DeviceSIM) error
-	Evict(deviceID string) error
+	Evict(tenantID, deviceID string) error
 }

@@ -35,14 +35,14 @@ func (r *routingRepository) Delete(tenantID, id string) error {
 	return nil
 }
 
-func (r *routingRepository) FindByTenant(tenantID string) []domain.Job {
+func (r *routingRepository) FindByTenant(tenantID string) ([]domain.Job, error) {
 	var out []domain.Job
 	for _, j := range r.data {
 		if j.TenantID == tenantID {
 			out = append(out, j)
 		}
 	}
-	return out
+	return out, nil
 }
 
 func lat(v float64) *float64 { return &v }

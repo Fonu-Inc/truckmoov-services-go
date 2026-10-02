@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 )
 
 type fakeCampaignRepository struct {
+	mu         sync.Mutex
 	campaigns  map[string]domain.Campaign
 	recipients map[string][]domain.CampaignRecipient
 }
@@ -25,11 +27,15 @@ func newFakeCampaignRepository() *fakeCampaignRepository {
 func (r *fakeCampaignRepository) EnsureSchema(context.Context) error { return nil }
 
 func (r *fakeCampaignRepository) SaveCampaign(_ context.Context, campaign domain.Campaign) (domain.Campaign, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.campaigns[campaign.ID] = campaign
 	return campaign, nil
 }
 
 func (r *fakeCampaignRepository) FindCampaign(_ context.Context, tenantID, campaignID string) (domain.Campaign, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	campaign, ok := r.campaigns[campaignID]
 	if !ok || campaign.TenantID != tenantID {
 		return domain.Campaign{}, false, nil
@@ -38,6 +44,8 @@ func (r *fakeCampaignRepository) FindCampaign(_ context.Context, tenantID, campa
 }
 
 func (r *fakeCampaignRepository) ListCampaigns(_ context.Context, query ListCampaignsQuery) ([]domain.Campaign, int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	out := []domain.Campaign{}
 	for _, campaign := range r.campaigns {
 		if campaign.TenantID != query.TenantID {
@@ -52,6 +60,8 @@ func (r *fakeCampaignRepository) ListCampaigns(_ context.Context, query ListCamp
 }
 
 func (r *fakeCampaignRepository) SaveRecipients(_ context.Context, recipients []domain.CampaignRecipient) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, recipient := range recipients {
 		r.recipients[recipient.CampaignID] = append(r.recipients[recipient.CampaignID], recipient)
 	}
@@ -59,6 +69,8 @@ func (r *fakeCampaignRepository) SaveRecipients(_ context.Context, recipients []
 }
 
 func (r *fakeCampaignRepository) SaveRecipient(_ context.Context, recipient domain.CampaignRecipient) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	list := r.recipients[recipient.CampaignID]
 	for index := range list {
 		if list[index].ID == recipient.ID {
@@ -71,6 +83,8 @@ func (r *fakeCampaignRepository) SaveRecipient(_ context.Context, recipient doma
 }
 
 func (r *fakeCampaignRepository) ListRecipients(_ context.Context, tenantID, campaignID string) ([]domain.CampaignRecipient, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	out := []domain.CampaignRecipient{}
 	for _, recipient := range r.recipients[campaignID] {
 		if recipient.TenantID == tenantID {
@@ -81,6 +95,8 @@ func (r *fakeCampaignRepository) ListRecipients(_ context.Context, tenantID, cam
 }
 
 func (r *fakeCampaignRepository) FindRecipientByProviderMessageID(_ context.Context, id string) (domain.CampaignRecipient, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, list := range r.recipients {
 		for _, recipient := range list {
 			if recipient.ProviderMessageID != "" && recipient.ProviderMessageID == id {
@@ -92,6 +108,8 @@ func (r *fakeCampaignRepository) FindRecipientByProviderMessageID(_ context.Cont
 }
 
 func (r *fakeCampaignRepository) SummarizeAll(_ context.Context, tenantID string) (domain.CampaignProgress, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	all := []domain.CampaignRecipient{}
 	for _, list := range r.recipients {
 		for _, recipient := range list {
@@ -101,6 +119,77 @@ func (r *fakeCampaignRepository) SummarizeAll(_ context.Context, tenantID string
 		}
 	}
 	return domain.SummarizeRecipients(all), nil
+}
+
+func (r *fakeCampaignRepository) stale(campaign domain.Campaign, staleBefore time.Time) bool {
+	if !campaign.UpdatedAt.Before(staleBefore) {
+		return false
+	}
+	open := false
+	for _, recipient := range r.recipients[campaign.ID] {
+		if !recipient.UpdatedAt.Before(staleBefore) {
+			return false
+		}
+		open = open || recipient.State == domain.RecipientStateQueued || recipient.State == domain.RecipientStateSending
+	}
+	return open
+}
+
+func (r *fakeCampaignRepository) ClaimCampaign(_ context.Context, tenantID, id string, at, staleBefore time.Time) (domain.Campaign, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	campaign, ok := r.campaigns[id]
+	claimable := campaign.Status == domain.CampaignStatusDraft || campaign.Status == domain.CampaignStatusScheduled ||
+		(campaign.Status == domain.CampaignStatusSending && r.stale(campaign, staleBefore))
+	if !ok || campaign.TenantID != tenantID || !claimable {
+		return domain.Campaign{}, false, nil
+	}
+	campaign.Status = domain.CampaignStatusSending
+	campaign.UpdatedAt = at
+	r.campaigns[id] = campaign
+	return campaign, true, nil
+}
+
+func (r *fakeCampaignRepository) ListDueCampaigns(_ context.Context, now, staleBefore time.Time, _ int) ([]domain.Campaign, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := []domain.Campaign{}
+	for _, campaign := range r.campaigns {
+		due := campaign.Status == domain.CampaignStatusScheduled && campaign.ScheduledFor != nil && !campaign.ScheduledFor.After(now)
+		if due || (campaign.Status == domain.CampaignStatusSending && r.stale(campaign, staleBefore)) {
+			out = append(out, campaign)
+		}
+	}
+	return out, nil
+}
+
+func (r *fakeCampaignRepository) ClaimRecipient(_ context.Context, tenantID, recipientID, from string, at time.Time) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, list := range r.recipients {
+		for index := range list {
+			if list[index].ID == recipientID && list[index].TenantID == tenantID && list[index].State == from {
+				list[index].State = domain.RecipientStateSending
+				list[index].UpdatedAt = at
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func (r *fakeCampaignRepository) FailInterruptedRecipients(_ context.Context, tenantID, campaignID string, staleBefore, at time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	list := r.recipients[campaignID]
+	for index := range list {
+		if list[index].TenantID == tenantID && list[index].State == domain.RecipientStateSending && list[index].UpdatedAt.Before(staleBefore) {
+			list[index].State = domain.RecipientStateFailed
+			list[index].FailureReason = "interrupted before delivery was confirmed"
+			list[index].UpdatedAt = at
+		}
+	}
+	return nil
 }
 
 type fakeSuppression struct {
@@ -126,11 +215,14 @@ func (s *fakeSuppression) Release(_ context.Context, tenantID, destination strin
 }
 
 type campaignProvider struct {
+	mu   sync.Mutex
 	sent []string
 	fail map[string]bool
 }
 
 func (p *campaignProvider) Send(_ context.Context, _, _, recipient, _ string) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.fail[recipient] {
 		return "", errors.New("provider rejected the number")
 	}
@@ -139,38 +231,52 @@ func (p *campaignProvider) Send(_ context.Context, _, _, recipient, _ string) (s
 }
 
 type campaignTemplateProvider struct {
+	mu     sync.Mutex
 	sent   []string
 	nextID int
 }
 
 func (p *campaignTemplateProvider) SendTemplate(_ context.Context, request domain.WhatsAppTemplateMessageRequest) (domain.WhatsAppSendResult, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.nextID++
 	p.sent = append(p.sent, request.Recipient)
 	return domain.WhatsAppSendResult{Status: "accepted", MessageID: "wamid." + string(rune('a'+p.nextID))}, nil
 }
 
 type campaignCharger struct {
+	mu      sync.Mutex
 	charges []UsageCharge
 }
 
 func (c *campaignCharger) Charge(_ context.Context, charge UsageCharge) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.charges = append(c.charges, charge)
 	return nil
 }
 
-type campaignRefusingCharger struct{ calls int }
+type campaignRefusingCharger struct {
+	mu    sync.Mutex
+	calls int
+}
 
 func (c *campaignRefusingCharger) Charge(context.Context, UsageCharge) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.calls++
 	return errors.New("wallet balance does not cover this")
 }
 
 type campaignLimitedCharger struct {
+	mu      sync.Mutex
 	allowed int
 	charges []UsageCharge
 }
 
 func (c *campaignLimitedCharger) Charge(_ context.Context, charge UsageCharge) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if len(c.charges) >= c.allowed {
 		return ErrInsufficientFunds
 	}
@@ -564,5 +670,181 @@ func TestRetryFailedReusesTheStableChargeReference(t *testing.T) {
 	}
 	if first["campaign:"+campaign.ID+":sms:cmr-2"] != 1 {
 		t.Fatalf("expected a per-recipient reference, got %v", first)
+	}
+}
+
+func TestCampaignSecondSendWhileRunningIsRefusedAndSendsNothing(t *testing.T) {
+	kit := newCampaignKit()
+	campaign := smsCampaign(kit, t, "+2348000000001", "+2348000000002")
+	now := time.Unix(1_700_000_000, 0).UTC()
+	if _, won, _ := kit.repo.ClaimCampaign(context.Background(), "tenant-a", campaign.ID, now, now.Add(-campaignStaleAfter)); !won {
+		t.Fatal("first claim must win")
+	}
+
+	_, err := kit.send.Execute(context.Background(), SendCampaignCommand{TenantID: "tenant-a", CampaignID: campaign.ID})
+
+	if !errors.Is(err, ErrCampaignAlreadyRunning) {
+		t.Fatalf("expected already running, got %v", err)
+	}
+	if len(kit.provider.sent) != 0 || len(kit.charger.charges) != 0 {
+		t.Fatalf("a refused run must not send or charge: sent=%v charges=%d", kit.provider.sent, len(kit.charger.charges))
+	}
+}
+
+func TestCampaignSendTwiceMessagesEachRecipientOnce(t *testing.T) {
+	kit := newCampaignKit()
+	campaign := smsCampaign(kit, t, "+2348000000001", "+2348000000002")
+	command := SendCampaignCommand{TenantID: "tenant-a", CampaignID: campaign.ID}
+
+	if _, err := kit.send.Execute(context.Background(), command); err != nil {
+		t.Fatalf("first send: %v", err)
+	}
+	second, err := kit.send.Execute(context.Background(), command)
+
+	if err != nil || second.Attempted != 0 {
+		t.Fatalf("second send: %+v err=%v", second, err)
+	}
+	if len(kit.provider.sent) != 2 || len(kit.charger.charges) != 2 {
+		t.Fatalf("each recipient once: sent=%v charges=%d", kit.provider.sent, len(kit.charger.charges))
+	}
+}
+
+func TestCampaignRecipientIsClaimedOnce(t *testing.T) {
+	kit := newCampaignKit()
+	campaign := smsCampaign(kit, t, "+2348000000001")
+	recipients, _ := kit.repo.ListRecipients(context.Background(), "tenant-a", campaign.ID)
+	now := time.Unix(1_700_000_000, 0).UTC()
+
+	first, _ := kit.repo.ClaimRecipient(context.Background(), "tenant-a", recipients[0].ID, domain.RecipientStateQueued, now)
+	second, _ := kit.repo.ClaimRecipient(context.Background(), "tenant-a", recipients[0].ID, domain.RecipientStateQueued, now)
+	other, _ := kit.repo.ClaimRecipient(context.Background(), "tenant-b", recipients[0].ID, domain.RecipientStateQueued, now)
+
+	if !first || second || other {
+		t.Fatalf("claims: first=%v second=%v other tenant=%v", first, second, other)
+	}
+}
+
+func TestCampaignWithManyRecipientsChargesAndSendsEachOnce(t *testing.T) {
+	kit := newCampaignKit()
+	numbers := make([]string, 0, 12)
+	for index := 0; index < 12; index++ {
+		numbers = append(numbers, "+23480000001"+string(rune('0'+index/10))+string(rune('0'+index%10)))
+	}
+	campaign := smsCampaign(kit, t, numbers...)
+
+	result, err := kit.send.Execute(context.Background(), SendCampaignCommand{TenantID: "tenant-a", CampaignID: campaign.ID})
+
+	if err != nil || result.Attempted != 12 || len(kit.provider.sent) != 12 {
+		t.Fatalf("attempted=%d sent=%d err=%v", result.Attempted, len(kit.provider.sent), err)
+	}
+	references := map[string]bool{}
+	for _, charge := range kit.charger.charges {
+		references[charge.Reference] = true
+	}
+	if len(references) != 12 {
+		t.Fatalf("expected a distinct reference per recipient, got %d", len(references))
+	}
+}
+
+func TestCampaignRefusedWalletPutsAnUnstartedCampaignBack(t *testing.T) {
+	kit := newCampaignKit()
+	kit.send = NewSendCampaignUseCase(kit.repo, kit.suppression, kit.provider, kit.templates, "en", &campaignRefusingCharger{}, campaignClock{now: time.Unix(1_700_000_000, 0).UTC()})
+	campaign := smsCampaign(kit, t, "+2348000000001")
+
+	_, err := kit.send.Execute(context.Background(), SendCampaignCommand{TenantID: "tenant-a", CampaignID: campaign.ID})
+
+	if err == nil {
+		t.Fatal("expected the refusal")
+	}
+	if status := kit.repo.campaigns[campaign.ID].Status; status != domain.CampaignStatusDraft {
+		t.Fatalf("a refused campaign goes back to draft so it can be sent after a top-up, got %s", status)
+	}
+	recipients, _ := kit.repo.ListRecipients(context.Background(), "tenant-a", campaign.ID)
+	if recipients[0].State != domain.RecipientStateQueued {
+		t.Fatalf("recipient must stay queued, got %s", recipients[0].State)
+	}
+}
+
+func TestCampaignRunnerStartsDueCampaignsOfEveryTenantAndChargesThem(t *testing.T) {
+	kit := newCampaignKit()
+	clock := campaignClock{now: time.Unix(1_700_000_000, 0).UTC()}
+	runner := NewCampaignRunner(kit.repo, kit.send, clock)
+	dueAt := clock.now.Add(-time.Minute)
+	mine := smsCampaign(kit, t, "+2348000000001")
+	other, err := kit.create.Execute(context.Background(), CreateCampaignCommand{
+		TenantID: "tenant-b", Name: "B", Channels: []string{"sms"}, Bodies: map[string]string{"sms": "hi"},
+		Recipients: []CampaignRecipientInput{{DriverID: "d", Channel: "sms", Destination: "+2348000000002"}},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	future := clock.now.Add(time.Hour)
+	later := smsCampaign(kit, t, "+2348000000003")
+	for id, at := range map[string]*time.Time{mine.ID: &dueAt, other.ID: &dueAt, later.ID: &future} {
+		campaign := kit.repo.campaigns[id]
+		campaign.Status, campaign.ScheduledFor = domain.CampaignStatusScheduled, at
+		kit.repo.campaigns[id] = campaign
+	}
+
+	started, err := runner.RunDue(context.Background())
+
+	if err != nil || started != 2 || len(kit.provider.sent) != 2 {
+		t.Fatalf("started=%d sent=%v err=%v", started, kit.provider.sent, err)
+	}
+	tenants := map[string]bool{}
+	for _, charge := range kit.charger.charges {
+		tenants[charge.TenantID] = true
+	}
+	if !tenants["tenant-a"] || !tenants["tenant-b"] {
+		t.Fatalf("each tenant pays for its own campaign: %+v", kit.charger.charges)
+	}
+	if started, _ := runner.RunDue(context.Background()); started != 0 {
+		t.Fatalf("a campaign that ran must not run again, started %d", started)
+	}
+}
+
+func TestCampaignRunnerRecoversACrashedRunWithoutResendingInterruptedRecipients(t *testing.T) {
+	kit := newCampaignKit()
+	clock := campaignClock{now: time.Unix(1_700_000_000, 0).UTC()}
+	runner := NewCampaignRunner(kit.repo, kit.send, clock)
+	campaign := smsCampaign(kit, t, "+2348000000001", "+2348000000002", "+2348000000003")
+	old := clock.now.Add(-30 * time.Minute)
+
+	stored := kit.repo.campaigns[campaign.ID]
+	stored.Status, stored.UpdatedAt = domain.CampaignStatusSending, old
+	kit.repo.campaigns[campaign.ID] = stored
+	list := kit.repo.recipients[campaign.ID]
+	list[0].State = domain.RecipientStateSent
+	list[1].State = domain.RecipientStateSending
+	for index := range list {
+		list[index].UpdatedAt = old
+	}
+
+	started, err := runner.RunDue(context.Background())
+
+	if err != nil || started != 1 {
+		t.Fatalf("started=%d err=%v", started, err)
+	}
+	if len(kit.provider.sent) != 1 || kit.provider.sent[0] != "+2348000000003" {
+		t.Fatalf("only the still-queued recipient is sent: %v", kit.provider.sent)
+	}
+	recipients, _ := kit.repo.ListRecipients(context.Background(), "tenant-a", campaign.ID)
+	if recipients[1].State != domain.RecipientStateFailed {
+		t.Fatalf("an interrupted send is failed, not repeated: %s", recipients[1].State)
+	}
+}
+
+func TestCampaignRunnerLeavesALiveRunAlone(t *testing.T) {
+	kit := newCampaignKit()
+	clock := campaignClock{now: time.Unix(1_700_000_000, 0).UTC()}
+	campaign := smsCampaign(kit, t, "+2348000000001")
+	stored := kit.repo.campaigns[campaign.ID]
+	stored.Status, stored.UpdatedAt = domain.CampaignStatusSending, clock.now.Add(-time.Minute)
+	kit.repo.campaigns[campaign.ID] = stored
+
+	started, _ := NewCampaignRunner(kit.repo, kit.send, clock).RunDue(context.Background())
+
+	if started != 0 || len(kit.provider.sent) != 0 {
+		t.Fatalf("a run touched a minute ago is alive: started=%d sent=%v", started, kit.provider.sent)
 	}
 }

@@ -44,7 +44,7 @@ type RateOperatorCommand struct {
 }
 
 func (u *RateOperatorUseCase) Execute(ctx context.Context, command RateOperatorCommand) (domain.OperatorRating, error) {
-	if _, found, err := u.ratings.FindByJob(ctx, command.JobID); err != nil {
+	if _, found, err := u.ratings.FindByJob(ctx, command.OperatorTenantID, command.JobID); err != nil {
 		return domain.OperatorRating{}, err
 	} else if found {
 		return domain.OperatorRating{}, ErrRatingAlreadyExists

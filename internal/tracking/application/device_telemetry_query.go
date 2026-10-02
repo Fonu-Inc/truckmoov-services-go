@@ -77,7 +77,7 @@ func NewDeviceTelemetryQueryUseCase(store TelemetryStore, clock Clock, statusTim
 func (u *DeviceTelemetryQueryUseCase) Overview(ctx context.Context, tenantID, deviceID string) (DeviceOverview, error) {
 	view := DeviceOverview{DeviceID: deviceID, Health: string(DeviceHealthUnknown)}
 	if u.simResolver != nil {
-		if sim, simErr := u.simResolver.Resolve(deviceID); simErr == nil && sim != nil {
+		if sim, simErr := u.simResolver.Resolve(tenantID, deviceID); simErr == nil && sim != nil {
 			view.SIM = sim
 		}
 	}

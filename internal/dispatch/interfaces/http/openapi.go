@@ -1060,10 +1060,11 @@ func dispatchOpenAPISpec() map[string]any {
 					},
 				},
 				"UpdateJobSchedulingRequest": map[string]any{
-					"type": "object",
+					"type":        "object",
+					"description": "Partial update. Send at least one field. An omitted field keeps its value; time_window: null clears the window.",
 					"properties": map[string]any{
 						"priority":    map[string]any{"type": "string", "enum": []string{"low", "normal", "high", "urgent"}},
-						"time_window": map[string]any{"$ref": "#/components/schemas/JobTimeWindow"},
+						"time_window": map[string]any{"allOf": []any{map[string]any{"$ref": "#/components/schemas/JobTimeWindow"}}, "nullable": true},
 					},
 				},
 				"AssignJobRequest": map[string]any{

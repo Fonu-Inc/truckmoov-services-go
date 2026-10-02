@@ -280,17 +280,31 @@ func NormalizeStatus(value string) (JobStatus, error) {
 	return status, nil
 }
 
-func (j Job) SetScheduling(priority JobPriority, timeWindow JobTimeWindow, now time.Time, timelineID string) (Job, error) {
+type SchedulingPatch struct {
+	Priority   *JobPriority
+	TimeWindow *JobTimeWindow
+}
+
+func (j Job) SetScheduling(patch SchedulingPatch, now time.Time, timelineID string) (Job, error) {
 	if j.Status == StatusCancelled || j.Status == StatusDelivered {
 		return Job{}, errors.New("cannot update scheduling for completed/cancelled job")
 	}
-	if err := validateTimeWindow(timeWindow); err != nil {
-		return Job{}, err
+	if patch.Priority == nil && patch.TimeWindow == nil {
+		return Job{}, errors.New("priority or time_window is required")
+	}
+	if patch.TimeWindow != nil {
+		if err := validateTimeWindow(*patch.TimeWindow); err != nil {
+			return Job{}, err
+		}
 	}
 
 	updated := j
-	updated.Priority = priority
-	updated.TimeWindow = timeWindow
+	if patch.Priority != nil {
+		updated.Priority = *patch.Priority
+	}
+	if patch.TimeWindow != nil {
+		updated.TimeWindow = *patch.TimeWindow
+	}
 	updated.UpdatedAt = now.UTC()
 	updated.appendTimeline(JobTimelineEntry{
 		ID:         strings.TrimSpace(timelineID),
@@ -298,7 +312,7 @@ func (j Job) SetScheduling(priority JobPriority, timeWindow JobTimeWindow, now t
 		Summary:    "Priority/time window updated",
 		OccurredAt: now.UTC(),
 		Metadata: map[string]string{
-			"priority": string(priority),
+			"priority": string(updated.Priority),
 		},
 	})
 	return updated, nil
@@ -880,7 +894,7 @@ func (j Job) AddAttachment(attachment JobAttachment, now time.Time, timelineID s
 // driver selected before the carrier has even seen the job. The previous
 // owner's driver and vehicle ids mean nothing in the carrier's fleet, so they
 // are cleared and the job goes back to created.
-func (j Job) TransferToCarrier(carrierTenantID string, now time.Time, timelineID string) (Job, error) {
+func (j Job) TransferToCarrier(carrierTenantID string, carrierRateNgn float64, now time.Time, timelineID string) (Job, error) {
 	carrierTenantID = strings.TrimSpace(carrierTenantID)
 	if carrierTenantID == "" {
 		return Job{}, errors.New("carrier tenant id is required")
@@ -893,9 +907,9 @@ func (j Job) TransferToCarrier(carrierTenantID string, now time.Time, timelineID
 	}
 
 	updated := j
-	previousTenant := updated.TenantID
 	updated.TenantID = carrierTenantID
 	updated.clearAssignment()
+	updated.redactForCarrier(carrierRateNgn)
 	updated.UpdatedAt = now.UTC()
 	updated.appendTimeline(JobTimelineEntry{
 		ID:         strings.TrimSpace(timelineID),
@@ -903,11 +917,22 @@ func (j Job) TransferToCarrier(carrierTenantID string, now time.Time, timelineID
 		Summary:    "Job accepted via offer and handed to the carrier",
 		OccurredAt: now.UTC(),
 		Metadata: map[string]string{
-			"previous_tenant_id": previousTenant,
-			"carrier_tenant_id":  carrierTenantID,
+			"carrier_tenant_id": carrierTenantID,
 		},
 	})
 	return updated, nil
+}
+
+// redactForCarrier drops everything the offering tenant keeps internal: its
+// price, notes, history, proofs and author. The carrier is paid its offered rate.
+func (j *Job) redactForCarrier(carrierRateNgn float64) {
+	j.AmountNgn = carrierRateNgn
+	j.Notes = []JobNote{}
+	j.Timeline = []JobTimelineEntry{}
+	j.PODAttachments = []JobPODAttachment{}
+	j.Attachments = []JobAttachment{}
+	j.Punctuality = nil
+	j.CreatedBy = nil
 }
 
 // IsActive reports whether the job still needs work done on it. Delivered and

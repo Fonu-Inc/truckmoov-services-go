@@ -182,15 +182,74 @@ func (r *PostgresCampaignRepository) ListCampaigns(
 	return campaigns, total, rows.Err()
 }
 
-func (r *PostgresCampaignRepository) ClaimScheduledCampaign(ctx context.Context, tenantID, campaignID string, at time.Time) (bool, error) {
-	result, err := r.db.ExecContext(ctx, `
+// staleSendingClause matches a sending campaign whose run died: nothing on the
+// campaign or its recipients has been touched since the cutoff, and some
+// recipient is still queued or stuck mid-send. A live run keeps touching its
+// recipients, so it never matches.
+func staleSendingClause(cutoff string) string {
+	return `(campaigns.status = 'sending' AND campaigns.updated_at < ` + cutoff + `
+        AND EXISTS (SELECT 1 FROM campaign_recipients r
+            WHERE r.tenant_id = campaigns.tenant_id AND r.campaign_id = campaigns.id AND r.state IN ('queued','sending'))
+        AND NOT EXISTS (SELECT 1 FROM campaign_recipients r
+            WHERE r.tenant_id = campaigns.tenant_id AND r.campaign_id = campaigns.id AND r.updated_at >= ` + cutoff + `))`
+}
+
+func (r *PostgresCampaignRepository) ClaimCampaign(ctx context.Context, tenantID, campaignID string, at, staleBefore time.Time) (domain.Campaign, bool, error) {
+	row := r.db.QueryRowContext(ctx, `
         UPDATE campaigns SET status = 'sending', updated_at = $3
-        WHERE tenant_id = $1 AND id = $2 AND status = 'scheduled'`, tenantID, campaignID, at.UTC())
+        WHERE tenant_id = $1 AND id = $2
+          AND (status IN ('draft','scheduled') OR `+staleSendingClause("$4")+`)
+        RETURNING `+campaignColumns, tenantID, campaignID, at.UTC(), staleBefore.UTC())
+	campaign, err := scanCampaign(row)
+	if err == sql.ErrNoRows {
+		return domain.Campaign{}, false, nil
+	}
+	if err != nil {
+		return domain.Campaign{}, false, err
+	}
+	return campaign, true, nil
+}
+
+func (r *PostgresCampaignRepository) ListDueCampaigns(ctx context.Context, now, staleBefore time.Time, limit int) ([]domain.Campaign, error) {
+	rows, err := r.db.QueryContext(ctx, `
+        SELECT `+campaignColumns+` FROM campaigns
+        WHERE (status = 'scheduled' AND scheduled_for IS NOT NULL AND scheduled_for <= $1)
+           OR `+staleSendingClause("$2")+`
+        ORDER BY created_at ASC LIMIT $3`, now.UTC(), staleBefore.UTC(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	campaigns := []domain.Campaign{}
+	for rows.Next() {
+		campaign, err := scanCampaign(rows)
+		if err != nil {
+			return nil, err
+		}
+		campaigns = append(campaigns, campaign)
+	}
+	return campaigns, rows.Err()
+}
+
+func (r *PostgresCampaignRepository) ClaimRecipient(ctx context.Context, tenantID, recipientID, from string, at time.Time) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
+        UPDATE campaign_recipients SET state = 'sending', updated_at = $4
+        WHERE tenant_id = $1 AND id = $2 AND state = $3`, tenantID, recipientID, from, at.UTC())
 	if err != nil {
 		return false, err
 	}
 	claimed, err := result.RowsAffected()
 	return claimed > 0, err
+}
+
+func (r *PostgresCampaignRepository) FailInterruptedRecipients(ctx context.Context, tenantID, campaignID string, staleBefore, at time.Time) error {
+	_, err := r.db.ExecContext(ctx, `
+        UPDATE campaign_recipients
+        SET state = 'failed', failure_reason = 'interrupted before delivery was confirmed', updated_at = $4
+        WHERE tenant_id = $1 AND campaign_id = $2 AND state = 'sending' AND updated_at < $3`,
+		tenantID, campaignID, staleBefore.UTC(), at.UTC())
+	return err
 }
 
 func pageBounds(page, limit int) (int, int) {

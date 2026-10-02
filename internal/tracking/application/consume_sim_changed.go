@@ -20,19 +20,25 @@ func NewConsumeSIMChangedUseCase(resolver SIMResolver, log *slog.Logger) *Consum
 }
 
 func (u *ConsumeSIMChangedUseCase) Handle(_ context.Context, envelope eventbus.EventEnvelope) error {
+	tenantID := strings.TrimSpace(envelope.TenantID)
+	if tenantID == "" {
+		u.log.Warn("sim_changed_missing_tenant")
+		return nil
+	}
 	deviceID, _ := envelope.Data["device_id"].(string)
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
-		u.log.Warn("sim_changed_missing_device_id", "tenant", envelope.TenantID)
+		u.log.Warn("sim_changed_missing_device_id", "tenant", tenantID)
 		return nil
 	}
 
 	action, _ := envelope.Data["action"].(string)
 	switch action {
 	case "unassigned", "deleted":
-		return u.resolver.Evict(deviceID)
+		return u.resolver.Evict(tenantID, deviceID)
 	default:
 		return u.resolver.Upsert(DeviceSIM{
+			TenantID:    tenantID,
 			DeviceID:    deviceID,
 			ICCID:       eventString(envelope.Data, "iccid"),
 			MSISDN:      eventString(envelope.Data, "msisdn"),

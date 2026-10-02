@@ -93,7 +93,11 @@ func (u *SummaryFiguresUseCase) Execute(ctx context.Context, aggregatorTenantID 
 		}
 
 		if u.jobs != nil {
-			for _, job := range u.jobs.FindByTenant(relationship.OperatorTenantID) {
+			operatorJobs, err := u.jobs.FindByTenant(relationship.OperatorTenantID)
+			if err != nil {
+				return NetworkSummary{}, fmt.Errorf("list operator jobs: %w", err)
+			}
+			for _, job := range operatorJobs {
 				if job.IsActive() {
 					summary.ActiveJobs++
 				}
@@ -158,7 +162,10 @@ func NewSubDispatchQueueUseCase(offers JobOfferRepository, jobs JobRepository) *
 }
 
 func (u *SubDispatchQueueUseCase) Execute(ctx context.Context, aggregatorTenantID string) ([]SubDispatchQueueEntry, error) {
-	ownJobs := u.jobs.FindByTenant(aggregatorTenantID)
+	ownJobs, err := u.jobs.FindByTenant(aggregatorTenantID)
+	if err != nil {
+		return nil, fmt.Errorf("list own jobs: %w", err)
+	}
 	allOffers, err := listAllOfferingOffers(ctx, u.offers, aggregatorTenantID)
 	if err != nil {
 		return nil, fmt.Errorf("list sub-dispatch offers: %w", err)

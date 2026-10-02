@@ -20,7 +20,7 @@ func TestHandler_SuspendedMessagesAreDroppedOnEveryHTTPPath(t *testing.T) {
 		path string
 		body string
 	}{
-		{"generic", "/tracking/ingest", `{"tenant_id":"t-bad","vehicle_id":"v","device_id":"d","lat":6.5,"lng":3.4}`},
+		{"generic", "/tracking/ingest", `{"imei":"` + imei + `","lat":6.5,"lng":3.4}`},
 		{"teltonika", "/tracking/ingest/vendor/teltonika", `{"imei":"` + imei + `","timestamp":1700000000,"lat":6.5,"lng":3.4,"speed":40,"angle":90}`},
 		{"traccar", "/tracking/ingest/vendor/traccar", `{"position":{"id":9,"protocol":"osmand","latitude":6.5,"longitude":3.4,"speed":10,"course":90,"fixTime":"2026-02-02T11:00:00Z"},"device":{"uniqueId":"` + imei + `"}}`},
 	}

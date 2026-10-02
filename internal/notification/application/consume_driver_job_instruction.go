@@ -58,6 +58,7 @@ type ConsumeDriverJobInstructionUseCase struct {
 	text          instructionTextSender
 	template      instructionTemplateSender
 	conversations instructionConversationFinder
+	recorder      instructionConversationRecorder
 	accounts      instructionAccountFinder
 	drivers       DriverLookup
 	charger       UsageCharger
@@ -73,6 +74,7 @@ type DriverJobInstructionDeps struct {
 	Text          instructionTextSender
 	Template      instructionTemplateSender
 	Conversations instructionConversationFinder
+	Recorder      instructionConversationRecorder
 	Accounts      instructionAccountFinder
 	Drivers       DriverLookup
 	Charger       UsageCharger
@@ -89,6 +91,7 @@ func NewConsumeDriverJobInstructionUseCase(deps DriverJobInstructionDeps) *Consu
 		text:          deps.Text,
 		template:      deps.Template,
 		conversations: deps.Conversations,
+		recorder:      deps.Recorder,
 		accounts:      deps.Accounts,
 		drivers:       deps.Drivers,
 		charger:       deps.Charger,
@@ -208,7 +211,7 @@ func (u *ConsumeDriverJobInstructionUseCase) sendText(ctx context.Context, instr
 	if instruction.message == "" {
 		return errors.New("the instruction has no message")
 	}
-	_, err := u.text.Execute(ctx, SendMessageCommand{
+	message, err := u.text.Execute(ctx, SendMessageCommand{
 		TenantID:         instruction.tenantID,
 		Channel:          "whatsapp",
 		Recipient:        instruction.phone,
@@ -216,7 +219,35 @@ func (u *ConsumeDriverJobInstructionUseCase) sendText(ctx context.Context, instr
 		NotificationType: domain.NotificationTypeJobAssignment,
 		MessageID:        stableMessageID(instruction.eventID),
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	u.recordText(ctx, instruction, message)
+	return nil
+}
+
+// recordText keeps the instruction in the conversation as a job_instruction so
+// a reply or a failed receipt resolves to this job. The message already left,
+// so a storage failure is logged rather than failing the send.
+func (u *ConsumeDriverJobInstructionUseCase) recordText(ctx context.Context, instruction driverInstruction, message domain.OutboxMessage) {
+	err := u.recorder.RecordJobInstructionText(ctx, JobInstructionTextRecord{
+		TenantID:          instruction.tenantID,
+		JobID:             instruction.jobID,
+		DriverID:          instruction.driverID,
+		DriverName:        u.driverName(ctx, instruction),
+		Recipient:         instruction.phone,
+		Text:              instruction.message,
+		ProviderMessageID: message.ProviderMessageID,
+		Status:            message.Status,
+		JobReference:      instruction.reference,
+		PickupLocation:    instruction.pickup,
+		DeliveryLocation:  instruction.delivery,
+		CargoDescription:  instruction.cargo,
+		Priority:          instruction.priority,
+	})
+	if err != nil {
+		u.log.Error("driver_instruction_record_failed", "tenant", instruction.tenantID, "job", instruction.jobID, "error", err)
+	}
 }
 
 func (u *ConsumeDriverJobInstructionUseCase) sendTemplate(ctx context.Context, instruction driverInstruction) error {

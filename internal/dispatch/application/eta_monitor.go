@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"log"
 	"sync"
 
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
@@ -63,7 +64,12 @@ func (u *EtaMonitorUseCase) Check(ctx context.Context) {
 func (u *EtaMonitorUseCase) jobsToCheck(ctx context.Context, tenantID string) []domain.Job {
 	source, ok := u.repository.(InProgressJobSource)
 	if !ok {
-		return u.repository.FindByTenant(tenantID)
+		jobs, err := u.repository.FindByTenant(tenantID)
+		if err != nil {
+			log.Printf("eta monitor: list jobs tenant=%s: %v", tenantID, err)
+			return nil
+		}
+		return jobs
 	}
 	jobs, err := source.FindInProgressByTenant(ctx, tenantID)
 	if err != nil {

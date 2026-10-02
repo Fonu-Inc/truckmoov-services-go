@@ -120,7 +120,7 @@ func TestJobTransferToCarrierMovesTenantOwnershipAndKeepsATimelineRecord(t *test
 	job := validJobFixture(t)
 	now := job.UpdatedAt.Add(time.Hour)
 
-	transferred, err := job.TransferToCarrier("tenant-carrier", now, "timeline-1")
+	transferred, err := job.TransferToCarrier("tenant-carrier", 0, now, "timeline-1")
 	if err != nil {
 		t.Fatalf("transfer: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestJobTransferToCarrierRefusesACancelledJob(t *testing.T) {
 		t.Fatalf("cancel: %v", err)
 	}
 
-	if _, err := cancelled.TransferToCarrier("tenant-carrier", now, "t2"); err == nil {
+	if _, err := cancelled.TransferToCarrier("tenant-carrier", 0, now, "t2"); err == nil {
 		t.Fatal("expected transferring a cancelled job to be refused")
 	}
 }
@@ -179,7 +179,7 @@ func TestJobTransferToCarrierClearsTheOldDriverAndVehicle(t *testing.T) {
 		t.Fatalf("assign: %v", err)
 	}
 
-	transferred, err := assigned.TransferToCarrier("tenant-carrier", now.Add(time.Hour), "t2")
+	transferred, err := assigned.TransferToCarrier("tenant-carrier", 0, now.Add(time.Hour), "t2")
 	if err != nil {
 		t.Fatalf("transfer: %v", err)
 	}
@@ -191,5 +191,63 @@ func TestJobTransferToCarrierClearsTheOldDriverAndVehicle(t *testing.T) {
 	}
 	if assigned.AssignedDriverID != "driver-1" {
 		t.Fatal("expected the original job to be unchanged")
+	}
+}
+
+func TestJobTransferToCarrierRedactsAggregatorData(t *testing.T) {
+	job := validJobFixture(t)
+	now := job.UpdatedAt.Add(time.Hour)
+	job.AmountNgn = 900000
+	creator := "agg-user"
+	job.CreatedBy = &creator
+	job, err := job.AddNote(JobNote{ID: "n1", Text: "our margin is 30%"}, now, "t0")
+	if err != nil {
+		t.Fatalf("note: %v", err)
+	}
+
+	transferred, err := job.TransferToCarrier("tenant-carrier", 600000, now, "t1")
+	if err != nil {
+		t.Fatalf("transfer: %v", err)
+	}
+	if transferred.AmountNgn != 600000 {
+		t.Fatalf("expected carrier rate, got %v", transferred.AmountNgn)
+	}
+	if len(transferred.Notes) != 0 || transferred.CreatedBy != nil {
+		t.Fatalf("expected notes and author stripped, got %+v", transferred)
+	}
+	if len(transferred.Timeline) != 1 || transferred.Timeline[0].Metadata["previous_tenant_id"] != "" {
+		t.Fatalf("expected only the handoff entry without the previous tenant, got %+v", transferred.Timeline)
+	}
+	if len(job.Notes) != 1 || job.AmountNgn != 900000 {
+		t.Fatal("expected the original job to be unchanged")
+	}
+}
+
+func TestSetSchedulingOnlyChangesProvidedFields(t *testing.T) {
+	job := validJobFixture(t)
+	now := job.UpdatedAt.Add(time.Hour)
+	start := now.Add(time.Hour)
+	job.Priority = PriorityHigh
+	job.TimeWindow = JobTimeWindow{PickupStart: &start}
+
+	normal := PriorityNormal
+	byPriority, err := job.SetScheduling(SchedulingPatch{Priority: &normal}, now, "t1")
+	if err != nil {
+		t.Fatalf("priority only: %v", err)
+	}
+	if byPriority.Priority != PriorityNormal || byPriority.TimeWindow.PickupStart == nil {
+		t.Fatalf("expected window kept, got %+v", byPriority)
+	}
+
+	byWindow, err := job.SetScheduling(SchedulingPatch{TimeWindow: &JobTimeWindow{}}, now, "t2")
+	if err != nil {
+		t.Fatalf("window only: %v", err)
+	}
+	if byWindow.Priority != PriorityHigh || byWindow.TimeWindow.PickupStart != nil {
+		t.Fatalf("expected priority kept and window cleared, got %+v", byWindow)
+	}
+
+	if _, err := job.SetScheduling(SchedulingPatch{}, now, "t3"); err == nil {
+		t.Fatal("expected empty patch refused")
 	}
 }

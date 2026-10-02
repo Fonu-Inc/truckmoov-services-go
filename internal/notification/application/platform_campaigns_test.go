@@ -10,20 +10,6 @@ import (
 	"github.com/truckmoov/services-go/pkg/identity"
 )
 
-type claimingCampaignRepo struct {
-	*fakeCampaignRepository
-}
-
-func (r claimingCampaignRepo) ClaimScheduledCampaign(_ context.Context, tenantID, id string, _ time.Time) (bool, error) {
-	campaign, ok := r.campaigns[id]
-	if !ok || campaign.TenantID != tenantID || campaign.Status != domain.CampaignStatusScheduled {
-		return false, nil
-	}
-	campaign.Status = domain.CampaignStatusSending
-	r.campaigns[id] = campaign
-	return true, nil
-}
-
 type staticTemplates struct{ templates []domain.WhatsAppTemplate }
 
 func (s staticTemplates) CreateTemplate(context.Context, domain.WhatsAppTemplateCreateRequest) (domain.WhatsAppTemplateCreateResponse, error) {
@@ -38,18 +24,20 @@ type platformCampaignKit struct {
 	*campaignKit
 	clock     *campaignClock
 	campaigns *PlatformCampaigns
+	runner    *CampaignRunner
 }
 
 func newPlatformCampaignKit(templates ...domain.WhatsAppTemplate) *platformCampaignKit {
 	kit := newCampaignKit()
 	clock := &campaignClock{now: time.Unix(1_700_000_000, 0).UTC()}
-	repo := claimingCampaignRepo{kit.repo}
+	repo := kit.repo
 	create := NewCreateCampaignUseCase(repo, kit.suppression, clock, &campaignIDs{n: 50})
 	send := NewSendCampaignUseCase(repo, kit.suppression, kit.provider, kit.templates, "en", nil, clock)
 	return &platformCampaignKit{
 		campaignKit: kit,
 		clock:       clock,
 		campaigns:   NewPlatformCampaigns(repo, create, send, staticTemplates{templates}, clock),
+		runner:      NewCampaignRunner(repo, send, clock),
 	}
 }
 
@@ -165,14 +153,14 @@ func TestPlatformCampaignScheduleCancelAndRunDue(t *testing.T) {
 		t.Fatalf("a cancelled campaign cannot be sent: %v", err)
 	}
 
-	if started, _ := kit.campaigns.RunDue(ctx); started != 0 || len(kit.provider.sent) != 0 {
+	if started, _ := kit.runner.RunDue(ctx); started != 0 || len(kit.provider.sent) != 0 {
 		t.Fatal("nothing is due yet")
 	}
 	kit.clock.now = kit.clock.now.Add(2 * time.Hour)
-	if started, err := kit.campaigns.RunDue(ctx); err != nil || started != 1 || len(kit.provider.sent) != 1 {
+	if started, err := kit.runner.RunDue(ctx); err != nil || started != 1 || len(kit.provider.sent) != 1 {
 		t.Fatalf("due: started=%d sent=%v err=%v", started, kit.provider.sent, err)
 	}
-	if started, _ := kit.campaigns.RunDue(ctx); started != 0 || len(kit.provider.sent) != 1 {
+	if started, _ := kit.runner.RunDue(ctx); started != 0 || len(kit.provider.sent) != 1 {
 		t.Fatal("a run campaign must not run again")
 	}
 }

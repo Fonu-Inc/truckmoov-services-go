@@ -15,7 +15,23 @@ type filterResult struct {
 	reason string
 }
 
+const nullIslandEpsilon = 0.001
+
+func validCoordinates(lat, lon float64) bool {
+	if math.IsNaN(lat) || math.IsInf(lat, 0) || math.IsNaN(lon) || math.IsInf(lon, 0) {
+		return false
+	}
+	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+		return false
+	}
+	return math.Abs(lat) >= nullIslandEpsilon || math.Abs(lon) >= nullIslandEpsilon
+}
+
 func applyTelemetryFilter(cfg TelemetryConfig, prev *LatestLocation, cmd IngestLocationCommand, fixTime time.Time, fixOK bool) filterResult {
+	if !validCoordinates(cmd.Latitude, cmd.Longitude) {
+		return filterResult{skip: true, reason: "invalid_coordinates"}
+	}
+
 	// Accuracy is time-independent, so it must run even when fix_time is unparseable.
 	if cfg.MaxAccuracyM > 0 && cmd.AccuracyM != nil && *cmd.AccuracyM > cfg.MaxAccuracyM {
 		return filterResult{skip: true, reason: "accuracy_exceeded"}

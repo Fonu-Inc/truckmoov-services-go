@@ -171,7 +171,7 @@ func respondInboxError(w http.ResponseWriter, err error) {
 		httpx.WriteError(w, http.StatusBadRequest, input.Error())
 	case errors.Is(err, application.ErrWhatsAppConversationLocked):
 		httpx.WriteError(w, http.StatusConflict, "The 24-hour window has closed. Send an approved template to reopen it.", application.ErrorCodeWindowLocked)
-	case errors.Is(err, application.ErrSMSTemplateNameTaken), errors.Is(err, application.ErrCannedReplyShortcutTaken):
+	case errors.Is(err, application.ErrSMSTemplateNameTaken), errors.Is(err, application.ErrCannedReplyShortcutTaken), errors.Is(err, application.ErrCampaignAlreadyRunning):
 		httpx.WriteError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, application.ErrOutreachPhoneInvalid):
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())

@@ -533,3 +533,16 @@ func TestDotgoSendTrackedReturnsNoIDOnFailure(t *testing.T) {
 		t.Fatalf("expected a failure with no id, got %+v err=%v", result, err)
 	}
 }
+
+func TestMultiChannelSendTrackedPassesTheWhatsAppMessageIDThrough(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"messages":[{"id":"wamid.tracked"}]}`))
+	}))
+	defer server.Close()
+	provider := NewMultiChannelMessageProvider(NewMetaWhatsAppMessageProviderWithClient(server.URL, nil, nil, "123456", "access-token", server.Client()), nil, nil)
+
+	result, err := provider.SendTracked(context.Background(), "tenant-a", "whatsapp", "+2348012345678", "job assigned")
+	if err != nil || result.ProviderMessageID != "wamid.tracked" || result.Status != domain.StatusSent {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}

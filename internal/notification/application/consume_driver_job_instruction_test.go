@@ -19,7 +19,7 @@ type instructionTextRecorder struct {
 
 func (s *instructionTextRecorder) Execute(_ context.Context, command SendMessageCommand) (domain.OutboxMessage, error) {
 	s.commands = append(s.commands, command)
-	return domain.OutboxMessage{}, s.err
+	return domain.OutboxMessage{ProviderMessageID: "wamid.text-1", Status: domain.StatusSent}, s.err
 }
 
 type instructionTemplateRecorder struct {
@@ -35,6 +35,15 @@ func (s *instructionTemplateRecorder) Execute(ctx context.Context, command SendJ
 	}
 	s.commands = append(s.commands, command)
 	return domain.OutboxMessage{}, s.err
+}
+
+type instructionRecordCapture struct {
+	records []JobInstructionTextRecord
+}
+
+func (c *instructionRecordCapture) RecordJobInstructionText(_ context.Context, record JobInstructionTextRecord) error {
+	c.records = append(c.records, record)
+	return nil
 }
 
 type stubConversationFinder struct {
@@ -83,6 +92,7 @@ type instructionHarness struct {
 	text     *instructionTextRecorder
 	template *instructionTemplateRecorder
 	charger  *instructionCharger
+	recorder *instructionRecordCapture
 	reporter *instructionReporter
 	claims   *fakeEventClaims
 	conv     stubConversationFinder
@@ -94,11 +104,11 @@ var instructionNow = time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 
 func newInstructionHarness(account stubAccountFinder, conversation stubConversationFinder) *instructionHarness {
 	h := &instructionHarness{
-		text: &instructionTextRecorder{}, template: &instructionTemplateRecorder{}, charger: &instructionCharger{},
+		text: &instructionTextRecorder{}, template: &instructionTemplateRecorder{}, charger: &instructionCharger{}, recorder: &instructionRecordCapture{},
 		reporter: &instructionReporter{}, claims: newFakeEventClaims(), conv: conversation, account: account,
 	}
 	h.useCase = NewConsumeDriverJobInstructionUseCase(DriverJobInstructionDeps{
-		Text: h.text, Template: h.template, Conversations: conversation, Accounts: account,
+		Text: h.text, Template: h.template, Conversations: conversation, Recorder: h.recorder, Accounts: account,
 		Drivers:  stubDriverLookup{drivers: []LinkedDriver{{DriverID: "driver-1", TenantID: "tenant-a", Name: "Chukwuma Okafor"}}},
 		Charger:  h.charger,
 		Reporter: h.reporter, Claims: h.claims, Clock: fixedNotificationClock{now: instructionNow},
@@ -152,6 +162,32 @@ func TestDriverInstruction_InsideTheWindowSendsAPlainMessage(t *testing.T) {
 	}
 	if len(h.charger.charges) != 0 {
 		t.Fatal("the text path is charged by the message sender, not here")
+	}
+}
+
+func TestDriverInstruction_TextSendIsRecordedAsAJobInstructionWithItsWamid(t *testing.T) {
+	h := newInstructionHarness(stubAccountFinder{found: true}, openWindow())
+
+	_ = h.useCase.Handle(context.Background(), instructionEvent("evt-text", nil))
+
+	if len(h.recorder.records) != 1 {
+		t.Fatalf("expected one recorded instruction, got %+v", h.recorder.records)
+	}
+	record := h.recorder.records[0]
+	if record.JobID != "job-1" || record.DriverID != "driver-1" || record.TenantID != "tenant-a" ||
+		record.ProviderMessageID != "wamid.text-1" || record.Text != "New job TM-1 assigned." {
+		t.Fatalf("unexpected record %+v", record)
+	}
+}
+
+func TestDriverInstruction_FailedTextSendIsNotRecorded(t *testing.T) {
+	h := newInstructionHarness(stubAccountFinder{found: true}, openWindow())
+	h.text.err = errors.New("provider down")
+
+	_ = h.useCase.Handle(context.Background(), instructionEvent("evt-text-fail", nil))
+
+	if len(h.recorder.records) != 0 {
+		t.Fatalf("a send that never left must not be recorded: %+v", h.recorder.records)
 	}
 }
 

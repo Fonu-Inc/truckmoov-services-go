@@ -232,7 +232,9 @@ func (b *natsEventBus) Subscribe(_ context.Context, subject, durable string, han
 			envelope.Subject = msg.Subject
 			if handleErr := handler(context.Background(), envelope); handleErr != nil {
 				b.log.Warn("event_handler_failed", "error", handleErr.Error(), "subject", subject)
-				retryOrTerminate(msg, b.log, subject)
+				retryOrTerminate(msg, b.log, subject, func(attempts uint64) error {
+					return b.deadLetter(msg.Subject, envelope, attempts, handleErr)
+				})
 				return
 			}
 			_ = msg.Ack()

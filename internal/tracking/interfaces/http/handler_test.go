@@ -66,6 +66,10 @@ func buildTrackingTestHandler() (*Handler, *fakeTrackingActivityPublisher) {
 	latestRepo := infrastructure.NewInMemoryLatestLocationRepository()
 	historyRepo := infrastructure.NewInMemoryLocationHistoryRepository()
 	telemetryRepo := infrastructure.NewInMemoryTelemetryRepository()
+	imeiResolver := infrastructure.NewInMemoryIMEIResolver()
+	for _, n := range []string{"1", "2"} {
+		_ = imeiResolver.Upsert(application.DeviceIdentity{IMEI: "imei-" + n, TenantID: "tenant-" + n, VehicleUUID: "vehicle-" + n, DeviceID: "device-" + n})
+	}
 	ingestUseCase := application.NewIngestLocationUseCase(
 		publisher,
 		latestRepo,
@@ -74,7 +78,7 @@ func buildTrackingTestHandler() (*Handler, *fakeTrackingActivityPublisher) {
 		"default",
 		historyRepo,
 		application.TelemetryConfig{},
-		infrastructure.NewInMemoryIMEIResolver(),
+		imeiResolver,
 		telemetryRepo,
 	)
 	alertUseCase := application.NewPublishAlertUseCase(
@@ -99,7 +103,7 @@ func TestHandler_IngestContract(t *testing.T) {
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 
-	body := bytes.NewBufferString(`{"vehicle_id":"vehicle-1","device_id":"device-1","lat":6.5,"lng":3.4}`)
+	body := bytes.NewBufferString(`{"imei":"imei-1","lat":6.5,"lng":3.4}`)
 	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", body)
 	req.Header.Set("Content-Type", "application/json")
 	res := httptest.NewRecorder()
@@ -140,7 +144,7 @@ func TestHandler_ListVehiclesContract(t *testing.T) {
 	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
-	body := bytes.NewBufferString(`{"tenant_id":"tenant-1","vehicle_id":"vehicle-1","device_id":"device-1","lat":6.5,"lng":3.4}`)
+	body := bytes.NewBufferString(`{"imei":"imei-1","tenant_id":"forged","lat":6.5,"lng":3.4}`)
 	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", body)
 	req.Header.Set("Content-Type", "application/json")
 	res := httptest.NewRecorder()
@@ -173,8 +177,8 @@ func TestHandler_VehicleHistoryContract(t *testing.T) {
 	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
 	lines := []string{
-		`{"tenant_id":"tenant-2","vehicle_id":"vehicle-2","device_id":"device-2","lat":6.6,"lng":3.7,"fix_time":"2026-02-02T11:00:00Z"}`,
-		`{"tenant_id":"tenant-2","vehicle_id":"vehicle-2","device_id":"device-2","lat":6.7,"lng":3.8,"fix_time":"2026-02-02T11:05:00Z"}`,
+		`{"imei":"imei-2","lat":6.6,"lng":3.7,"fix_time":"2026-02-02T11:00:00Z"}`,
+		`{"imei":"imei-2","lat":6.7,"lng":3.8,"fix_time":"2026-02-02T11:05:00Z"}`,
 	}
 	for _, payload := range lines {
 		req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", bytes.NewBufferString(payload))
@@ -216,7 +220,7 @@ func TestHandler_ListVehiclesRejectsTenantQuery(t *testing.T) {
 	handler.RegisterRoutes(httpx.NewRoutes(mux, false, nil, nil))
 	server := httpx.WithAuthContext(mux, identity.SharedSecretVerifier("replace-me"))
 
-	body := bytes.NewBufferString(`{"tenant_id":"tenant-1","vehicle_id":"vehicle-1","device_id":"device-1","lat":6.5,"lng":3.4}`)
+	body := bytes.NewBufferString(`{"imei":"imei-1","tenant_id":"forged","lat":6.5,"lng":3.4}`)
 	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", body)
 	req.Header.Set("Content-Type", "application/json")
 	res := httptest.NewRecorder()

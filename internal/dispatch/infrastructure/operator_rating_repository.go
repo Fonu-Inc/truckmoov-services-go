@@ -11,13 +11,15 @@ import (
 const operatorRatingSchema = `
 CREATE TABLE IF NOT EXISTS operator_ratings (
     id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL UNIQUE,
+    job_id TEXT NOT NULL,
     rater_tenant_id TEXT NOT NULL,
     operator_tenant_id TEXT NOT NULL,
     value INT NOT NULL,
     note TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL
 );
+ALTER TABLE operator_ratings DROP CONSTRAINT IF EXISTS operator_ratings_job_id_key;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_ratings_tenant_job ON operator_ratings (operator_tenant_id, job_id);
 CREATE INDEX IF NOT EXISTS idx_operator_ratings_operator ON operator_ratings (operator_tenant_id);
 `
 
@@ -46,11 +48,11 @@ func (r *PostgresOperatorRatingRepository) Create(ctx context.Context, rating do
 	return rating, nil
 }
 
-func (r *PostgresOperatorRatingRepository) FindByJob(ctx context.Context, jobID string) (domain.OperatorRating, bool, error) {
+func (r *PostgresOperatorRatingRepository) FindByJob(ctx context.Context, operatorTenantID, jobID string) (domain.OperatorRating, bool, error) {
 	var rating domain.OperatorRating
 	err := r.db.QueryRowContext(ctx,
 		`SELECT id, job_id, rater_tenant_id, operator_tenant_id, value, note, created_at
-         FROM operator_ratings WHERE job_id = $1`, jobID,
+         FROM operator_ratings WHERE operator_tenant_id = $1 AND job_id = $2`, operatorTenantID, jobID,
 	).Scan(&rating.ID, &rating.JobID, &rating.RaterTenantID, &rating.OperatorTenantID, &rating.Value, &rating.Note, &rating.CreatedAt)
 	if err == sql.ErrNoRows {
 		return domain.OperatorRating{}, false, nil

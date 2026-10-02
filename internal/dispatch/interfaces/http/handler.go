@@ -1,6 +1,7 @@
 package dispatchhttp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -77,8 +78,28 @@ type createJobRequest struct {
 }
 
 type updateJobSchedulingRequest struct {
-	Priority   string            `json:"priority,omitempty"`
-	TimeWindow timeWindowRequest `json:"time_window,omitempty"`
+	Priority   *string         `json:"priority,omitempty"`
+	TimeWindow json.RawMessage `json:"time_window,omitempty"`
+}
+
+func (r updateJobSchedulingRequest) timeWindow() (*domain.JobTimeWindow, error) {
+	if r.TimeWindow == nil {
+		return nil, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(r.TimeWindow), []byte("null")) {
+		return &domain.JobTimeWindow{}, nil
+	}
+	var raw timeWindowRequest
+	decoder := json.NewDecoder(bytes.NewReader(r.TimeWindow))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&raw); err != nil {
+		return nil, errors.New("invalid time_window")
+	}
+	window, err := raw.toDomain()
+	if err != nil {
+		return nil, err
+	}
+	return &window, nil
 }
 
 type updateJobDetailsRequest struct {
@@ -890,7 +911,7 @@ func (h *Handler) updateJobScheduling(w http.ResponseWriter, r *http.Request, jo
 		return
 	}
 
-	timeWindow, err := req.TimeWindow.toDomain()
+	timeWindow, err := req.timeWindow()
 	if err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return

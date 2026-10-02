@@ -37,14 +37,14 @@ func (r *lifecycleRepository) Delete(tenantID, id string) error {
 	return nil
 }
 
-func (r *lifecycleRepository) FindByTenant(tenantID string) []domain.Job {
+func (r *lifecycleRepository) FindByTenant(tenantID string) ([]domain.Job, error) {
 	results := make([]domain.Job, 0)
 	for _, job := range r.data {
 		if job.TenantID == tenantID {
 			results = append(results, job)
 		}
 	}
-	return results
+	return results, nil
 }
 
 type lifecycleEmitter struct {

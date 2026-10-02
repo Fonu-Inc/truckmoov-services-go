@@ -111,9 +111,10 @@ func trackingOpenAPISpec() map[string]any {
 					"type":        "object",
 					"description": "Standard normalised location payload accepted by POST /tracking/ingest and the generic vendor adapter.",
 					"properties": map[string]any{
-						"tenant_id":  map[string]any{"type": "string"},
-						"vehicle_id": map[string]any{"type": "string"},
-						"device_id":  map[string]any{"type": "string"},
+						"imei":       map[string]any{"type": "string", "description": "Device IMEI. Tenant, vehicle and device are resolved from it."},
+						"tenant_id":  map[string]any{"type": "string", "deprecated": true, "description": "Ignored."},
+						"vehicle_id": map[string]any{"type": "string", "deprecated": true, "description": "Ignored."},
+						"device_id":  map[string]any{"type": "string", "deprecated": true, "description": "Ignored."},
 						"lat":        map[string]any{"type": "number"},
 						"lng":        map[string]any{"type": "number"},
 						"speed_kph":  map[string]any{"type": "number", "nullable": true},
@@ -121,7 +122,7 @@ func trackingOpenAPISpec() map[string]any {
 						"accuracy_m": map[string]any{"type": "number", "nullable": true},
 						"fix_time":   map[string]any{"type": "string", "format": "date-time", "description": "RFC3339 timestamp of the GPS fix."},
 					},
-					"required": []string{"lat", "lng"},
+					"required": []string{"imei", "lat", "lng"},
 				},
 				"TeltonikaPayload": map[string]any{
 					"type":        "object",

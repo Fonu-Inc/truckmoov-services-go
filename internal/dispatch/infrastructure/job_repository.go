@@ -37,7 +37,7 @@ func (r *InMemoryJobRepository) FindByTenantAndID(tenantID, id string) (domain.J
 	return job, ok
 }
 
-func (r *InMemoryJobRepository) FindByTenant(tenantID string) []domain.Job {
+func (r *InMemoryJobRepository) FindByTenant(tenantID string) ([]domain.Job, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -54,7 +54,7 @@ func (r *InMemoryJobRepository) FindByTenant(tenantID string) []domain.Job {
 	sort.SliceStable(results, func(i, j int) bool {
 		return results[i].CreatedAt.Before(results[j].CreatedAt)
 	})
-	return results
+	return results, nil
 }
 
 func (r *InMemoryJobRepository) ListTenantsWithActiveJobs(_ context.Context) ([]string, error) {
@@ -130,10 +130,10 @@ func (r *RedisJobRepository) FindByTenantAndID(tenantID, id string) (domain.Job,
 	return job, true
 }
 
-func (r *RedisJobRepository) FindByTenant(tenantID string) []domain.Job {
+func (r *RedisJobRepository) FindByTenant(tenantID string) ([]domain.Job, error) {
 	jobIDs, err := r.store.SMembers(redisJobIndexKey(tenantID))
 	if err != nil {
-		return []domain.Job{}
+		return nil, fmt.Errorf("list tenant job ids: %w", err)
 	}
 
 	results := make([]domain.Job, 0, len(jobIDs))
@@ -148,7 +148,7 @@ func (r *RedisJobRepository) FindByTenant(tenantID string) []domain.Job {
 	sort.SliceStable(results, func(i, j int) bool {
 		return results[i].CreatedAt.Before(results[j].CreatedAt)
 	})
-	return results
+	return results, nil
 }
 
 func (r *RedisJobRepository) Delete(tenantID, id string) error {

@@ -32,14 +32,22 @@ func redeliveryDelay(delivered uint64) time.Duration {
 }
 
 // retryOrTerminate backs off between redeliveries and gives up after
-// maxDeliveries, so one event that can never succeed does not loop hot forever.
-func retryOrTerminate(msg failedDelivery, log *slog.Logger, subject string) {
+// maxDeliveries, dead-lettering the event first (kept for retry if that
+// fails), so one event that can never succeed does not loop hot forever.
+func retryOrTerminate(msg failedDelivery, log *slog.Logger, subject string, deadLetter func(attempts uint64) error) {
 	meta, err := msg.Metadata()
 	if err != nil {
 		_ = msg.NakWithDelay(redeliveryBackoff[0])
 		return
 	}
 	if meta.NumDelivered >= maxDeliveries {
+		if deadLetter != nil {
+			if err := deadLetter(meta.NumDelivered); err != nil {
+				log.Error("event_dead_letter_failed", "subject", subject, "deliveries", meta.NumDelivered, "error", err.Error())
+				_ = msg.NakWithDelay(redeliveryBackoff[len(redeliveryBackoff)-1])
+				return
+			}
+		}
 		log.Error("event_abandoned", "subject", subject, "deliveries", meta.NumDelivered)
 		_ = msg.Term()
 		return

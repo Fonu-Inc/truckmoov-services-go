@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/truckmoov/services-go/pkg/alert"
@@ -46,6 +47,31 @@ func routeTemplate(path string) string {
 		}
 	}
 	return strings.Join(segments, "/")
+}
+
+type alertTenantKey struct{}
+
+// alertTenant is the request-scoped place auth middleware, which runs inside
+// WithErrorAlerts on a copied request, leaves the tenant for the alert.
+type alertTenant struct {
+	mu sync.Mutex
+	id string
+}
+
+func noteAlertTenant(ctx context.Context, tenantID string) {
+	holder, ok := ctx.Value(alertTenantKey{}).(*alertTenant)
+	if !ok || tenantID == "" {
+		return
+	}
+	holder.mu.Lock()
+	holder.id = tenantID
+	holder.mu.Unlock()
+}
+
+func (a *alertTenant) tenant() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.id
 }
 
 // statusRecorder wraps a ResponseWriter to capture the status code, so an
@@ -100,12 +126,14 @@ func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // WithErrorAlerts wraps next so that any non-2xx response or panic sends a
 // push notification via notifier, including the response body (or panic
 // stack trace) and the last few requests this process handled, for context
-// on what the caller was doing beforehand. Must be wrapped inside
-// WithAuthContext so tenant claims are already on the request context.
+// on what the caller was doing beforehand. Wrap it outermost: the auth
+// middleware inside it reports the tenant through a request-scoped holder.
 func WithErrorAlerts(next http.Handler, notifier *alert.NtfyClient, recent *RecentRequests, serviceName string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		prior := recent.Snapshot()
 		rec := &statusRecorder{ResponseWriter: w}
+		holder := &alertTenant{}
+		r = r.WithContext(context.WithValue(r.Context(), alertTenantKey{}, holder))
 
 		defer func() {
 			if rerr := recover(); rerr != nil {
@@ -114,14 +142,14 @@ func WithErrorAlerts(next http.Handler, notifier *alert.NtfyClient, recent *Rece
 					Method:   r.Method,
 					Path:     r.URL.Path,
 					Status:   http.StatusInternalServerError,
-					TenantID: TenantIDFromRequest(r),
+					TenantID: holder.tenant(),
 					Detail:   fmt.Sprintf("panic: %v", rerr),
 					Stack:    truncate(string(stack), alertStackCapBytes),
 					Prior:    prior,
 				})
 				recent.Add(RequestSnapshot{
 					Method: r.Method, Path: r.URL.Path, Status: http.StatusInternalServerError,
-					TenantID: TenantIDFromRequest(r), At: time.Now(),
+					TenantID: holder.tenant(), At: time.Now(),
 				})
 
 				if !rec.wroteHeader {
@@ -132,7 +160,7 @@ func WithErrorAlerts(next http.Handler, notifier *alert.NtfyClient, recent *Rece
 
 		next.ServeHTTP(rec, r)
 
-		tenantID := TenantIDFromRequest(r)
+		tenantID := holder.tenant()
 		if rec.status >= http.StatusBadRequest {
 			sendAlert(notifier, serviceName, alertContext{
 				Method:   r.Method,

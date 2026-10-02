@@ -5,12 +5,23 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/truckmoov/services-go/internal/notification/domain"
+	"github.com/truckmoov/services-go/pkg/identity"
 )
 
-var ErrCampaignNotFound = errors.New("campaign not found")
+var (
+	ErrCampaignNotFound       = errors.New("campaign not found")
+	ErrCampaignAlreadyRunning = errors.New("campaign already running")
+	ErrCampaignCancelled      = errors.New("campaign was cancelled")
+)
+
+const (
+	campaignStaleAfter  = 15 * time.Minute
+	campaignSendWorkers = 4
+)
 
 type CampaignRecipientInput struct {
 	DriverID    string
@@ -172,7 +183,9 @@ func NewSendCampaignUseCase(
 	}
 }
 
-// Execute broadcasts a campaign, billing and sending one recipient at a time.
+// Execute broadcasts a campaign. The campaign is claimed atomically first, so a
+// double click or a click that races the scheduler is refused instead of
+// messaging everyone twice; each recipient is claimed again before its send.
 func (u *SendCampaignUseCase) Execute(ctx context.Context, command SendCampaignCommand) (SendCampaignResult, error) {
 	campaign, found, err := u.repository.FindCampaign(ctx, command.TenantID, command.CampaignID)
 	if err != nil {
@@ -181,62 +194,197 @@ func (u *SendCampaignUseCase) Execute(ctx context.Context, command SendCampaignC
 	if !found {
 		return SendCampaignResult{}, ErrCampaignNotFound
 	}
+	if campaign.Status == domain.CampaignStatusCancelled {
+		return SendCampaignResult{}, ErrCampaignCancelled
+	}
+
+	prior := campaign.Status
+	from := domain.RecipientStateFailed
+	claimed := !command.RetryFailedOnly
+	if claimed {
+		from = domain.RecipientStateQueued
+		var won bool
+		campaign, won, err = u.claim(ctx, campaign)
+		if err != nil || !won {
+			return u.unclaimed(ctx, command, err)
+		}
+	}
 
 	recipients, err := u.repository.ListRecipients(ctx, command.TenantID, command.CampaignID)
 	if err != nil {
 		return SendCampaignResult{}, err
 	}
-
 	pending := u.selectPending(recipients, command.RetryFailedOnly)
-	if len(pending) == 0 {
-		return SendCampaignResult{
-			Campaign:  campaign,
-			Progress:  domain.SummarizeRecipients(recipients),
-			Attempted: 0,
-		}, nil
+	if len(pending) == 0 && !claimed {
+		return SendCampaignResult{Campaign: campaign, Progress: domain.SummarizeRecipients(recipients)}, nil
 	}
 
-	attempted, chargeErr := u.deliverAll(ctx, campaign, pending)
-	if chargeErr != nil && attempted == 0 {
-		return SendCampaignResult{}, chargeErr
-	}
-
-	updated, err := u.repository.ListRecipients(ctx, command.TenantID, command.CampaignID)
+	attempted, chargeErr := u.deliverAll(ctx, campaign, pending, from)
+	result, err := u.settle(ctx, campaign, prior, attempted, chargeErr)
 	if err != nil {
 		return SendCampaignResult{}, err
 	}
+	if chargeErr != nil && attempted == 0 {
+		return SendCampaignResult{}, chargeErr
+	}
+	return result, chargeErr
+}
 
+func (u *SendCampaignUseCase) claim(ctx context.Context, campaign domain.Campaign) (domain.Campaign, bool, error) {
+	now := u.clock.Now()
+	staleBefore := now.Add(-campaignStaleAfter)
+	claimed, won, err := u.repository.ClaimCampaign(ctx, campaign.TenantID, campaign.ID, now, staleBefore)
+	if err != nil || !won {
+		return domain.Campaign{}, false, err
+	}
+	if err := u.repository.FailInterruptedRecipients(ctx, campaign.TenantID, campaign.ID, staleBefore, now); err != nil {
+		return domain.Campaign{}, false, fmt.Errorf("recover interrupted recipients: %w", err)
+	}
+	return claimed, true, nil
+}
+
+// unclaimed explains a lost claim. Queued work on a campaign someone else is
+// running is a conflict; a campaign with nothing left to send is a no-op.
+func (u *SendCampaignUseCase) unclaimed(ctx context.Context, command SendCampaignCommand, claimErr error) (SendCampaignResult, error) {
+	if claimErr != nil {
+		return SendCampaignResult{}, claimErr
+	}
+	campaign, found, err := u.repository.FindCampaign(ctx, command.TenantID, command.CampaignID)
+	if err != nil {
+		return SendCampaignResult{}, err
+	}
+	if !found {
+		return SendCampaignResult{}, ErrCampaignNotFound
+	}
+	recipients, err := u.repository.ListRecipients(ctx, command.TenantID, command.CampaignID)
+	if err != nil {
+		return SendCampaignResult{}, err
+	}
+	if campaign.Status == domain.CampaignStatusSending && hasRecipientIn(recipients, domain.RecipientStateQueued) {
+		return SendCampaignResult{}, ErrCampaignAlreadyRunning
+	}
+	return SendCampaignResult{Campaign: campaign, Progress: domain.SummarizeRecipients(recipients)}, nil
+}
+
+func hasRecipientIn(recipients []domain.CampaignRecipient, state string) bool {
+	for _, recipient := range recipients {
+		if recipient.State == state {
+			return true
+		}
+	}
+	return false
+}
+
+// settle stores where the campaign ended up. A refused wallet puts an unstarted
+// campaign back to what it was, so topping up lets the next run pick it up
+// instead of waiting out the crash-recovery window.
+func (u *SendCampaignUseCase) settle(
+	ctx context.Context,
+	campaign domain.Campaign,
+	prior string,
+	attempted int,
+	chargeErr error,
+) (SendCampaignResult, error) {
+	updated, err := u.repository.ListRecipients(ctx, campaign.TenantID, campaign.ID)
+	if err != nil {
+		return SendCampaignResult{}, err
+	}
 	campaign.Status = domain.ResolveCampaignStatus(updated)
+	if chargeErr != nil && (prior == domain.CampaignStatusDraft || prior == domain.CampaignStatusScheduled) {
+		campaign.Status = prior
+	}
 	campaign.UpdatedAt = u.clock.Now()
 	saved, err := u.repository.SaveCampaign(ctx, campaign)
 	if err != nil {
 		return SendCampaignResult{}, fmt.Errorf("save campaign: %w", err)
 	}
-
-	return SendCampaignResult{
-		Campaign:  saved,
-		Progress:  domain.SummarizeRecipients(updated),
-		Attempted: attempted,
-	}, chargeErr
+	return SendCampaignResult{Campaign: saved, Progress: domain.SummarizeRecipients(updated), Attempted: attempted}, nil
 }
 
-// deliverAll bills and sends one recipient at a time, so only recipients
-// actually attempted are charged. A refused charge stops the run and leaves
-// the rest queued for a later run.
+// deliverAll bills and sends recipients on a few workers, so only recipients
+// actually attempted are charged. A refused charge stops new work and leaves
+// the rest as they were for a later run.
 func (u *SendCampaignUseCase) deliverAll(
 	ctx context.Context,
 	campaign domain.Campaign,
 	pending []domain.CampaignRecipient,
+	from string,
 ) (int, error) {
-	for index := range pending {
-		if err := u.deliver(ctx, campaign, &pending[index]); err != nil {
-			return index, err
-		}
-		if err := u.repository.SaveRecipient(ctx, pending[index]); err != nil {
-			return index, fmt.Errorf("save recipient: %w", err)
-		}
+	run := &deliveryRun{}
+	jobs := make(chan domain.CampaignRecipient)
+	var workers sync.WaitGroup
+	for range campaignSendWorkers {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for recipient := range jobs {
+				if run.stopped() {
+					continue
+				}
+				run.record(u.deliverOne(ctx, campaign, recipient, from))
+			}
+		}()
 	}
-	return len(pending), nil
+	for _, recipient := range pending {
+		jobs <- recipient
+	}
+	close(jobs)
+	workers.Wait()
+	return run.result()
+}
+
+type deliveryRun struct {
+	mu        sync.Mutex
+	attempted int
+	err       error
+}
+
+func (r *deliveryRun) stopped() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.err != nil
+}
+
+func (r *deliveryRun) record(attempted bool, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err != nil && r.err == nil {
+		r.err = err
+	}
+	if attempted {
+		r.attempted++
+	}
+}
+
+func (r *deliveryRun) result() (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.attempted, r.err
+}
+
+// deliverOne claims the row, sends, and saves. A row another run already holds
+// is skipped. A failure before the send puts the row back so it is not lost.
+func (u *SendCampaignUseCase) deliverOne(
+	ctx context.Context,
+	campaign domain.Campaign,
+	recipient domain.CampaignRecipient,
+	from string,
+) (bool, error) {
+	won, err := u.repository.ClaimRecipient(ctx, campaign.TenantID, recipient.ID, from, u.clock.Now())
+	if err != nil {
+		return false, fmt.Errorf("claim recipient: %w", err)
+	}
+	if !won {
+		return false, nil
+	}
+	if err := u.deliver(ctx, campaign, &recipient); err != nil {
+		recipient.State = from
+		return false, errors.Join(err, u.repository.SaveRecipient(ctx, recipient))
+	}
+	if err := u.repository.SaveRecipient(ctx, recipient); err != nil {
+		return false, fmt.Errorf("save recipient: %w", err)
+	}
+	return true, nil
 }
 
 func (u *SendCampaignUseCase) selectPending(
@@ -267,7 +415,7 @@ func (u *SendCampaignUseCase) chargeRecipient(
 	campaign domain.Campaign,
 	recipient domain.CampaignRecipient,
 ) error {
-	if u.usageCharger == nil || !IsBillable(recipient.Channel) {
+	if u.usageCharger == nil || !IsBillable(recipient.Channel) || campaign.TenantID == identity.SystemTenantID {
 		return nil
 	}
 	err := u.usageCharger.Charge(ctx, UsageCharge{

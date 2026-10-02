@@ -27,6 +27,7 @@ type platformInboxExtras struct {
 	templateSend *application.PlatformTemplateSendUseCase
 	drivers      application.DriverLookup
 	campaigns    *application.PlatformCampaigns
+	runner       *application.CampaignRunner
 	sms          *application.PlatformSMSTemplates
 	voice        *application.PlatformVoice
 }
@@ -65,7 +66,7 @@ func wirePlatformMessaging(
 
 	media := application.NewPlatformMediaSendUseCase(repository, extras.media, notifier, wiring.clock, wiring.ids)
 	scheduled := application.NewPlatformScheduledSends(send, repository)
-	go runScheduledSends(ctx, scheduled, extras.campaigns, wiring.log)
+	go runScheduledSends(ctx, scheduled, extras.runner, wiring.log)
 	return platformInbox{
 		queries: application.NewPlatformInboxQueries(repository, wiring.clock),
 		tools: &notificationhttp.PlatformInboxTools{
@@ -83,7 +84,7 @@ func wirePlatformMessaging(
 	}
 }
 
-func runScheduledSends(ctx context.Context, scheduled *application.PlatformScheduledSends, campaigns *application.PlatformCampaigns, log *slog.Logger) {
+func runScheduledSends(ctx context.Context, scheduled *application.PlatformScheduledSends, campaigns *application.CampaignRunner, log *slog.Logger) {
 	ticker := time.NewTicker(scheduledSendInterval)
 	defer ticker.Stop()
 	for {

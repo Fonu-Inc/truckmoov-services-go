@@ -195,6 +195,10 @@ func (h *Handler) sendCampaign(w http.ResponseWriter, r *http.Request, tenantID,
 		httpx.WriteError(w, http.StatusNotFound, "campaign not found")
 		return
 	}
+	if errors.Is(err, application.ErrCampaignAlreadyRunning) {
+		httpx.WriteError(w, http.StatusConflict, err.Error())
+		return
+	}
 	if err != nil {
 		// A refused wallet is the common case and it is the tenant's to fix,
 		// so it reads as a client error rather than a provider fault.

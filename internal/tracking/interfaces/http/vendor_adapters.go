@@ -2,9 +2,12 @@ package trackinghttp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/truckmoov/services-go/internal/tracking/application"
@@ -15,18 +18,26 @@ type vendorAdapter interface {
 	decode(r *http.Request) (application.IngestLocationCommand, error)
 }
 
-// genericAdapter — our standard normalised format (pass-through).
+// genericAdapter — our standard normalised format. Identity is derived from the
+// IMEI only; body tenant/vehicle/device ids are never trusted.
 type genericAdapter struct{}
+
+var errIMEIRequired = errors.New("imei is required")
 
 func (genericAdapter) decode(r *http.Request) (application.IngestLocationCommand, error) {
 	var req ingestRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		return application.IngestLocationCommand{}, fmt.Errorf("invalid body: %w", err)
 	}
+	imei := strings.TrimSpace(req.IMEI)
+	if imei == "" {
+		return application.IngestLocationCommand{}, errIMEIRequired
+	}
+	if req.TenantID != "" || req.VehicleID != "" || req.DeviceID != "" {
+		slog.Warn("ingest_body_identity_ignored", "imei", imei, "tenant", req.TenantID, "vehicle", req.VehicleID, "device", req.DeviceID)
+	}
 	return application.IngestLocationCommand{
-		TenantID:  req.TenantID,
-		VehicleID: req.VehicleID,
-		DeviceID:  req.DeviceID,
+		IMEI:      imei,
 		Latitude:  req.Latitude,
 		Longitude: req.Longitude,
 		SpeedKPH:  req.SpeedKPH,
@@ -64,7 +75,6 @@ func (teltonikaAdapter) decode(r *http.Request) (application.IngestLocationComma
 		fixTime = time.Unix(p.Timestamp, 0).UTC().Format(time.RFC3339)
 	}
 	return application.IngestLocationCommand{
-		TenantID:  p.TenantID,
 		IMEI:      p.IMEI,
 		Latitude:  p.Lat,
 		Longitude: p.Lng,
@@ -98,7 +108,6 @@ func (queclinkAdapter) decode(r *http.Request) (application.IngestLocationComman
 	heading := p.Course
 	accuracy := p.Accuracy
 	return application.IngestLocationCommand{
-		TenantID:  p.TenantID,
 		IMEI:      p.UniqueID,
 		Latitude:  p.Lat,
 		Longitude: p.Lng,

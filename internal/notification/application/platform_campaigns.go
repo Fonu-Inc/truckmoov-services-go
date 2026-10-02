@@ -12,16 +12,6 @@ import (
 
 var ErrCampaignNotCancellable = errors.New("only a draft or scheduled campaign can be cancelled")
 
-const dueCampaignPage = 100
-
-// PlatformCampaignRepository adds the one atomic step scheduling needs.
-type PlatformCampaignRepository interface {
-	CampaignRepository
-	// ClaimScheduledCampaign moves a scheduled campaign to sending and reports
-	// whether this caller won it, so two instances never run the same broadcast.
-	ClaimScheduledCampaign(ctx context.Context, tenantID, campaignID string, at time.Time) (bool, error)
-}
-
 type CampaignProgressView struct {
 	Recipients int `json:"recipients"`
 	Sent       int `json:"sent"`
@@ -83,14 +73,14 @@ type PlatformCampaignCommand struct {
 // tenants use, run as the system tenant and from the platform's numbers, with
 // no wallet charge because the platform is the one paying for itself.
 type PlatformCampaigns struct {
-	repository PlatformCampaignRepository
+	repository CampaignRepository
 	create     *CreateCampaignUseCase
 	send       *SendCampaignUseCase
 	templates  WhatsAppTemplateProvider
 	clock      Clock
 }
 
-func NewPlatformCampaigns(repository PlatformCampaignRepository, create *CreateCampaignUseCase, send *SendCampaignUseCase, templates WhatsAppTemplateProvider, clock Clock) *PlatformCampaigns {
+func NewPlatformCampaigns(repository CampaignRepository, create *CreateCampaignUseCase, send *SendCampaignUseCase, templates WhatsAppTemplateProvider, clock Clock) *PlatformCampaigns {
 	return &PlatformCampaigns{repository: repository, create: create, send: send, templates: templates, clock: clock}
 }
 
@@ -224,30 +214,6 @@ func (u *PlatformCampaigns) Cancel(ctx context.Context, id string) (CampaignView
 		return CampaignView{}, err
 	}
 	return u.view(ctx, saved)
-}
-
-func (u *PlatformCampaigns) RunDue(ctx context.Context) (int, error) {
-	now := u.clock.Now()
-	campaigns, _, err := u.repository.ListCampaigns(ctx, ListCampaignsQuery{TenantID: identity.SystemTenantID, Status: domain.CampaignStatusScheduled, Limit: dueCampaignPage})
-	if err != nil {
-		return 0, err
-	}
-	started := 0
-	var failures error
-	for _, campaign := range campaigns {
-		if campaign.ScheduledFor == nil || campaign.ScheduledFor.After(now) {
-			continue
-		}
-		won, err := u.repository.ClaimScheduledCampaign(ctx, campaign.TenantID, campaign.ID, now)
-		if err != nil || !won {
-			failures = errors.Join(failures, err)
-			continue
-		}
-		started++
-		_, runErr := u.run(ctx, campaign.ID, false)
-		failures = errors.Join(failures, runErr)
-	}
-	return started, failures
 }
 
 func (u *PlatformCampaigns) view(ctx context.Context, campaign domain.Campaign) (CampaignView, error) {

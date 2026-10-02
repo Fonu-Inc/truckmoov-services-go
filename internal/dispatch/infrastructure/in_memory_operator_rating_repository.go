@@ -9,7 +9,7 @@ import (
 
 type InMemoryOperatorRatingRepository struct {
 	mu      sync.Mutex
-	ratings map[string]domain.OperatorRating // keyed by job id
+	ratings map[string]domain.OperatorRating // keyed by operator tenant + job id
 }
 
 func NewInMemoryOperatorRatingRepository() *InMemoryOperatorRatingRepository {
@@ -21,14 +21,14 @@ func (r *InMemoryOperatorRatingRepository) EnsureSchema(context.Context) error {
 func (r *InMemoryOperatorRatingRepository) Create(_ context.Context, rating domain.OperatorRating) (domain.OperatorRating, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.ratings[rating.JobID] = rating
+	r.ratings[ratingKey(rating.OperatorTenantID, rating.JobID)] = rating
 	return rating, nil
 }
 
-func (r *InMemoryOperatorRatingRepository) FindByJob(_ context.Context, jobID string) (domain.OperatorRating, bool, error) {
+func (r *InMemoryOperatorRatingRepository) FindByJob(_ context.Context, operatorTenantID, jobID string) (domain.OperatorRating, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	rating, ok := r.ratings[jobID]
+	rating, ok := r.ratings[ratingKey(operatorTenantID, jobID)]
 	return rating, ok, nil
 }
 
@@ -48,4 +48,8 @@ func (r *InMemoryOperatorRatingRepository) AverageForOperator(_ context.Context,
 		return 0, 0, nil
 	}
 	return roundToTwoDecimalsInfra(sum / float64(count)), count, nil
+}
+
+func ratingKey(operatorTenantID, jobID string) string {
+	return operatorTenantID + "\x00" + jobID
 }

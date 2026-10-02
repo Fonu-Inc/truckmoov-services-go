@@ -11,6 +11,13 @@ import (
 
 type authClaimsContextKey struct{}
 
+func setClaims(ctx context.Context, claims *AuthClaims) context.Context {
+	if claims != nil {
+		noteAlertTenant(ctx, claims.TenantID)
+	}
+	return context.WithValue(ctx, authClaimsContextKey{}, claims)
+}
+
 type AuthClaims struct {
 	Subject  string
 	Email    string
@@ -42,7 +49,7 @@ func WithAuthContext(next http.Handler, verifier *identity.UserTokenVerifier) ht
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), authClaimsContextKey{}, claims)
+		ctx := setClaims(r.Context(), claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -63,7 +70,7 @@ func RequireAuth(next http.Handler, verifier *identity.UserTokenVerifier) http.H
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), authClaimsContextKey{}, claims)
+		ctx := setClaims(r.Context(), claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

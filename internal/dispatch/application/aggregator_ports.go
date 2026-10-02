@@ -31,7 +31,7 @@ type AggregatorRelationshipRepository interface {
 type OperatorRatingRepository interface {
 	EnsureSchema(ctx context.Context) error
 	Create(ctx context.Context, rating domain.OperatorRating) (domain.OperatorRating, error)
-	FindByJob(ctx context.Context, jobID string) (domain.OperatorRating, bool, error)
+	FindByJob(ctx context.Context, operatorTenantID, jobID string) (domain.OperatorRating, bool, error)
 	// AverageForOperator returns the mean rating and how many ratings it is
 	// built from. Zero ratings returns (0, 0, nil) — a caller must not treat a
 	// zero average as a real 0-star rating.

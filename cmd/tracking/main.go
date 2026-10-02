@@ -123,7 +123,7 @@ func main() {
 	// Cache device→SIM from auth's SIM events so the overview tab serves SIM info
 	// without a synchronous auth call.
 	consumeSIMChanged := application.NewConsumeSIMChangedUseCase(simResolver, log)
-	if _, subErr := bus.Subscribe(ctx, "tm.*.sim.changed", "tracking-sim-changed", consumeSIMChanged.Handle); subErr != nil {
+	if _, subErr := bus.Subscribe(ctx, "tm.*.sim.changed", "tracking-sim-changed", eventbus.Verified(consumeSIMChanged.Handle, cfg.EventSigningSecret, eventbus.VerifyOptions{AcceptUnsigned: cfg.EventAcceptUnsigned}, log)); subErr != nil {
 		log.Warn("sim_changed_subscribe_failed", "error", subErr.Error())
 	}
 

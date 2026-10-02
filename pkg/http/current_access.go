@@ -1,7 +1,6 @@
 package httpx
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/truckmoov/services-go/pkg/identity"
@@ -9,7 +8,8 @@ import (
 
 // WithCurrentAccess checks a signed-in user against their account as it is
 // now. A suspended or deleted account loses its claims, so the request is
-// treated as carrying no valid token. When auth cannot be asked, the
+// treated as carrying no valid token. When auth answers from a wrong route
+// the request gets 503. When auth cannot be asked, the
 // verified token stands, rather than refusing everyone while auth is down.
 func WithCurrentAccess(next http.Handler, client *identity.AccessClient) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -19,14 +19,18 @@ func WithCurrentAccess(next http.Handler, client *identity.AccessClient) http.Ha
 			return
 		}
 		access, lookup := client.Get(r.Context(), claims.Subject)
+		if lookup == identity.AccessUnavailable {
+			WriteError(w, http.StatusServiceUnavailable, "access check unavailable")
+			return
+		}
 		switch {
 		case lookup == identity.AccessNoUser, lookup == identity.AccessFound && !access.Active:
-			r = r.WithContext(context.WithValue(r.Context(), authClaimsContextKey{}, (*AuthClaims)(nil)))
+			r = r.WithContext(setClaims(r.Context(), (*AuthClaims)(nil)))
 		case lookup == identity.AccessFound:
 			current := *claims
 			current.Permissions = access.Permissions
 			current.OrganizationType = access.OrganizationType
-			r = r.WithContext(context.WithValue(r.Context(), authClaimsContextKey{}, &current))
+			r = r.WithContext(setClaims(r.Context(), &current))
 		}
 		next.ServeHTTP(w, r)
 	})

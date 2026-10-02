@@ -285,12 +285,16 @@ func (u *ListLinkedOperatorsUseCase) Execute(ctx context.Context, aggregatorTena
 		if !relationship.IsActive() {
 			continue
 		}
-		operators = append(operators, u.snapshot(ctx, relationship))
+		operator, err := u.snapshot(ctx, relationship)
+		if err != nil {
+			return nil, err
+		}
+		operators = append(operators, operator)
 	}
 	return operators, nil
 }
 
-func (u *ListLinkedOperatorsUseCase) snapshot(ctx context.Context, relationship domain.AggregatorRelationship) LinkedOperator {
+func (u *ListLinkedOperatorsUseCase) snapshot(ctx context.Context, relationship domain.AggregatorRelationship) (LinkedOperator, error) {
 	result := LinkedOperator{Relationship: relationship}
 
 	if u.fleetCounts != nil {
@@ -301,7 +305,11 @@ func (u *ListLinkedOperatorsUseCase) snapshot(ctx context.Context, relationship 
 	}
 
 	if u.jobs != nil {
-		for _, job := range u.jobs.FindByTenant(relationship.OperatorTenantID) {
+		operatorJobs, err := u.jobs.FindByTenant(relationship.OperatorTenantID)
+		if err != nil {
+			return LinkedOperator{}, fmt.Errorf("list operator jobs: %w", err)
+		}
+		for _, job := range operatorJobs {
 			if job.IsActive() {
 				result.ActiveJobs++
 			}
@@ -315,7 +323,7 @@ func (u *ListLinkedOperatorsUseCase) snapshot(ctx context.Context, relationship 
 		}
 	}
 
-	return result
+	return result, nil
 }
 
 func equalFoldTrim(a, b string) bool {

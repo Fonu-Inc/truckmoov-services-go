@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/truckmoov/services-go/internal/tracking/domain"
@@ -139,9 +140,7 @@ func (u *IngestLocationUseCase) resolveIdentity(command IngestLocationCommand) r
 			resolved.lookupErr = err
 			if err == nil && identity != nil {
 				resolved.known = identity
-				if identity.TenantID != "" {
-					resolved.tenantID = identity.TenantID
-				}
+				resolved.tenantID = identity.TenantID
 				if identity.DeviceID != "" {
 					resolved.deviceID = identity.DeviceID
 				}
@@ -187,6 +186,7 @@ func (u *IngestLocationUseCase) Execute(
 	}
 
 	if r := applyTelemetryFilter(u.telemetry, prev, command, parsedFix, fixErr == nil); r.skip {
+		slog.Debug("ingest_filtered", "reason", r.reason, "tenant", tenantID, "device", deviceID)
 		return IngestLocationResult{Skipped: true, SkipReason: r.reason}, nil
 	}
 

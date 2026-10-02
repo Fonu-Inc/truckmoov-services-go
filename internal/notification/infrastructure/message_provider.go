@@ -105,11 +105,18 @@ func NewMultiChannelMessageProvider(whatsApp *MetaWhatsAppMessageProvider, sms *
 }
 
 func (p *MetaWhatsAppMessageProvider) Send(ctx context.Context, tenantID, channel, recipient, content string) (string, error) {
+	result, err := p.SendTracked(ctx, tenantID, channel, recipient, content)
+	return result.Status, err
+}
+
+// SendTracked is Send that also returns the wamid Meta issued, which is the
+// only handle a later delivery, read or failed receipt carries.
+func (p *MetaWhatsAppMessageProvider) SendTracked(ctx context.Context, tenantID, channel, recipient, content string) (domain.MessageSendResult, error) {
 	if strings.EqualFold(strings.TrimSpace(channel), "whatsapp") == false && strings.TrimSpace(channel) != "" {
-		return domain.StatusFailed, fmt.Errorf("unsupported notification channel: %s", channel)
+		return domain.MessageSendResult{Status: domain.StatusFailed}, fmt.Errorf("unsupported notification channel: %s", channel)
 	}
 	result, err := p.SendText(ctx, tenantID, recipient, content)
-	return result.Status, err
+	return domain.MessageSendResult{Status: result.Status, ProviderMessageID: result.MessageID}, err
 }
 
 func (p *DotgoSMSMessageProvider) Send(ctx context.Context, tenantID, channel, recipient, content string) (string, error) {
@@ -181,17 +188,16 @@ func (p *MultiChannelMessageProvider) Send(ctx context.Context, tenantID, channe
 	return result.Status, err
 }
 
-// SendTracked routes by channel like Send, and passes the SMS provider's request
-// id through so its delivery receipts can be matched. The other channels report
-// no id of their own here.
+// SendTracked routes by channel like Send, and passes the WhatsApp message id and
+// the SMS request id through so delivery receipts can be matched. Email reports
+// no id of its own.
 func (p *MultiChannelMessageProvider) SendTracked(ctx context.Context, tenantID, channel, recipient, content string) (domain.MessageSendResult, error) {
 	switch strings.ToLower(strings.TrimSpace(channel)) {
 	case "", "whatsapp":
 		if p.whatsApp == nil {
 			return domain.MessageSendResult{Status: domain.StatusFailed}, errors.New("whatsapp provider is not configured")
 		}
-		status, err := p.whatsApp.Send(ctx, tenantID, "whatsapp", recipient, content)
-		return domain.MessageSendResult{Status: status}, err
+		return p.whatsApp.SendTracked(ctx, tenantID, "whatsapp", recipient, content)
 	case "sms":
 		if p.sms == nil {
 			return domain.MessageSendResult{Status: domain.StatusFailed}, errors.New("sms provider is not configured")

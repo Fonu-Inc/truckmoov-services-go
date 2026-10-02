@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS job_offers (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_job_offers_job ON job_offers (job_id);
+CREATE INDEX IF NOT EXISTS idx_job_offers_tenant_job ON job_offers (offering_tenant_id, job_id);
 CREATE INDEX IF NOT EXISTS idx_job_offers_target_status ON job_offers (target_tenant_id, status);
 CREATE INDEX IF NOT EXISTS idx_job_offers_offering_status ON job_offers (offering_tenant_id, status);
 -- Read by the expiry sweep: pending offers ordered by how soon they expire.
@@ -317,7 +317,7 @@ func (r *PostgresJobOfferRepository) Accept(
 		return application.AcceptedOffer{}, fmt.Errorf("decode job payload: %w", err)
 	}
 
-	transferred, err := job.TransferToCarrier(targetTenantID, now, "timeline-"+accepted.ID)
+	transferred, err := job.TransferToCarrier(targetTenantID, offer.OfferedRateNgn, now, "timeline-"+accepted.ID)
 	if err != nil {
 		return application.AcceptedOffer{}, err
 	}

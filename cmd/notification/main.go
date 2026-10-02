@@ -291,6 +291,7 @@ func main() {
 			Text:          sendMessageUseCase,
 			Template:      sendJobInstructionUseCase,
 			Conversations: conversationRepository,
+			Recorder:      application.NewInstructionConversationRecorder(conversationRepository, clock, idGenerator),
 			Accounts:      whatsAppAccountRepository,
 			Drivers:       infrastructure.NewFleetDriverLookupClient(cfg.FleetServiceURL, serviceCaller, nil),
 			Charger:       usageCharger,
@@ -421,6 +422,7 @@ func main() {
 			drivers:      infrastructure.NewFleetDriverLookupClient(cfg.FleetServiceURL, serviceCaller, nil),
 			voice:        application.NewPlatformVoice(voiceRepository, infrastructure.NullVoiceProvider{}, clock, idGenerator),
 			sms:          application.NewPlatformSMSTemplates(smsTemplateRepository, messageProvider, clock, idGenerator),
+			runner:       application.NewCampaignRunner(campaignRepository, sendCampaignUseCase, clock),
 			campaigns: application.NewPlatformCampaigns(
 				campaignRepository,
 				createCampaignUseCase,

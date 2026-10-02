@@ -224,32 +224,16 @@ func (r *PostgresJobRepository) FindByTenantAndID(tenantID, id string) (domain.J
 	return job, true
 }
 
-func (r *PostgresJobRepository) FindByTenant(tenantID string) []domain.Job {
+func (r *PostgresJobRepository) FindByTenant(tenantID string) ([]domain.Job, error) {
 	rows, err := r.db.QueryContext(
 		context.Background(),
 		`SELECT payload FROM dispatch_jobs WHERE tenant_id = $1 ORDER BY created_at ASC`,
 		strings.TrimSpace(tenantID),
 	)
 	if err != nil {
-		return []domain.Job{}
+		return nil, fmt.Errorf("find jobs by tenant: %w", err)
 	}
-	defer rows.Close()
-
-	results := make([]domain.Job, 0)
-	for rows.Next() {
-		var payload []byte
-		if err := rows.Scan(&payload); err != nil {
-			continue
-		}
-
-		job, err := decodeStoredJob(payload)
-		if err != nil {
-			continue
-		}
-		results = append(results, job)
-	}
-
-	return results
+	return scanJobRows(rows)
 }
 
 func (r *PostgresJobRepository) FindInProgressByTenant(ctx context.Context, tenantID string) ([]domain.Job, error) {
@@ -260,21 +244,28 @@ func (r *PostgresJobRepository) FindInProgressByTenant(ctx context.Context, tena
 	if err != nil {
 		return nil, fmt.Errorf("find in-progress jobs: %w", err)
 	}
+	return scanJobRows(rows)
+}
+
+func scanJobRows(rows *sql.Rows) ([]domain.Job, error) {
 	defer rows.Close()
 
 	jobs := make([]domain.Job, 0)
 	for rows.Next() {
 		var payload []byte
 		if err := rows.Scan(&payload); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("scan job row: %w", err)
 		}
 		job, err := decodeStoredJob(payload)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("decode job payload: %w", err)
 		}
 		jobs = append(jobs, job)
 	}
-	return jobs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate job rows: %w", err)
+	}
+	return jobs, nil
 }
 
 // ListTenantsWithActiveJobs names every tenant with a job still in progress.

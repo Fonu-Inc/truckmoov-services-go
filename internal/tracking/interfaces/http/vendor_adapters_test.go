@@ -85,7 +85,7 @@ func TestTraccarAdapter_DecodesTraccarForward(t *testing.T) {
 }
 
 func TestGenericAdapter_SetsProtocol(t *testing.T) {
-	body := `{"vehicle_id":"v1","device_id":"d1","lat":6.5,"lng":3.4}`
+	body := `{"imei":"359779090012345","lat":6.5,"lng":3.4}`
 	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", strings.NewReader(body))
 
 	cmd, err := genericAdapter{}.decode(req)
@@ -94,5 +94,21 @@ func TestGenericAdapter_SetsProtocol(t *testing.T) {
 	}
 	if cmd.Protocol != "generic" {
 		t.Fatalf("expected protocol generic, got %q", cmd.Protocol)
+	}
+}
+
+func TestGenericAdapter_IgnoresBodyIdentityAndRequiresIMEI(t *testing.T) {
+	body := `{"imei":" 359779090012345 ","tenant_id":"evil","vehicle_id":"v1","device_id":"d1","lat":6.5,"lng":3.4}`
+	cmd, err := genericAdapter{}.decode(httptest.NewRequest(http.MethodPost, "/tracking/ingest", strings.NewReader(body)))
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if cmd.TenantID != "" || cmd.VehicleID != "" || cmd.DeviceID != "" || cmd.IMEI != "359779090012345" {
+		t.Fatalf("body identity must be dropped, got %+v", cmd)
+	}
+
+	noIMEI := `{"tenant_id":"t1","vehicle_id":"v1","device_id":"d1","lat":6.5,"lng":3.4}`
+	if _, err := (genericAdapter{}).decode(httptest.NewRequest(http.MethodPost, "/tracking/ingest", strings.NewReader(noIMEI))); err == nil {
+		t.Fatal("expected error without imei")
 	}
 }

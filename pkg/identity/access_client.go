@@ -3,6 +3,7 @@ package identity
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,7 +17,14 @@ import (
 // drops its cached copy.
 const AccessChangedSubject = "tm.system.access.changed"
 
-const accessCacheTTL = 30 * time.Second
+const (
+	accessCacheTTL    = 30 * time.Second
+	accessNoUserTTL   = 10 * time.Second
+	userNotFoundText  = "user not found"
+	notFoundBodyLimit = 4 * 1024
+)
+
+var errAuthRouteMissing = errors.New("auth answered 404 without a user-not-found body")
 
 // Access is what a user may do right now, as auth sees it.
 type Access struct {
@@ -37,6 +45,9 @@ const (
 	AccessFound
 	// AccessNoUser means auth knows no such user.
 	AccessNoUser
+	// AccessUnavailable means auth's route did not answer as auth (wrong URL,
+	// gateway): callers fail closed and nothing is cached.
+	AccessUnavailable
 )
 
 type cachedAccess struct {
@@ -77,10 +88,13 @@ func (c *AccessClient) Get(ctx context.Context, userID string) (Access, AccessLo
 	c.mu.Lock()
 	cached, ok := c.cache[userID]
 	c.mu.Unlock()
-	if ok && time.Since(cached.at) < accessCacheTTL {
+	if ok && time.Since(cached.at) < cacheTTL(cached.lookup) {
 		return cached.access, cached.lookup
 	}
 	access, lookup, err := c.fetch(ctx, userID)
+	if errors.Is(err, errAuthRouteMissing) {
+		return Access{}, AccessUnavailable
+	}
 	if err != nil {
 		return cached.access, cached.lookup
 	}
@@ -88,6 +102,24 @@ func (c *AccessClient) Get(ctx context.Context, userID string) (Access, AccessLo
 	c.cache[userID] = cachedAccess{access: access, lookup: lookup, at: time.Now()}
 	c.mu.Unlock()
 	return access, lookup
+}
+
+func cacheTTL(lookup AccessLookup) time.Duration {
+	if lookup == AccessNoUser {
+		return accessNoUserTTL
+	}
+	return accessCacheTTL
+}
+
+func isUserNotFound(body []byte) bool {
+	var parsed struct {
+		Message any `json:"message"`
+	}
+	if json.Unmarshal(body, &parsed) != nil {
+		return false
+	}
+	message, ok := parsed.Message.(string)
+	return ok && strings.EqualFold(strings.TrimSpace(message), userNotFoundText)
 }
 
 func (c *AccessClient) fetch(ctx context.Context, userID string) (Access, AccessLookup, error) {
@@ -104,7 +136,11 @@ func (c *AccessClient) fetch(ctx context.Context, userID string) (Access, Access
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusNotFound {
-		return Access{}, AccessNoUser, nil
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, notFoundBodyLimit))
+		if isUserNotFound(body) {
+			return Access{}, AccessNoUser, nil
+		}
+		return Access{}, AccessUnknown, errAuthRouteMissing
 	}
 	if resp.StatusCode != http.StatusOK {
 		return Access{}, AccessUnknown, fmt.Errorf("auth answered %d", resp.StatusCode)

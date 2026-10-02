@@ -163,7 +163,7 @@ func (r *InMemoryJobOfferRepository) Accept(
 	if !found {
 		return application.AcceptedOffer{}, application.ErrJobNotFound
 	}
-	transferred, err := job.TransferToCarrier(targetTenantID, now, "timeline-"+accepted.ID)
+	transferred, err := job.TransferToCarrier(targetTenantID, offer.OfferedRateNgn, now, "timeline-"+accepted.ID)
 	if err != nil {
 		return application.AcceptedOffer{}, err
 	}

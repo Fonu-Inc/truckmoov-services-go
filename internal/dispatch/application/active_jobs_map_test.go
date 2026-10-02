@@ -17,8 +17,10 @@ func (r *mapJobRepo) Save(job domain.Job) error { return nil }
 func (r *mapJobRepo) FindByTenantAndID(tenantID, id string) (domain.Job, bool) {
 	return domain.Job{}, false
 }
-func (r *mapJobRepo) FindByTenant(tenantID string) []domain.Job { return r.jobs[tenantID] }
-func (r *mapJobRepo) Delete(tenantID, id string) error          { return nil }
+func (r *mapJobRepo) FindByTenant(tenantID string) ([]domain.Job, error) {
+	return r.jobs[tenantID], nil
+}
+func (r *mapJobRepo) Delete(tenantID, id string) error { return nil }
 
 type countingShaper struct {
 	calls int

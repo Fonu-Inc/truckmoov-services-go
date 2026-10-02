@@ -24,6 +24,7 @@ const (
 // channels a campaign used.
 const (
 	RecipientStateQueued     = "queued"
+	RecipientStateSending    = "sending"
 	RecipientStateSent       = "sent"
 	RecipientStateDelivered  = "delivered"
 	RecipientStateRead       = "read"

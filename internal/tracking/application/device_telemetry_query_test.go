@@ -124,23 +124,28 @@ type fakeSIMResolver struct {
 	sims map[string]DeviceSIM
 }
 
-func (f *fakeSIMResolver) Resolve(deviceID string) (*DeviceSIM, error) {
-	sim, ok := f.sims[deviceID]
+func simTestKey(tenantID, deviceID string) string { return tenantID + "|" + deviceID }
+
+func (f *fakeSIMResolver) Resolve(tenantID, deviceID string) (*DeviceSIM, error) {
+	sim, ok := f.sims[simTestKey(tenantID, deviceID)]
 	if !ok {
 		return nil, nil
 	}
 	return &sim, nil
 }
-func (f *fakeSIMResolver) Upsert(sim DeviceSIM) error { f.sims[sim.DeviceID] = sim; return nil }
-func (f *fakeSIMResolver) Evict(deviceID string) error {
-	delete(f.sims, deviceID)
+func (f *fakeSIMResolver) Upsert(sim DeviceSIM) error {
+	f.sims[simTestKey(sim.TenantID, sim.DeviceID)] = sim
+	return nil
+}
+func (f *fakeSIMResolver) Evict(tenantID, deviceID string) error {
+	delete(f.sims, simTestKey(tenantID, deviceID))
 	return nil
 }
 
 func TestDeviceQuery_OverviewIncludesSIM(t *testing.T) {
 	uc, _ := seededQueryUseCase()
 	uc.simResolver = &fakeSIMResolver{sims: map[string]DeviceSIM{
-		"d1": {DeviceID: "d1", ICCID: "8934071100001", Carrier: "MTN", Plan: "iot_basic", Status: "assigned", DataUsageMB: 120, DataLimitMB: 500},
+		"t1|d1": {TenantID: "t1", DeviceID: "d1", ICCID: "8934071100001", Carrier: "MTN", Plan: "iot_basic", Status: "assigned", DataUsageMB: 120, DataLimitMB: 500},
 	}}
 
 	overview, err := uc.Overview(context.Background(), "t1", "d1")
@@ -149,6 +154,14 @@ func TestDeviceQuery_OverviewIncludesSIM(t *testing.T) {
 	}
 	if overview.SIM == nil || overview.SIM.ICCID != "8934071100001" || overview.SIM.Carrier != "MTN" {
 		t.Fatalf("expected SIM block populated, got %+v", overview.SIM)
+	}
+
+	other, err := uc.Overview(context.Background(), "t2", "d1")
+	if err != nil {
+		t.Fatalf("overview other tenant: %v", err)
+	}
+	if other.SIM != nil {
+		t.Fatalf("SIM must not leak across tenants, got %+v", other.SIM)
 	}
 
 	bare, err := uc.Overview(context.Background(), "t1", "unknown-device")

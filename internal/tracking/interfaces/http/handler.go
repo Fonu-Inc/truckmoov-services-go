@@ -17,6 +17,7 @@ import (
 )
 
 type ingestRequest struct {
+	IMEI      string   `json:"imei"`
 	TenantID  string   `json:"tenant_id"`
 	VehicleID string   `json:"vehicle_id"`
 	DeviceID  string   `json:"device_id"`
