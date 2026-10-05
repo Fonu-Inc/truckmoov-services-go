@@ -202,3 +202,91 @@ func TestARouteUsersReachMustNameAPermission(t *testing.T) {
 	}()
 	NewRoutes(http.NewServeMux(), true, nil, nil).HandleFunc("/x", []Audience{Tenant}, None(), ok)
 }
+
+// Enforce mode must never invoke the handler once the caller's audience is
+// not served: not for another portal, not for an anonymous caller, not for a
+// user reaching a service-only (internal) route, and not for a token that
+// failed to verify.
+func TestEnforceModeDoesNotServeAfterAudienceNotServed(t *testing.T) {
+	cases := []struct {
+		name      string
+		audiences []Audience
+		claims    *AuthClaims
+		bearer    bool
+		want      int
+	}{
+		{"tenant on admin route", []Audience{Admin}, tenantUser, false, http.StatusNotFound},
+		{"installer on admin route", []Audience{Admin}, installer, false, http.StatusNotFound},
+		{"anonymous on admin route", []Audience{Admin}, nil, false, http.StatusNotFound},
+		{"admin on service-only route", []Audience{Service}, staff, false, http.StatusNotFound},
+		{"tenant on service-only route", []Audience{Service}, tenantUser, false, http.StatusNotFound},
+		{"unverified token on admin route", []Audience{Admin}, nil, true, http.StatusUnauthorized},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			called := 0
+			mux := http.NewServeMux()
+			need := SignedIn()
+			if !servesUsers(c.audiences) {
+				need = None()
+			}
+			NewRoutes(mux, true, nil, nil).HandleFunc("/r", c.audiences, need, func(w http.ResponseWriter, _ *http.Request) {
+				called++
+				w.WriteHeader(http.StatusOK)
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/r", nil)
+			if c.claims != nil {
+				req = withClaims(req, c.claims)
+			}
+			if c.bearer {
+				req.Header.Set("Authorization", "Bearer not-verified")
+			}
+			res := httptest.NewRecorder()
+			mux.ServeHTTP(res, req)
+
+			if res.Code != c.want {
+				t.Fatalf("got %d, want %d", res.Code, c.want)
+			}
+			if called != 0 {
+				t.Fatalf("handler must not run after audience_not_served when enforce is on, called=%d", called)
+			}
+		})
+	}
+}
+
+// Permission enforcement must also stop before the handler.
+func TestEnforcedMissingPermissionDoesNotServe(t *testing.T) {
+	called := 0
+	mux := http.NewServeMux()
+	NewRoutes(mux, true, nil, nil).EnforcePermissions(true).HandleFunc("/a", []Audience{Admin}, On("admin.staff"), func(w http.ResponseWriter, _ *http.Request) {
+		called++
+		w.WriteHeader(http.StatusOK)
+	})
+
+	if res := serve(nil, mux, "/a", staff); res.Code != http.StatusNotFound {
+		t.Fatalf("missing permission under enforce must 404, got %d", res.Code)
+	}
+	if called != 0 {
+		t.Fatalf("handler must not run on missing_permission under enforce, called=%d", called)
+	}
+}
+
+// Log mode still serves after audience_not_served (soak behaviour).
+func TestLogModeServesAfterAudienceNotServed(t *testing.T) {
+	called := 0
+	mux := http.NewServeMux()
+	routes := NewRoutes(mux, false, nil, nil)
+	routes.HandleFunc("/a", []Audience{Admin}, SignedIn(), func(w http.ResponseWriter, _ *http.Request) {
+		called++
+		w.WriteHeader(http.StatusOK)
+	})
+
+	res := serve(routes, mux, "/a", tenantUser)
+	if res.Code != http.StatusOK {
+		t.Fatalf("log mode must still serve, got %d", res.Code)
+	}
+	if called != 1 {
+		t.Fatalf("log mode must invoke handler once, called=%d", called)
+	}
+}

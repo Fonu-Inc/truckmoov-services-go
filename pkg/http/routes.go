@@ -132,12 +132,14 @@ func (r *Routes) guard(audiences []Audience, need Requirement, next http.Handler
 			return
 		}
 		r.refused(req, caller, "audience_not_served", r.enforce)
+		// Log mode (PORTAL_ENFORCEMENT!=enforce): record and still serve so a
+		// missing audience declaration cannot lock out legitimate callers
+		// during the soak. Enforce mode must never reach the handler after
+		// audience_not_served — deny with the same 404 a missing route uses.
 		if !r.enforce {
 			next.ServeHTTP(w, req)
 			return
 		}
-		// Exactly what the mux answers for a path it does not know: a
-		// refusal must not tell the caller that something is here.
 		NotFound(w, req)
 	})
 }
