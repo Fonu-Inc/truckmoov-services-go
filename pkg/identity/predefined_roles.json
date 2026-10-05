@@ -109,7 +109,6 @@
       "admin.upgrade_review.read",
       "admin.upgrade_review.manage",
       "admin.plans.read",
-      "admin.plans.manage",
       "admin.billing.read",
       "admin.billing.manage",
       "admin.alerts.read",
@@ -127,15 +126,10 @@
       "admin.messaging.read",
       "admin.messaging.manage",
       "admin.security.read",
-      "admin.security.manage",
       "admin.settings.read",
-      "admin.settings.manage",
       "admin.integrations.read",
-      "admin.integrations.manage",
       "admin.ai.read",
-      "admin.ai.manage",
-      "admin.audit.read",
-      "admin.audit.manage"
+      "admin.audit.read"
     ]
   },
   "INSTALLER": {
