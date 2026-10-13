@@ -67,6 +67,7 @@ type IngestLocationUseCase struct {
 	quarantine     *Quarantine
 	warmup         *Warmup
 	idMetrics      IdentityMetrics
+	roadMatch      *RoadMatchService
 }
 
 func NewIngestLocationUseCase(
@@ -115,6 +116,11 @@ func (u *IngestLocationUseCase) WithWarmup(warmup *Warmup) *IngestLocationUseCas
 
 func (u *IngestLocationUseCase) WithIdentityMetrics(metrics IdentityMetrics) *IngestLocationUseCase {
 	u.idMetrics = metrics
+	return u
+}
+
+func (u *IngestLocationUseCase) WithRoadMatching(roadMatch *RoadMatchService) *IngestLocationUseCase {
+	u.roadMatch = roadMatch
 	return u
 }
 
@@ -279,6 +285,9 @@ func (u *IngestLocationUseCase) Execute(
 	}
 
 	u.rate.Record(u.clock.Now())
+	if u.roadMatch != nil {
+		u.roadMatch.Submit(locationUpdate)
+	}
 
 	return IngestLocationResult{
 		Published: true,

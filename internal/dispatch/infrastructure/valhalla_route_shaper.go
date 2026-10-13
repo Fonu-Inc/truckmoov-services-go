@@ -25,8 +25,9 @@ func (s *ValhallaRouteShaper) RouteShape(
 	return s.client.RouteShape(ctx, locations)
 }
 
-// RouteEstimate returns the traffic-aware duration and distance Valhalla plans
-// for the drive. Used to work out how much of a late delivery was traffic.
+// RouteEstimate returns the duration and distance Valhalla plans for the drive
+// from its road speeds; no live traffic is applied. Used to work out how much
+// of a late delivery the route itself explains.
 func (s *ValhallaRouteShaper) RouteEstimate(
 	ctx context.Context,
 	points []application.RoutePoint,

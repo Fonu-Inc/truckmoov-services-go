@@ -25,6 +25,7 @@ import (
 	"github.com/truckmoov/services-go/pkg/logger"
 	"github.com/truckmoov/services-go/pkg/otel"
 	redisstore "github.com/truckmoov/services-go/pkg/redis"
+	"github.com/truckmoov/services-go/pkg/valhalla"
 )
 
 const (
@@ -154,6 +155,9 @@ func main() {
 		identityResolver,
 		telemetryStore,
 	).WithGate(gate).WithMessageRate(messageRate).WithQuarantine(quarantine).WithWarmup(warmup).WithIdentityMetrics(identityMetrics)
+	if cfg.RoadMatchEnabled {
+		ingestLocationUseCase.WithRoadMatching(newRoadMatchService(cfg, historyStore, eventPublisher, clock, idGenerator, log))
+	}
 	publishAlertUseCase := application.NewPublishAlertUseCase(
 		eventPublisher,
 		clock,
@@ -297,4 +301,23 @@ func warnIfIngestUnguarded(cfg config.Config, openIngest bool, log *slog.Logger)
 		return
 	}
 	log.Error("gps_api_key_unset", "detail", "GPS_API_KEY is unset; all ingest is refused with 503 until it is set")
+}
+
+func newRoadMatchService(
+	cfg config.Config,
+	history application.LocationHistoryRepository,
+	publisher application.RoadMatchPublisher,
+	clock application.Clock,
+	ids application.IDGenerator,
+	log *slog.Logger,
+) *application.RoadMatchService {
+	timeout := time.Duration(cfg.RoadMatchTimeoutSeconds) * time.Second
+	client := valhalla.NewClient(cfg.ValhallaURL, &http.Client{Timeout: timeout})
+	return application.NewRoadMatchService(history, infrastructure.NewValhallaRoadMatcher(client), publisher, clock, ids, application.RoadMatchConfig{
+		MinSpeedKPH: cfg.RoadMatchMinSpeedKPH,
+		TracePoints: cfg.RoadMatchTracePoints,
+		MaxTraceAge: time.Duration(cfg.RoadMatchMaxTraceAgeSeconds) * time.Second,
+		Timeout:     timeout,
+		Concurrency: cfg.RoadMatchConcurrency,
+	}, log)
 }

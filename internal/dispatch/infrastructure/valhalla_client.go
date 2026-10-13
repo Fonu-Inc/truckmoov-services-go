@@ -40,8 +40,36 @@ type ValhallaMatrixResponse struct {
 	Error            string                 `json:"error,omitempty"`
 }
 
+// Valhalla returns null time for a pair it cannot route between.
 type ValhallaMatrixCell struct {
-	Time float64 `json:"time"`
+	Time *float64 `json:"time"`
+}
+
+// unreachableSeconds is far beyond any route horizon, so the solver's
+// duration dimension rejects the arc instead of treating it as free.
+const unreachableSeconds int64 = math.MaxInt32
+
+// truckTopSpeedKPH caps planned truck speed at the highway limit; Valhalla's
+// default of 120 km/h makes ETAs optimistic.
+const truckTopSpeedKPH = 80
+
+type valhallaTruckOptions struct {
+	TopSpeed int `json:"top_speed"`
+}
+
+type valhallaCostingOptions struct {
+	Truck valhallaTruckOptions `json:"truck"`
+}
+
+func truckCostingOptions() *valhallaCostingOptions {
+	return &valhallaCostingOptions{Truck: valhallaTruckOptions{TopSpeed: truckTopSpeedKPH}}
+}
+
+func (c ValhallaMatrixCell) seconds() int64 {
+	if c.Time == nil {
+		return unreachableSeconds
+	}
+	return int64(math.Round(*c.Time))
 }
 
 type ValhallaLocStruct struct {
@@ -49,9 +77,10 @@ type ValhallaLocStruct struct {
 	Lon float64 `json:"lon"`
 }
 type ValhallaMatrixApiInput struct {
-	Sources []ValhallaLocStruct `json:"sources"`
-	Targets []ValhallaLocStruct `json:"targets"`
-	Costing string              `json:"costing"`
+	Sources        []ValhallaLocStruct     `json:"sources"`
+	Targets        []ValhallaLocStruct     `json:"targets"`
+	Costing        string                  `json:"costing"`
+	CostingOptions *valhallaCostingOptions `json:"costing_options,omitempty"`
 }
 
 func (v *ValhallaClient) GetMatrix(ctx context.Context, payload []SolverNodeRef) ([]int64, error) {
@@ -68,9 +97,10 @@ func (v *ValhallaClient) GetMatrix(ctx context.Context, payload []SolverNodeRef)
 	}
 
 	input := &ValhallaMatrixApiInput{
-		Sources: locations,
-		Targets: locations,
-		Costing: "truck",
+		Sources:        locations,
+		Targets:        locations,
+		Costing:        "truck",
+		CostingOptions: truckCostingOptions(),
 	}
 	body, err := json.Marshal(input)
 	if err != nil {
@@ -108,7 +138,7 @@ func (v *ValhallaClient) GetMatrix(ctx context.Context, payload []SolverNodeRef)
 			return nil, fmt.Errorf("valhalla matrix row %d size mismatch: got %d cols want %d", rowIdx, len(row), len(payload))
 		}
 		for _, cell := range row {
-			matrix = append(matrix, int64(math.Round(cell.Time)))
+			matrix = append(matrix, cell.seconds())
 		}
 	}
 
@@ -116,12 +146,13 @@ func (v *ValhallaClient) GetMatrix(ctx context.Context, payload []SolverNodeRef)
 }
 
 type OptimizeRouteInput struct {
-	Locations      []ValhallaLocStruct `json:"locations"`
-	Costing        string              `json:"costing"`
-	Units          string              `json:"units"`
-	DirectionsType string              `json:"directions_type,omitempty"`
-	Alternates     int                 `json:"alternates,omitempty"`
-	ID             string              `json:"id,omitempty"`
+	Locations      []ValhallaLocStruct     `json:"locations"`
+	Costing        string                  `json:"costing"`
+	CostingOptions *valhallaCostingOptions `json:"costing_options,omitempty"`
+	Units          string                  `json:"units"`
+	DirectionsType string                  `json:"directions_type,omitempty"`
+	Alternates     int                     `json:"alternates,omitempty"`
+	ID             string                  `json:"id,omitempty"`
 }
 
 type ValhallaRouteSummary struct {
@@ -180,54 +211,6 @@ type ValhallaRouteResponse struct {
 	Error      string                   `json:"error,omitempty"`
 }
 
-func (v *ValhallaClient) OptimizeRoute(ctx context.Context, payload []SolverNodeRef) (*ValhallaRouteResponse, error) {
-	if len(payload) < 2 {
-		return nil, fmt.Errorf("valhalla route requires at least two nodes")
-	}
-
-	locations := make([]ValhallaLocStruct, 0, len(payload))
-	for _, node := range payload {
-		locations = append(locations, ValhallaLocStruct{
-			Lat: node.location.Latitude,
-			Lon: node.location.Longitude,
-		})
-	}
-
-	input := OptimizeRouteInput{
-		Locations: locations,
-		Costing:   "truck",
-		Units:     "kilometers",
-	}
-	body, err := json.Marshal(input)
-	if err != nil {
-		return nil, fmt.Errorf("marshal valhalla route request: %w", err)
-	}
-	endpoint := v.baseUrl + "/optimized_route?json=" + url.QueryEscape(string(body))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create valhalla route request: %w", err)
-	}
-	resp, err := v.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("call valhalla optimized route service: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("valhalla optimized route returned status %s", resp.Status)
-	}
-
-	var output ValhallaRouteResponse
-	if err := json.NewDecoder(resp.Body).Decode(&output); err != nil {
-		return nil, fmt.Errorf("decode valhalla route response: %w", err)
-	}
-	if output.Error != "" {
-		return nil, fmt.Errorf("valhalla optimized route error: %s", output.Error)
-	}
-
-	return &output, nil
-}
-
 func (v *ValhallaClient) GetTurnByTurnDirections(ctx context.Context, payload []SolverNodeRef) (*ValhallaRouteResponse, error) {
 	if len(payload) < 2 {
 		return nil, fmt.Errorf("valhalla route requires at least two nodes")
@@ -244,6 +227,7 @@ func (v *ValhallaClient) GetTurnByTurnDirections(ctx context.Context, payload []
 	input := OptimizeRouteInput{
 		Locations:      locations,
 		Costing:        "truck",
+		CostingOptions: truckCostingOptions(),
 		Units:          "kilometers",
 		DirectionsType: "instructions",
 	}
@@ -278,9 +262,9 @@ func (v *ValhallaClient) GetTurnByTurnDirections(ctx context.Context, payload []
 }
 
 // RouteShape returns the encoded polyline for a drive through the given points
-// in the order supplied. Unlike OptimizeRoute it neither reorders stops nor
-// consults the solver: the overview map draws the route a driver was already
-// given, so ordering is an input, not a question.
+// in the order supplied. It neither reorders stops nor consults the solver:
+// the overview map draws the route a driver was already given, so ordering is
+// an input, not a question.
 func (v *ValhallaClient) RouteShape(ctx context.Context, points []ValhallaLocStruct) (string, string, error) {
 	if len(points) < 2 {
 		return "", "", fmt.Errorf("valhalla route requires at least two points")
@@ -289,6 +273,7 @@ func (v *ValhallaClient) RouteShape(ctx context.Context, points []ValhallaLocStr
 	input := OptimizeRouteInput{
 		Locations:      points,
 		Costing:        "truck",
+		CostingOptions: truckCostingOptions(),
 		Units:          "kilometers",
 		DirectionsType: "none",
 	}
@@ -347,6 +332,7 @@ func (v *ValhallaClient) RouteEstimate(ctx context.Context, points []ValhallaLoc
 	input := OptimizeRouteInput{
 		Locations:      points,
 		Costing:        "truck",
+		CostingOptions: truckCostingOptions(),
 		Units:          "kilometers",
 		DirectionsType: "none",
 	}
@@ -393,6 +379,7 @@ func (v *ValhallaClient) GetLegAlternates(ctx context.Context, from, to SolverNo
 			{Lat: to.location.Latitude, Lon: to.location.Longitude},
 		},
 		Costing:        "truck",
+		CostingOptions: truckCostingOptions(),
 		Units:          "kilometers",
 		DirectionsType: "instructions",
 		Alternates:     alternates,

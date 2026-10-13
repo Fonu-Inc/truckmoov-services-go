@@ -124,6 +124,14 @@ type Config struct {
 	NtfyErrorTopicURL         string
 	NtfyErrorAuthToken        string
 	FleetServiceURL           string
+
+	// Road matching: which road each moving fix was on, via Valhalla.
+	RoadMatchEnabled            bool
+	RoadMatchMinSpeedKPH        float64
+	RoadMatchTracePoints        int
+	RoadMatchMaxTraceAgeSeconds int
+	RoadMatchTimeoutSeconds     int
+	RoadMatchConcurrency        int
 }
 
 func Load(serviceName, defaultPort string) Config {
@@ -161,6 +169,12 @@ func Load(serviceName, defaultPort string) Config {
 		MaxAccuracyM:                 getEnvFloat("TELEMETRY_MAX_ACCURACY_M", 500.0),
 		MaxSpeedKPH:                  getEnvFloat("TELEMETRY_MAX_SPEED_KPH", 250.0),
 		HistoryTTLSeconds:            getEnvInt("TRACKING_HISTORY_TTL_SECONDS", 7*24*3600),
+		RoadMatchEnabled:             getEnvBoolStrict("TRACKING_ROAD_MATCH_ENABLED", false),
+		RoadMatchMinSpeedKPH:         getEnvFloat("TRACKING_ROAD_MATCH_MIN_SPEED_KPH", 20),
+		RoadMatchTracePoints:         getEnvInt("TRACKING_ROAD_MATCH_TRACE_POINTS", 8),
+		RoadMatchMaxTraceAgeSeconds:  getEnvInt("TRACKING_ROAD_MATCH_MAX_TRACE_AGE_SECONDS", 180),
+		RoadMatchTimeoutSeconds:      getEnvInt("TRACKING_ROAD_MATCH_TIMEOUT_SECONDS", 3),
+		RoadMatchConcurrency:         getEnvInt("TRACKING_ROAD_MATCH_CONCURRENCY", 4),
 		LatestTTLSeconds:             getEnvInt("TRACKING_LATEST_TTL_SECONDS", 30*24*3600),
 		IMEIIdentityTTLSeconds:       getEnvInt("TRACKING_IMEI_IDENTITY_TTL_SECONDS", 90*24*3600),
 		SIMTTLSeconds:                getEnvInt("TRACKING_SIM_TTL_SECONDS", 90*24*3600),

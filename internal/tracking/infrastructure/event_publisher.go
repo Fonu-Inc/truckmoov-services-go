@@ -54,3 +54,25 @@ func (p *EventPublisher) PublishAlertTriggered(ctx context.Context, event domain
 		},
 	})
 }
+
+func (p *EventPublisher) PublishRoadMatched(ctx context.Context, event domain.RoadMatched) error {
+	return p.bus.Publish(ctx, event.Subject(), eventbus.EventEnvelope{
+		ID:         event.EventID,
+		Type:       "vehicle.road.matched",
+		Version:    1,
+		OccurredAt: event.OccurredAt,
+		TenantID:   event.TenantID,
+		Data: map[string]any{
+			"vehicle_id":          event.VehicleID,
+			"device_id":           event.DeviceID,
+			"fix_time":            event.FixTimeRFC,
+			"lat":                 event.Latitude,
+			"lng":                 event.Longitude,
+			"speed_kph":           event.SpeedKPH,
+			"road_class":          event.RoadClass,
+			"road_name":           event.RoadName,
+			"osm_speed_limit_kph": event.OSMSpeedLimitKPH,
+			"way_id":              event.WayID,
+		},
+	})
+}
