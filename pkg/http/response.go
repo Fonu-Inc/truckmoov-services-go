@@ -10,9 +10,10 @@ import (
 // build when one writes JSON any other way.
 
 type SuccessBody struct {
-	Status  bool   `json:"status"`
-	Message string `json:"message"`
-	Data    any    `json:"data"`
+	Status  bool      `json:"status"`
+	Message string    `json:"message"`
+	Data    any       `json:"data"`
+	Meta    *PageMeta `json:"meta,omitempty"`
 }
 
 type ErrorBody struct {
@@ -25,6 +26,10 @@ type ErrorBody struct {
 
 func WriteOK(w http.ResponseWriter, status int, data any) {
 	WriteSuccess(w, status, "success", data)
+}
+
+func WritePage(w http.ResponseWriter, status int, data any, meta PageMeta) {
+	writeJSON(w, status, SuccessBody{Status: true, Message: "success", Data: data, Meta: &meta})
 }
 
 func WriteSuccess(w http.ResponseWriter, status int, message string, data any) {

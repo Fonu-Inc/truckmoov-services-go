@@ -658,6 +658,11 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
+	pageRequest, err := httpx.ParsePageRequest(q)
+	if err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	filter := application.ListJobsFilter{
 		Status:       q.Get("status"),
 		Query:        q.Get("query"),
@@ -676,7 +681,8 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 		respondLifecycleError(w, err)
 		return
 	}
-	httpx.WriteOK(w, http.StatusOK, h.enrichJobs(r.Context(), tenantID, jobs))
+	page, meta := httpx.Paginate(jobs, pageRequest)
+	httpx.WritePage(w, http.StatusOK, h.enrichJobs(r.Context(), tenantID, page), meta)
 }
 
 // activeJobsMap serves the live delivery map: active jobs, their stops in

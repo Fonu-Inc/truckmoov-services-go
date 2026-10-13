@@ -188,6 +188,8 @@ func dispatchOpenAPISpec() map[string]any {
 						{"name": "amount_from", "in": "query", "description": "Minimum quoted amount (NGN)", "schema": map[string]any{"type": "number"}},
 						{"name": "amount_to", "in": "query", "description": "Maximum quoted amount (NGN)", "schema": map[string]any{"type": "number"}},
 						{"name": "deadline", "in": "query", "description": "Only jobs whose deadline falls on this date (YYYY-MM-DD)", "schema": map[string]any{"type": "string", "format": "date"}},
+						{"name": "page", "in": "query", "description": "1-based page number", "schema": map[string]any{"type": "integer", "minimum": 1, "default": 1}},
+						{"name": "limit", "in": "query", "description": "Page size", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "default": 20}},
 					},
 					"responses": map[string]any{
 						"200": map[string]any{
@@ -1345,6 +1347,15 @@ func dispatchOpenAPISpec() map[string]any {
 						"data": map[string]any{
 							"type":  "array",
 							"items": map[string]any{"$ref": "#/components/schemas/Job"},
+						},
+						"meta": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"total":      map[string]any{"type": "integer"},
+								"page":       map[string]any{"type": "integer"},
+								"limit":      map[string]any{"type": "integer"},
+								"totalPages": map[string]any{"type": "integer"},
+							},
 						},
 					},
 				},
