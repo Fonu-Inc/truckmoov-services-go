@@ -29,6 +29,10 @@ type RoadMatchPublisher interface {
 	PublishRoadMatched(ctx context.Context, event domain.RoadMatched) error
 }
 
+type RoadMatchMetrics interface {
+	Dropped()
+}
+
 type RoadMatchConfig struct {
 	// MinSpeedKPH skips slow fixes: below the lowest limit nothing can be speeding.
 	MinSpeedKPH float64
@@ -50,6 +54,7 @@ type RoadMatchService struct {
 	cfg       RoadMatchConfig
 	slots     chan struct{}
 	log       *slog.Logger
+	metrics   RoadMatchMetrics
 }
 
 func NewRoadMatchService(
@@ -73,6 +78,11 @@ func NewRoadMatchService(
 	}
 }
 
+func (s *RoadMatchService) WithMetrics(metrics RoadMatchMetrics) *RoadMatchService {
+	s.metrics = metrics
+	return s
+}
+
 // Submit matches the fix in the background. When every slot is busy the fix is
 // dropped rather than queued: the next fix of a moving truck will be matched.
 func (s *RoadMatchService) Submit(update domain.LocationUpdate) {
@@ -82,6 +92,9 @@ func (s *RoadMatchService) Submit(update domain.LocationUpdate) {
 	select {
 	case s.slots <- struct{}{}:
 	default:
+		if s.metrics != nil {
+			s.metrics.Dropped()
+		}
 		s.log.Debug("road_match_dropped_busy", "vehicle", update.VehicleID)
 		return
 	}

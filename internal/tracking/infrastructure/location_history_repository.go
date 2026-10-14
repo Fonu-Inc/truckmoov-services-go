@@ -56,45 +56,31 @@ func NewRedisLocationHistoryRepository(store *redisstore.Store, ttlSeconds int) 
 }
 
 func (r *RedisLocationHistoryRepository) Append(entry application.LatestLocation) error {
-	key := redisLocationHistoryKey(entry.TenantID, entry.VehicleID)
-	payload, ok, err := r.store.Get(key)
+	data, err := json.Marshal(entry)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal history entry: %w", err)
 	}
-	var history []application.LatestLocation
-	if ok && payload != nil {
-		_ = json.Unmarshal(payload, &history)
-	}
-	history = append([]application.LatestLocation{entry}, history...)
-	if len(history) > maxHistoryEntries {
-		history = history[:maxHistoryEntries]
-	}
-	data, err := json.Marshal(history)
-	if err != nil {
-		return fmt.Errorf("marshal history: %w", err)
-	}
-	return r.store.SetEX(key, data, r.ttlSeconds)
+	return r.store.PushCapped(redisLocationHistoryKey(entry.TenantID, entry.VehicleID), data, maxHistoryEntries, r.ttlSeconds)
 }
 
 func (r *RedisLocationHistoryRepository) History(tenantID, vehicleID string, limit int) ([]application.LatestLocation, error) {
-	key := redisLocationHistoryKey(tenantID, vehicleID)
-	payload, ok, err := r.store.Get(key)
-	if err != nil || !ok || payload == nil {
-		return nil, nil
+	if limit <= 0 || limit > maxHistoryEntries {
+		limit = maxHistoryEntries
 	}
-	var history []application.LatestLocation
-	if err := json.Unmarshal(payload, &history); err != nil {
-		return nil, nil
+	raw, err := r.store.Range(redisLocationHistoryKey(tenantID, vehicleID), limit)
+	if err != nil {
+		return nil, err
 	}
-	if limit <= 0 || limit > len(history) {
-		limit = len(history)
+	history := make([]application.LatestLocation, 0, len(raw))
+	for _, payload := range raw {
+		var entry application.LatestLocation
+		if json.Unmarshal(payload, &entry) == nil {
+			history = append(history, entry)
+		}
 	}
-	if limit == 0 {
-		return nil, nil
-	}
-	return append([]application.LatestLocation(nil), history[:limit]...), nil
+	return history, nil
 }
 
 func redisLocationHistoryKey(tenantID, vehicleID string) string {
-	return fmt.Sprintf("tracking:location-history:%s:%s", tenantID, vehicleID)
+	return fmt.Sprintf("tracking:location-history:v2:%s:%s", tenantID, vehicleID)
 }

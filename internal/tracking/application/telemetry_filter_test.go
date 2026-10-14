@@ -18,7 +18,7 @@ func TestApplyTelemetryFilter_RejectsInvalidCoordinates(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			r := applyTelemetryFilter(TelemetryConfig{}, nil, IngestLocationCommand{Latitude: c[0], Longitude: c[1]}, time.Time{}, false)
+			r := applyTelemetryFilter(TelemetryConfig{}, nil, IngestLocationCommand{Latitude: c[0], Longitude: c[1]}, time.Time{})
 			if !r.skip || r.reason != "invalid_coordinates" {
 				t.Fatalf("expected invalid_coordinates, got %+v", r)
 			}
@@ -28,7 +28,7 @@ func TestApplyTelemetryFilter_RejectsInvalidCoordinates(t *testing.T) {
 
 func TestApplyTelemetryFilter_AcceptsEquatorOrMeridian(t *testing.T) {
 	for _, c := range [][2]float64{{0, 3.4}, {6.5, 0}, {6.5, 3.4}} {
-		r := applyTelemetryFilter(TelemetryConfig{}, nil, IngestLocationCommand{Latitude: c[0], Longitude: c[1]}, time.Time{}, false)
+		r := applyTelemetryFilter(TelemetryConfig{}, nil, IngestLocationCommand{Latitude: c[0], Longitude: c[1]}, time.Time{})
 		if r.skip {
 			t.Fatalf("%v must pass, got %+v", c, r)
 		}

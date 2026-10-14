@@ -231,3 +231,29 @@ func TestIngestLocationUseCase_Execute_FailedPublishStaysRetryable(t *testing.T)
 		t.Fatalf("expected the retry to publish, got %+v err=%v", retry, err)
 	}
 }
+
+type failingHistoryRepository struct{ fakeLocationHistoryRepository }
+
+func (*failingHistoryRepository) Append(LatestLocation) error { return errors.New("redis down") }
+
+func TestIngestLocation_HistoryFailureDoesNotFailIngest(t *testing.T) {
+	publisher := &fakeTrackingPublisher{}
+	useCase := NewIngestLocationUseCase(
+		publisher,
+		&fakeLatestLocationRepository{},
+		fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)},
+		fixedTrackingIDGenerator{value: "evt-1"},
+		"default",
+		&failingHistoryRepository{},
+		TelemetryConfig{},
+		nil,
+		nil,
+	)
+
+	result, err := useCase.Execute(context.Background(), IngestLocationCommand{
+		VehicleID: "vehicle-1", DeviceID: "device-1", Latitude: 6.5, Longitude: 3.4,
+	})
+	if err != nil || !result.Published {
+		t.Fatalf("expected a published fix despite history failure, got %#v, %v", result, err)
+	}
+}

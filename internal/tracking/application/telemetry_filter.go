@@ -27,7 +27,7 @@ func validCoordinates(lat, lon float64) bool {
 	return math.Abs(lat) >= nullIslandEpsilon || math.Abs(lon) >= nullIslandEpsilon
 }
 
-func applyTelemetryFilter(cfg TelemetryConfig, prev *LatestLocation, cmd IngestLocationCommand, fixTime time.Time, fixOK bool) filterResult {
+func applyTelemetryFilter(cfg TelemetryConfig, prev *LatestLocation, cmd IngestLocationCommand, fixTime time.Time) filterResult {
 	if !validCoordinates(cmd.Latitude, cmd.Longitude) {
 		return filterResult{skip: true, reason: "invalid_coordinates"}
 	}
@@ -38,7 +38,7 @@ func applyTelemetryFilter(cfg TelemetryConfig, prev *LatestLocation, cmd IngestL
 	}
 
 	// The remaining checks compare against the previous fix and need a valid timestamp.
-	if prev == nil || !fixOK {
+	if prev == nil {
 		return filterResult{}
 	}
 

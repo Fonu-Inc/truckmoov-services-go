@@ -107,3 +107,24 @@ func TestDefaultBodyCapAppliesWithoutLimitBody(t *testing.T) {
 		t.Fatalf("expected the default cap to refuse the body, got %d", code)
 	}
 }
+
+func TestWithAPIKeyAcceptsOnlyTheHeader(t *testing.T) {
+	handler := WithAPIKey(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), "secret", false)
+
+	cases := map[string]func(*http.Request){
+		"header": func(r *http.Request) { r.Header.Set("X-Api-Key", "secret") },
+		"query":  func(r *http.Request) { r.URL.RawQuery = "api_key=secret" },
+	}
+	want := map[string]int{"header": http.StatusOK, "query": http.StatusUnauthorized}
+	for name, apply := range cases {
+		req := httptest.NewRequest(http.MethodPost, "/ingest", nil)
+		apply(req)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != want[name] {
+			t.Fatalf("%s: expected %d, got %d", name, want[name], rec.Code)
+		}
+	}
+}

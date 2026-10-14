@@ -156,7 +156,7 @@ func main() {
 		telemetryStore,
 	).WithGate(gate).WithMessageRate(messageRate).WithQuarantine(quarantine).WithWarmup(warmup).WithIdentityMetrics(identityMetrics)
 	if cfg.RoadMatchEnabled {
-		ingestLocationUseCase.WithRoadMatching(newRoadMatchService(cfg, historyStore, eventPublisher, clock, idGenerator, log))
+		ingestLocationUseCase.WithRoadMatching(newRoadMatchService(cfg, historyStore, eventPublisher, clock, idGenerator, log).WithMetrics(infrastructure.NewPrometheusRoadMatchMetrics(gateMetrics.Registry())))
 	}
 	publishAlertUseCase := application.NewPublishAlertUseCase(
 		eventPublisher,

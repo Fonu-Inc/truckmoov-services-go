@@ -19,9 +19,9 @@ func WithLogging(next http.Handler, log *slog.Logger) http.Handler {
 	})
 }
 
-// WithAPIKey rejects requests unless the X-Api-Key header or the api_key query
-// param carries apiKey. With no key configured it refuses everything, unless
-// allowOpen says the endpoint may run unguarded (development only).
+// WithAPIKey rejects requests unless the X-Api-Key header carries apiKey. With no
+// key configured it refuses everything, unless allowOpen says the endpoint may
+// run unguarded (development only).
 func WithAPIKey(next http.Handler, apiKey string, allowOpen bool) http.Handler {
 	if apiKey == "" {
 		if allowOpen {
@@ -33,11 +33,7 @@ func WithAPIKey(next http.Handler, apiKey string, allowOpen bool) http.Handler {
 	}
 	expected := []byte(apiKey)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key := r.Header.Get("X-Api-Key")
-		if key == "" {
-			key = r.URL.Query().Get("api_key")
-		}
-		if subtle.ConstantTimeCompare([]byte(key), expected) != 1 {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Api-Key")), expected) != 1 {
 			WriteError(w, http.StatusUnauthorized, "invalid or missing api key")
 			return
 		}

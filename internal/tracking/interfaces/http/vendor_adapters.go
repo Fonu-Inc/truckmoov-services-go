@@ -34,7 +34,7 @@ func (genericAdapter) decode(r *http.Request) (application.IngestLocationCommand
 		return application.IngestLocationCommand{}, errIMEIRequired
 	}
 	if req.TenantID != "" || req.VehicleID != "" || req.DeviceID != "" {
-		slog.Warn("ingest_body_identity_ignored", "imei", imei, "tenant", req.TenantID, "vehicle", req.VehicleID, "device", req.DeviceID)
+		slog.Debug("ingest_body_identity_ignored", "imei", imei, "tenant", req.TenantID, "vehicle", req.VehicleID, "device", req.DeviceID)
 	}
 	return application.IngestLocationCommand{
 		IMEI:      imei,

@@ -97,7 +97,7 @@ func trackingOpenAPISpec() map[string]any {
 					"type":        "apiKey",
 					"in":          "header",
 					"name":        "X-Api-Key",
-					"description": "Device/gateway API key for ingest endpoints. May also be supplied as the api_key query parameter.",
+					"description": "Device/gateway API key for ingest endpoints.",
 				},
 				"BearerAuth": map[string]any{
 					"type":         "http",

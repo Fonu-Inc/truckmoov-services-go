@@ -268,36 +268,34 @@ func TestConsumeDeviceIdentity_RegistrationClearsQuarantine(t *testing.T) {
 	}
 }
 
-func TestIngestLocation_AccuracyFilteredDespiteUnparseableFixTime(t *testing.T) {
+func TestIngestLocation_RejectsUnparseableFixTime(t *testing.T) {
 	publisher := &fakeTrackingPublisher{}
-	repository := &fakeLatestLocationRepository{}
-	historyRepo := &fakeLocationHistoryRepository{}
 	useCase := NewIngestLocationUseCase(
 		publisher,
-		repository,
+		&fakeLatestLocationRepository{},
 		fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)},
 		fixedTrackingIDGenerator{value: "evt-1"},
 		"default",
-		historyRepo,
-		TelemetryConfig{MaxAccuracyM: 100},
+		&fakeLocationHistoryRepository{},
+		TelemetryConfig{},
 		nil,
 		nil,
 	)
 
-	bad := 500.0
-	result, err := useCase.Execute(context.Background(), IngestLocationCommand{
-		VehicleID: "vehicle-1",
-		DeviceID:  "device-1",
-		Latitude:  6.5,
-		Longitude: 3.4,
-		AccuracyM: &bad,
-		FixTime:   "not-a-timestamp",
-	})
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	for _, fixTime := range []string{"not-a-timestamp", "2026-10-14 10:00:00"} {
+		_, err := useCase.Execute(context.Background(), IngestLocationCommand{
+			VehicleID: "vehicle-1",
+			DeviceID:  "device-1",
+			Latitude:  6.5,
+			Longitude: 3.4,
+			FixTime:   fixTime,
+		})
+		if !errors.Is(err, ErrInvalidFixTime) {
+			t.Fatalf("fix_time %q: expected ErrInvalidFixTime, got %v", fixTime, err)
+		}
 	}
-	if !result.Skipped || result.SkipReason != "accuracy_exceeded" {
-		t.Fatalf("expected accuracy_exceeded skip even with unparseable fix_time, got %#v", result)
+	if publisher.location.EventID != "" {
+		t.Fatalf("nothing may be published for a bad fix_time, got %#v", publisher.location)
 	}
 }
 

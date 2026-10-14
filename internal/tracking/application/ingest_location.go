@@ -10,6 +10,8 @@ import (
 	"github.com/truckmoov/services-go/internal/tracking/domain"
 )
 
+const telemetryWriteTimeout = 500 * time.Millisecond
+
 type IngestLocationCommand struct {
 	TenantID  string
 	VehicleID string
@@ -42,6 +44,7 @@ type IngestLocationCommand struct {
 var (
 	ErrIdentityUnavailable = errors.New("device identity lookup unavailable")
 	ErrIngestUnavailable   = errors.New("location storage unavailable")
+	ErrInvalidFixTime      = errors.New("fix_time must be RFC3339")
 )
 
 type IngestLocationResult struct {
@@ -184,14 +187,17 @@ func (u *IngestLocationUseCase) Execute(
 		fixTime = u.clock.Now().UTC().Format(time.RFC3339)
 	}
 
-	parsedFix, fixErr := time.Parse(time.RFC3339, fixTime)
+	parsedFix, err := time.Parse(time.RFC3339, fixTime)
+	if err != nil {
+		return IngestLocationResult{}, ErrInvalidFixTime
+	}
 	prev, _ := u.locationStore.Get(tenantID, vehicleID)
 
 	if command.VendorPositionID != "" && prev != nil && prev.VendorPositionID == command.VendorPositionID {
 		return IngestLocationResult{Skipped: true, SkipReason: "duplicate_vendor_position"}, nil
 	}
 
-	if r := applyTelemetryFilter(u.telemetry, prev, command, parsedFix, fixErr == nil); r.skip {
+	if r := applyTelemetryFilter(u.telemetry, prev, command, parsedFix); r.skip {
 		slog.Debug("ingest_filtered", "reason", r.reason, "tenant", tenantID, "device", deviceID)
 		return IngestLocationResult{Skipped: true, SkipReason: r.reason}, nil
 	}
@@ -251,18 +257,15 @@ func (u *IngestLocationUseCase) Execute(
 		ObservedAt: locationUpdate.OccurredAt,
 		EventID:    locationUpdate.EventID,
 	}); err != nil {
-		return IngestLocationResult{}, fmt.Errorf("append location history: %w: %w", ErrIngestUnavailable, err)
+		slog.Warn("location_history_append_failed", "tenant", tenantID, "vehicle", vehicleID, "error", err)
 	}
 
 	// Time-series persistence is best-effort: the live path (Redis snapshot + NATS
 	// event) is the source of truth, so a Timescale outage must not fail ingest.
 	if u.telemetryStore != nil {
-		var fixTimePtr *time.Time
-		if fixErr == nil {
-			f := parsedFix
-			fixTimePtr = &f
-		}
-		_ = u.telemetryStore.SaveSample(ctx, TelemetrySample{
+		sampleCtx, cancel := context.WithTimeout(ctx, telemetryWriteTimeout)
+		defer cancel()
+		_ = u.telemetryStore.SaveSample(sampleCtx, TelemetrySample{
 			TenantID:        locationUpdate.TenantID,
 			DeviceID:        locationUpdate.DeviceID,
 			VehicleID:       locationUpdate.VehicleID,
@@ -278,7 +281,7 @@ func (u *IngestLocationUseCase) Execute(
 			EngineOn:        command.EngineOn,
 			FirmwareVersion: command.FirmwareVersion,
 			Protocol:        command.Protocol,
-			FixTime:         fixTimePtr,
+			FixTime:         &parsedFix,
 			ObservedAt:      locationUpdate.OccurredAt,
 			EventID:         locationUpdate.EventID,
 		})

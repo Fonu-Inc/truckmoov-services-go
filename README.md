@@ -68,7 +68,7 @@ Tracking- and ingest-specific vars:
 - `TELEMETRY_MAX_SPEED_KPH`: reject implausible speed samples.
 - `TRACKING_HISTORY_TTL_SECONDS`: retention for historical location entries.
 - `TRACKING_LATEST_TTL_SECONDS`: retention for latest-known vehicle position cache.
-- `GPS_API_KEY`: key GPS vendors send as `X-Api-Key` (or `api_key`) on `/tracking/ingest`. While it is unset, ingest answers 503. `ALLOW_UNAUTHENTICATED_INGEST=true` opens ingest without a key outside production.
+- `GPS_API_KEY`: key GPS vendors send as the `X-Api-Key` header on `/tracking/ingest`. While it is unset, ingest answers 503. `ALLOW_UNAUTHENTICATED_INGEST=true` opens ingest without a key outside production.
 
 Shared runtime protection:
 - `RATE_LIMIT_RPS`, `RATE_LIMIT_BURST`

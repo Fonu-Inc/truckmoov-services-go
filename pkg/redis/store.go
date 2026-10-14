@@ -132,6 +132,38 @@ func (s *Store) SMembers(key string) ([]string, error) {
 	return results, nil
 }
 
+const pushCappedScript = `redis.call('LPUSH', KEYS[1], ARGV[1])
+redis.call('LTRIM', KEYS[1], 0, tonumber(ARGV[2]) - 1)
+return redis.call('EXPIRE', KEYS[1], ARGV[3])`
+
+// PushCapped puts value at the head of a list, keeps only the newest max
+// entries and refreshes the expiry, atomically.
+func (s *Store) PushCapped(key string, value []byte, max, ttlSeconds int) error {
+	_, err := s.do("EVAL", pushCappedScript, "1", key, string(value), strconv.Itoa(max), strconv.Itoa(ttlSeconds))
+	return err
+}
+
+// Range returns the first count entries of a list, head first.
+func (s *Store) Range(key string, count int) ([][]byte, error) {
+	reply, err := s.do("LRANGE", key, "0", strconv.Itoa(count-1))
+	if err != nil || reply == nil {
+		return nil, err
+	}
+	items, ok := reply.([]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected LRANGE response type %T", reply)
+	}
+	results := make([][]byte, 0, len(items))
+	for _, item := range items {
+		text, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("unexpected LRANGE item type %T", item)
+		}
+		results = append(results, []byte(text))
+	}
+	return results, nil
+}
+
 func (s *Store) do(command string, args ...string) (any, error) {
 	if s.addr == "" {
 		return nil, errors.New("redis address is required")
