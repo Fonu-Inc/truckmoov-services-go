@@ -12,16 +12,19 @@ import (
 )
 
 type Store struct {
-	addr    string
-	db      string
-	timeout time.Duration
+	addr     string
+	password string
+	db       string
+	timeout  time.Duration
 }
 
-func NewStore(addr, db string) *Store {
+// NewStore returns a client for addr. An empty password skips AUTH.
+func NewStore(addr, password, db string) *Store {
 	return &Store{
-		addr:    strings.TrimSpace(addr),
-		db:      strings.TrimSpace(db),
-		timeout: 3 * time.Second,
+		addr:     strings.TrimSpace(addr),
+		password: password,
+		db:       strings.TrimSpace(db),
+		timeout:  3 * time.Second,
 	}
 }
 
@@ -180,6 +183,15 @@ func (s *Store) do(command string, args ...string) (any, error) {
 	}
 
 	reader := bufio.NewReader(conn)
+
+	if s.password != "" {
+		if err := writeCommand(conn, "AUTH", s.password); err != nil {
+			return nil, err
+		}
+		if _, err := readReply(reader); err != nil {
+			return nil, err
+		}
+	}
 
 	if s.db != "" && s.db != "0" {
 		if err := writeCommand(conn, "SELECT", s.db); err != nil {

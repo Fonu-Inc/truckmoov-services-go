@@ -36,7 +36,7 @@ Dispatch persistence vars:
 - `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_SSLMODE`
 
 Tracking state/cache vars:
-- `REDIS_ADDR`, `REDIS_DB`
+- `REDIS_ADDR`, `REDIS_PASSWORD` (optional; sent as AUTH when set), `REDIS_DB`
 
 Notification service auth vars:
 - `JWT_SECRET`: must match the auth service signing secret so template-management endpoints can derive tenant scope from bearer tokens.

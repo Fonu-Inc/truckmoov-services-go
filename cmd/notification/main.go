@@ -80,7 +80,7 @@ func main() {
 	}()
 	activityPublisher := activitylog.NewPublisher(bus)
 
-	redisClient := redisstore.NewStore(cfg.RedisAddr, cfg.RedisDB)
+	redisClient := redisstore.NewStore(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
 	outboxRepository := infrastructure.NewRedisOutboxRepository(redisClient)
 	conversationRepository := infrastructure.NewPostgresWhatsAppConversationRepository(postgresDB)
 	if err := conversationRepository.EnsureSchema(ctx); err != nil {

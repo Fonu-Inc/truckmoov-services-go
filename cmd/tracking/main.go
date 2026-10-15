@@ -74,7 +74,7 @@ func main() {
 	}()
 	activityPublisher := activitylog.NewPublisher(bus)
 
-	redisClient := redisstore.NewStore(cfg.RedisAddr, cfg.RedisDB)
+	redisClient := redisstore.NewStore(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
 	eventPublisher := infrastructure.NewEventPublisher(bus)
 	clock := infrastructure.SystemClock{}
 	idGenerator := infrastructure.TimeIDGenerator{}

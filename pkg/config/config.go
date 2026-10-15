@@ -64,6 +64,7 @@ type Config struct {
 	TimescaleDB       string
 	TimescaleSSLMode  string
 	RedisAddr         string
+	RedisPassword     string
 	RedisDB           string
 	CORSOrigins       []string
 	// CORSEnabled is false in every deployed environment: Kong answers CORS
@@ -165,6 +166,7 @@ func Load(serviceName, defaultPort string) Config {
 		TimescaleDB:                  getEnv("TIMESCALE_DB", "telemetry"),
 		TimescaleSSLMode:             getEnv("TIMESCALE_SSLMODE", "disable"),
 		RedisAddr:                    getEnv("REDIS_ADDR", "localhost:6380"),
+		RedisPassword:                getEnv("REDIS_PASSWORD", ""),
 		RedisDB:                      getEnv("REDIS_DB", "0"),
 		MaxAccuracyM:                 getEnvFloat("TELEMETRY_MAX_ACCURACY_M", 500.0),
 		MaxSpeedKPH:                  getEnvFloat("TELEMETRY_MAX_SPEED_KPH", 250.0),
