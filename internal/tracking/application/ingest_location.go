@@ -219,13 +219,7 @@ func (u *IngestLocationUseCase) Execute(
 		return IngestLocationResult{}, fmt.Errorf("build location event: %w", err)
 	}
 
-	// The dedupe key lives in the stored latest location, so it is written only
-	// after the event is out: a failed publish must stay retryable.
-	if err := u.publisher.PublishLocationUpdate(ctx, locationUpdate); err != nil {
-		return IngestLocationResult{}, fmt.Errorf("publish location event: %w: %w", ErrIngestUnavailable, err)
-	}
-
-	if err := u.locationStore.Save(LatestLocation{
+	snapshot := LatestLocation{
 		TenantID:         locationUpdate.TenantID,
 		VehicleID:        locationUpdate.VehicleID,
 		DeviceID:         locationUpdate.DeviceID,
@@ -238,25 +232,20 @@ func (u *IngestLocationUseCase) Execute(
 		ObservedAt:       locationUpdate.OccurredAt,
 		EventID:          locationUpdate.EventID,
 		VendorPositionID: command.VendorPositionID,
-	}); err != nil {
+	}
+	// Live map reads Redis. Persist first so HTTP p98 is not blocked on JetStream ack;
+	// publish asynchronously (subscribers may lag a beat under flood).
+	if err := u.locationStore.Save(snapshot); err != nil {
 		return IngestLocationResult{}, fmt.Errorf("save latest location: %w: %w", ErrIngestUnavailable, err)
 	}
+	go func(ev domain.LocationUpdate) {
+		if err := u.publisher.PublishLocationUpdate(context.Background(), ev); err != nil {
+			slog.Warn("location_publish_async_failed", "tenant", ev.TenantID, "vehicle", ev.VehicleID, "error", err)
+		}
+	}(locationUpdate)
 
-	// Keep history sync: a fire-and-forget Append reorders under concurrent fixes
-	// for the same vehicle (ring head must stay newest). Pool+pipeline already cut the RTT.
-	if err := u.historyStore.Append(LatestLocation{
-		TenantID:   locationUpdate.TenantID,
-		VehicleID:  locationUpdate.VehicleID,
-		DeviceID:   locationUpdate.DeviceID,
-		Latitude:   locationUpdate.Latitude,
-		Longitude:  locationUpdate.Longitude,
-		SpeedKPH:   locationUpdate.SpeedKPH,
-		Heading:    locationUpdate.Heading,
-		AccuracyM:  locationUpdate.AccuracyM,
-		FixTimeRFC: locationUpdate.FixTimeRFC,
-		ObservedAt: locationUpdate.OccurredAt,
-		EventID:    locationUpdate.EventID,
-	}); err != nil {
+	// Keep history sync: async Append reorders under concurrent fixes for the same vehicle.
+	if err := u.historyStore.Append(snapshot); err != nil {
 		slog.Warn("location_history_append_failed", "tenant", tenantID, "vehicle", vehicleID, "error", err)
 	}
 

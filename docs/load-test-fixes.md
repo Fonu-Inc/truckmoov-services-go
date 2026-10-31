@@ -98,13 +98,13 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 | **Fixed** | Use tenant `ENTERPRISE_ADMIN` / `FLEET_ADMIN` token; rotate JWTs; drop invalid query params. |
 | **Why** | Harness bugs looked like API outages. |
 
-## 12. NATS publish logging (post-fix ingest still ~460ms med)
+## 12. NATS publish on the ingest critical path
 
 | | |
 |---|---|
-| **Bad** | Every JetStream publish logged at **Info** (`event_published`). At ~1k GPS RPS that alone saturates slog/CPU on tracking pods. |
-| **Fixed** | Demote to `Debug`. |
-| **Why** | Hot-path success logs are observability debt under flood; failures still return errors to the caller. |
+| **Bad** | Sync JetStream publish **before** Redis save, plus Info log per event — HTTP waited on bus ack (~400ms+ ingest med). |
+| **Fixed** | Demote success log to Debug; **Save Redis first**, publish in a goroutine (warn on failure). |
+| **Why** | Live map reads Redis; subscribers can lag briefly. Losing a bus event under flood is better than failing GPS p98. |
 
 ## 13. Device assign 0% under k6
 
@@ -113,6 +113,14 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 | **Bad** | k6 `PATCH /fleet/devices/:id/assignment` after create — API requires `verified_online`/`assignable` lifecycle; new devices are `registered` → always 400. |
 | **Fixed** | Seed via `PATCH /fleet/vehicles/:id/gps-device` (IMEI attach) instead of assignment. |
 | **Why** | Assignment lifecycle is product-correct; load seed only needs IMEI→vehicle for tracking identity. |
+
+## 13b. Vehicle plan quota / plate collision blocks seed
+
+| | |
+|---|---|
+| **Bad** | Plan quota 409 **and** duplicate-plate 400 (`K60000000`… from `uniquePlate`) — reuse only handled 409, so setup seeded 0. |
+| **Fixed** | Reuse existing vehicles on 400/409; attach fresh IMEIs via `gps-device`; plates include a time suffix. |
+| **Why** | Spike must still bind IMEIs for ingest when create is blocked by quota or leftover load-test plates. |
 
 ## 14. Capacity round 2 (after ~30% fail / fleet create 2% pass)
 
