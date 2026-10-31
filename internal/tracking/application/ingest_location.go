@@ -219,7 +219,13 @@ func (u *IngestLocationUseCase) Execute(
 		return IngestLocationResult{}, fmt.Errorf("build location event: %w", err)
 	}
 
-	snapshot := LatestLocation{
+	// Publish before Redis so a bus failure returns 503 and vendors (Traccar) retry.
+	// Hot-path cost is JetStream ack; do not async this without an alternate retry signal.
+	if err := u.publisher.PublishLocationUpdate(ctx, locationUpdate); err != nil {
+		return IngestLocationResult{}, fmt.Errorf("publish location event: %w: %w", ErrIngestUnavailable, err)
+	}
+
+	if err := u.locationStore.Save(LatestLocation{
 		TenantID:         locationUpdate.TenantID,
 		VehicleID:        locationUpdate.VehicleID,
 		DeviceID:         locationUpdate.DeviceID,
@@ -232,20 +238,23 @@ func (u *IngestLocationUseCase) Execute(
 		ObservedAt:       locationUpdate.OccurredAt,
 		EventID:          locationUpdate.EventID,
 		VendorPositionID: command.VendorPositionID,
-	}
-	// Live map reads Redis. Persist first so HTTP p98 is not blocked on JetStream ack;
-	// publish asynchronously (subscribers may lag a beat under flood).
-	if err := u.locationStore.Save(snapshot); err != nil {
+	}); err != nil {
 		return IngestLocationResult{}, fmt.Errorf("save latest location: %w: %w", ErrIngestUnavailable, err)
 	}
-	go func(ev domain.LocationUpdate) {
-		if err := u.publisher.PublishLocationUpdate(context.Background(), ev); err != nil {
-			slog.Warn("location_publish_async_failed", "tenant", ev.TenantID, "vehicle", ev.VehicleID, "error", err)
-		}
-	}(locationUpdate)
 
-	// Keep history sync: async Append reorders under concurrent fixes for the same vehicle.
-	if err := u.historyStore.Append(snapshot); err != nil {
+	if err := u.historyStore.Append(LatestLocation{
+		TenantID:   locationUpdate.TenantID,
+		VehicleID:  locationUpdate.VehicleID,
+		DeviceID:   locationUpdate.DeviceID,
+		Latitude:   locationUpdate.Latitude,
+		Longitude:  locationUpdate.Longitude,
+		SpeedKPH:   locationUpdate.SpeedKPH,
+		Heading:    locationUpdate.Heading,
+		AccuracyM:  locationUpdate.AccuracyM,
+		FixTimeRFC: locationUpdate.FixTimeRFC,
+		ObservedAt: locationUpdate.OccurredAt,
+		EventID:    locationUpdate.EventID,
+	}); err != nil {
 		slog.Warn("location_history_append_failed", "tenant", tenantID, "vehicle", vehicleID, "error", err)
 	}
 

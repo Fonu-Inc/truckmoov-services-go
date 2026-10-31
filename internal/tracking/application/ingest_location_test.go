@@ -196,8 +196,8 @@ func TestIngestLocationUseCase_Execute_SkipsDuplicateVendorPosition(t *testing.T
 	}
 }
 
-func TestIngestLocationUseCase_Execute_PersistsWhenPublishFailsAsync(t *testing.T) {
-	publisher := &failOncePublisher{failures: 100}
+func TestIngestLocationUseCase_Execute_FailedPublishStaysRetryable(t *testing.T) {
+	publisher := &failOncePublisher{failures: 1}
 	repository := &fakeLatestLocationRepository{}
 	useCase := NewIngestLocationUseCase(
 		publisher,
@@ -219,15 +219,17 @@ func TestIngestLocationUseCase_Execute_PersistsWhenPublishFailsAsync(t *testing.
 		VendorPositionID: "traccar-pos-7",
 	}
 
-	result, err := useCase.Execute(context.Background(), command)
-	if err != nil || !result.Published {
-		t.Fatalf("live path must succeed after Redis save, got %+v err=%v", result, err)
+	if _, err := useCase.Execute(context.Background(), command); err == nil {
+		t.Fatalf("expected publish failure")
 	}
-	if len(repository.byKey) != 1 {
-		t.Fatalf("snapshot must be stored even if NATS publish fails async")
+	if len(repository.byKey) != 0 {
+		t.Fatalf("nothing may be recorded when publish failed")
 	}
-	// Let the failing goroutine finish so the test process does not leak it.
-	time.Sleep(20 * time.Millisecond)
+
+	retry, err := useCase.Execute(context.Background(), command)
+	if err != nil || !retry.Published || retry.Skipped {
+		t.Fatalf("expected the retry to publish, got %+v err=%v", retry, err)
+	}
 }
 
 type failingHistoryRepository struct{ fakeLocationHistoryRepository }

@@ -98,13 +98,13 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 | **Fixed** | Use tenant `ENTERPRISE_ADMIN` / `FLEET_ADMIN` token; rotate JWTs; drop invalid query params. |
 | **Why** | Harness bugs looked like API outages. |
 
-## 12. NATS publish on the ingest critical path
+## 12. NATS publish logging
 
 | | |
 |---|---|
-| **Bad** | Sync JetStream publish **before** Redis save, plus Info log per event — HTTP waited on bus ack (~400ms+ ingest med). |
-| **Fixed** | Demote success log to Debug; **Save Redis first**, publish in a goroutine (warn on failure). |
-| **Why** | Live map reads Redis; subscribers can lag briefly. Losing a bus event under flood is better than failing GPS p98. |
+| **Bad** | Every JetStream publish logged at **Info** (`event_published`) under ~1k RPS. |
+| **Fixed** | Demote to `Debug`. Async publish-after-save was **tried and reverted** — vendors must get 503 on bus failure to retry. |
+| **Why** | Success logs were free CPU; changing publish order breaks Traccar/webhook retry contracts. |
 
 ## 13. Device assign 0% under k6
 
