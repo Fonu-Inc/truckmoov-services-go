@@ -242,7 +242,12 @@ func (u *IngestLocationUseCase) Execute(
 		return IngestLocationResult{}, fmt.Errorf("save latest location: %w: %w", ErrIngestUnavailable, err)
 	}
 
-	if err := u.historyStore.Append(LatestLocation{
+	// History is best-effort for the live map; don't add a Redis EVAL RTT to ingest p98.
+	go func(entry LatestLocation) {
+		if err := u.historyStore.Append(entry); err != nil {
+			slog.Warn("location_history_append_failed", "tenant", entry.TenantID, "vehicle", entry.VehicleID, "error", err)
+		}
+	}(LatestLocation{
 		TenantID:   locationUpdate.TenantID,
 		VehicleID:  locationUpdate.VehicleID,
 		DeviceID:   locationUpdate.DeviceID,
@@ -254,9 +259,7 @@ func (u *IngestLocationUseCase) Execute(
 		FixTimeRFC: locationUpdate.FixTimeRFC,
 		ObservedAt: locationUpdate.OccurredAt,
 		EventID:    locationUpdate.EventID,
-	}); err != nil {
-		slog.Warn("location_history_append_failed", "tenant", tenantID, "vehicle", vehicleID, "error", err)
-	}
+	})
 
 	// Time-series persistence is best-effort: the live path (Redis snapshot + NATS
 	// event) is the source of truth, so a Timescale outage must not fail ingest.

@@ -45,9 +45,9 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 
 | | |
 |---|---|
-| **Bad** | Already one EVAL (`PushCapped`) — not the bottleneck once dial reuse exists. |
-| **Fixed** | No logic change; benefits from the pool. |
-| **Why** | Atomic LPUSH+LTRIM+EXPIRE was already correct; connection churn was the cost. |
+| **Bad** | Sync `PushCapped` EVAL on every ingest after the pool fix still added a Redis RTT to p98 (~460ms med remaining). |
+| **Fixed** | Fire-and-forget goroutine for history append (errors still logged). |
+| **Why** | Live map uses latest snapshot + NATS; ring history can lag a beat without failing the GPS 200. |
 
 ## 6. Redis read — fleet latest locations list
 
@@ -95,18 +95,53 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 | | |
 |---|---|
 | **Bad** | SUPER_ADMIN + portal=admin → fleet 404; login probes tripped IP block; `vehicles?limit=` → 400. |
-| **Fixed** | Use tenant `ENTERPRISE_ADMIN` token; rotate JWTs; drop invalid query params. |
+| **Fixed** | Use tenant `ENTERPRISE_ADMIN` / `FLEET_ADMIN` token; rotate JWTs; drop invalid query params. |
 | **Why** | Harness bugs looked like API outages. |
+
+## 12. NATS publish logging (post-fix ingest still ~460ms med)
+
+| | |
+|---|---|
+| **Bad** | Every JetStream publish logged at **Info** (`event_published`). At ~1k GPS RPS that alone saturates slog/CPU on tracking pods. |
+| **Fixed** | Demote to `Debug`. |
+| **Why** | Hot-path success logs are observability debt under flood; failures still return errors to the caller. |
+
+## 13. Device assign 0% under k6
+
+| | |
+|---|---|
+| **Bad** | k6 `PATCH /fleet/devices/:id/assignment` after create — API requires `verified_online`/`assignable` lifecycle; new devices are `registered` → always 400. |
+| **Fixed** | Seed via `PATCH /fleet/vehicles/:id/gps-device` (IMEI attach) instead of assignment. |
+| **Why** | Assignment lifecycle is product-correct; load seed only needs IMEI→vehicle for tracking identity. |
+
+## 14. Capacity round 2 (after ~30% fail / fleet create 2% pass)
+
+| | |
+|---|---|
+| **Bad** | Tracking 3×250m, fleet/auth 2×250m, redis 250m, fleet RL 500, onboarding 50/500, road-match on — still CPU-bound and signup/create timeouts. |
+| **Fixed** | Tracking min 6 / 500m–2CPU; fleet min 4 / 500m–2CPU, RL 2000/4000; auth min 3 / 500m–2CPU, onboarding 200/2000; redis 500m–2CPU; `TRACKING_ROAD_MATCH_ENABLED=false`. |
+| **Why** | Round-1 bumps stopped dial timeouts; remaining miss is sustained CPU + fleet/auth write contention + Valhalla/NATS side work. |
+
+## 15. Latest measured deltas (for context)
+
+| Run | Fail rate | Write avg | Ingest med |
+|---|---|---|---|
+| Pre-fix | ~48–57% + dial timeouts | ~1.7s | p98 miss / timeouts |
+| After round 1 (full) | ~30% | ~883ms | ~460ms |
+| Target | low | — | p98 &lt; 100ms |
+
+Round 2 code/gitops above aims at the leftover; re-measure after deploy.
 
 ---
 
-## Commit map (local, not pushed)
+## Commit map
 
 | Repo | Commit | Scope |
 |---|---|---|
 | `truckmoov-services-go` | `e32176f` | Ingest rate-limit bypass |
-| `truckmoov-gitops` | `cab464d` | Capacity / HPA / RATE_LIMIT env |
-| `truckmoov-services-go` | (follow-up) | Redis pool, pipeline, MGET, async Timescale, 1d chunks + compression |
-| `truckmoov-gitops` | (follow-up) | Timescale resources/tunables, tracking DB pool |
+| `truckmoov-gitops` | `cab464d` | Capacity round 1 |
+| `truckmoov-services-go` | `64c0fab` | Redis pool/pipeline/MGET, async Timescale, chunks |
+| `truckmoov-gitops` | `4f70ec3` | Timescale resources/tunables |
+| (this change) | pending | NATS log demote, async history, k6 gps attach, capacity round 2 |
 
 Do not push until explicitly asked.

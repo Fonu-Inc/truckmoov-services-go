@@ -213,7 +213,8 @@ func (b *natsEventBus) Publish(_ context.Context, subject string, envelope Event
 		return fmt.Errorf("publish event: %w", err)
 	}
 
-	b.log.Info("event_published", "subject", subject, "type", envelope.Type, "tenant_id", envelope.TenantID)
+	// Info-per-publish saturates CPU/IO under GPS flood (~1k RPS); keep on Debug.
+	b.log.Debug("event_published", "subject", subject, "type", envelope.Type, "tenant_id", envelope.TenantID)
 	return nil
 }
 
