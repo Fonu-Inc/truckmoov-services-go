@@ -11,20 +11,31 @@ import (
 	"time"
 )
 
+const defaultIdleConns = 32
+
 type Store struct {
 	addr     string
 	password string
 	db       string
 	timeout  time.Duration
+	idle     chan *pooledConn
+}
+
+type pooledConn struct {
+	conn   net.Conn
+	reader *bufio.Reader
 }
 
 // NewStore returns a client for addr. An empty password skips AUTH.
+// Connections are reused from a small idle pool so hot write paths do not
+// dial+AUTH on every command.
 func NewStore(addr, password, db string) *Store {
 	return &Store{
 		addr:     strings.TrimSpace(addr),
 		password: password,
 		db:       strings.TrimSpace(db),
 		timeout:  3 * time.Second,
+		idle:     make(chan *pooledConn, defaultIdleConns),
 	}
 }
 
@@ -135,6 +146,73 @@ func (s *Store) SMembers(key string) ([]string, error) {
 	return results, nil
 }
 
+// MGet fetches many keys in one round trip. Missing keys are nil entries.
+func (s *Store) MGet(keys ...string) ([][]byte, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	reply, err := s.do("MGET", keys...)
+	if err != nil {
+		return nil, err
+	}
+	if reply == nil {
+		return make([][]byte, len(keys)), nil
+	}
+	items, ok := reply.([]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected MGET response type %T", reply)
+	}
+	out := make([][]byte, len(items))
+	for i, item := range items {
+		if item == nil {
+			continue
+		}
+		text, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("unexpected MGET item type %T", item)
+		}
+		out[i] = []byte(text)
+	}
+	return out, nil
+}
+
+// Pipeline runs commands on one connection and returns one reply per command.
+func (s *Store) Pipeline(commands ...[]string) ([]any, error) {
+	if len(commands) == 0 {
+		return nil, nil
+	}
+	if s.addr == "" {
+		return nil, errors.New("redis address is required")
+	}
+
+	pc, err := s.acquire()
+	if err != nil {
+		return nil, err
+	}
+	broken := true
+	defer func() { s.release(pc, broken) }()
+
+	for _, command := range commands {
+		if len(command) == 0 {
+			return nil, errors.New("empty redis command")
+		}
+		if err := writeCommand(pc.conn, command[0], command[1:]...); err != nil {
+			return nil, err
+		}
+	}
+
+	replies := make([]any, len(commands))
+	for i := range commands {
+		reply, err := readReply(pc.reader)
+		if err != nil {
+			return nil, err
+		}
+		replies[i] = reply
+	}
+	broken = false
+	return replies, nil
+}
+
 const pushCappedScript = `redis.call('LPUSH', KEYS[1], ARGV[1])
 redis.call('LTRIM', KEYS[1], 0, tonumber(ARGV[2]) - 1)
 return redis.call('EXPIRE', KEYS[1], ARGV[3])`
@@ -172,13 +250,60 @@ func (s *Store) do(command string, args ...string) (any, error) {
 		return nil, errors.New("redis address is required")
 	}
 
+	pc, err := s.acquire()
+	if err != nil {
+		return nil, err
+	}
+	broken := true
+	defer func() { s.release(pc, broken) }()
+
+	if err := writeCommand(pc.conn, command, args...); err != nil {
+		return nil, err
+	}
+	reply, err := readReply(pc.reader)
+	if err != nil {
+		return nil, err
+	}
+	broken = false
+	return reply, nil
+}
+
+func (s *Store) acquire() (*pooledConn, error) {
+	select {
+	case pc := <-s.idle:
+		if err := pc.conn.SetDeadline(time.Now().Add(s.timeout)); err != nil {
+			_ = pc.conn.Close()
+			return s.dial()
+		}
+		return pc, nil
+	default:
+		return s.dial()
+	}
+}
+
+func (s *Store) release(pc *pooledConn, broken bool) {
+	if pc == nil {
+		return
+	}
+	if broken {
+		_ = pc.conn.Close()
+		return
+	}
+	select {
+	case s.idle <- pc:
+	default:
+		_ = pc.conn.Close()
+	}
+}
+
+func (s *Store) dial() (*pooledConn, error) {
 	conn, err := net.DialTimeout("tcp", s.addr, s.timeout)
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
 
 	if err := conn.SetDeadline(time.Now().Add(s.timeout)); err != nil {
+		_ = conn.Close()
 		return nil, err
 	}
 
@@ -186,26 +311,27 @@ func (s *Store) do(command string, args ...string) (any, error) {
 
 	if s.password != "" {
 		if err := writeCommand(conn, "AUTH", s.password); err != nil {
+			_ = conn.Close()
 			return nil, err
 		}
 		if _, err := readReply(reader); err != nil {
+			_ = conn.Close()
 			return nil, err
 		}
 	}
 
 	if s.db != "" && s.db != "0" {
 		if err := writeCommand(conn, "SELECT", s.db); err != nil {
+			_ = conn.Close()
 			return nil, err
 		}
 		if _, err := readReply(reader); err != nil {
+			_ = conn.Close()
 			return nil, err
 		}
 	}
 
-	if err := writeCommand(conn, command, args...); err != nil {
-		return nil, err
-	}
-	return readReply(reader)
+	return &pooledConn{conn: conn, reader: reader}, nil
 }
 
 func writeCommand(w io.Writer, command string, args ...string) error {

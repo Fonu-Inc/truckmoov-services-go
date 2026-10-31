@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -43,5 +44,51 @@ func TestStoreSendsAuthBeforeCommand(t *testing.T) {
 	got := <-received
 	if strings.Index(got, "AUTH") > strings.Index(got, "PING") || !strings.Contains(got, "s3cret") {
 		t.Fatalf("AUTH must come first with the password, got %q", got)
+	}
+}
+
+func TestStoreReusesConnectionAcrossCommands(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	var accepts atomic.Int32
+	done := make(chan struct{})
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		accepts.Add(1)
+		defer conn.Close()
+		buf := make([]byte, 512)
+		var got strings.Builder
+		pongs := 0
+		for pongs < 2 {
+			n, err := conn.Read(buf)
+			if err != nil {
+				return
+			}
+			got.Write(buf[:n])
+			for strings.Count(got.String(), "PING") > pongs {
+				_, _ = conn.Write([]byte("+PONG\r\n"))
+				pongs++
+			}
+		}
+		close(done)
+	}()
+
+	store := NewStore(ln.Addr().String(), "", "0")
+	if err := store.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if accepts.Load() != 1 {
+		t.Fatalf("expected 1 dial for 2 commands, got %d", accepts.Load())
 	}
 }

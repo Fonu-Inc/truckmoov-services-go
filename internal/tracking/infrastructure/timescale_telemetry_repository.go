@@ -59,8 +59,11 @@ func (r *TimescaleTelemetryRepository) EnsureSchema(ctx context.Context) error {
 		return err
 	}
 
+	// 1-day chunks keep recent device-detail queries scanning a small slice
+	// instead of a default week-sized chunk under high write rates.
 	if _, err := r.db.ExecContext(ctx,
-		`SELECT create_hypertable('telemetry_samples', 'observed_at', if_not_exists => TRUE)`,
+		`SELECT create_hypertable('telemetry_samples', 'observed_at',
+			chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE)`,
 	); err != nil {
 		r.log.Warn("telemetry_hypertable_skipped", "error", err.Error())
 		return nil
@@ -73,6 +76,21 @@ func (r *TimescaleTelemetryRepository) EnsureSchema(ctx context.Context) error {
 		); err != nil {
 			r.log.Warn("telemetry_retention_skipped", "error", err.Error())
 		}
+	}
+
+	// Compress cold chunks so history/aggregate reads hit less disk while
+	// ingest keeps writing uncompressed recent chunks.
+	if _, err := r.db.ExecContext(ctx, `
+ALTER TABLE telemetry_samples SET (
+  timescaledb.compress,
+  timescaledb.compress_segmentby = 'tenant_id,device_id',
+  timescaledb.compress_orderby = 'observed_at DESC'
+)`); err != nil {
+		r.log.Warn("telemetry_compress_skipped", "error", err.Error())
+	} else if _, err := r.db.ExecContext(ctx,
+		`SELECT add_compression_policy('telemetry_samples', INTERVAL '7 days', if_not_exists => TRUE)`,
+	); err != nil {
+		r.log.Warn("telemetry_compress_policy_skipped", "error", err.Error())
 	}
 	return nil
 }

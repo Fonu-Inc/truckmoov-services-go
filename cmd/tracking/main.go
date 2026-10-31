@@ -100,7 +100,7 @@ func main() {
 			if schemaErr := repo.EnsureSchema(ctx); schemaErr != nil {
 				log.Warn("timescale_schema_failed", "error", schemaErr.Error())
 			} else {
-				telemetryStore = repo
+				telemetryStore = infrastructure.NewAsyncTelemetryStore(repo, 128, log)
 				log.Info("telemetry_store_ready")
 			}
 			quarantineStore = buildQuarantineStore(ctx, timescaleDB, quarantineStore, log)

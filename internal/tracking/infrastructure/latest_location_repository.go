@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -72,10 +73,12 @@ func (r *RedisLatestLocationRepository) Save(location application.LatestLocation
 	if err != nil {
 		return fmt.Errorf("marshal latest location: %w", err)
 	}
-	if err := r.store.SetEX(redisLatestLocationKey(location.TenantID, location.VehicleID), payload, r.ttlSeconds); err != nil {
-		return err
-	}
-	return r.store.SAdd(redisLatestLocationIndexKey(location.TenantID), location.VehicleID)
+	// One connection, one RTT for snapshot + index membership.
+	_, err = r.store.Pipeline(
+		[]string{"SET", redisLatestLocationKey(location.TenantID, location.VehicleID), string(payload), "EX", strconv.Itoa(r.ttlSeconds)},
+		[]string{"SADD", redisLatestLocationIndexKey(location.TenantID), location.VehicleID},
+	)
+	return err
 }
 
 func (r *RedisLatestLocationRepository) Get(tenantID, vehicleID string) (*application.LatestLocation, error) {
@@ -95,10 +98,20 @@ func (r *RedisLatestLocationRepository) List(tenantID string) ([]application.Lat
 	if err != nil {
 		return nil, err
 	}
-	results := make([]application.LatestLocation, 0, len(vehicleIDs))
-	for _, vehicleID := range vehicleIDs {
-		payload, ok, err := r.store.Get(redisLatestLocationKey(tenantID, vehicleID))
-		if err != nil || !ok {
+	if len(vehicleIDs) == 0 {
+		return nil, nil
+	}
+	keys := make([]string, len(vehicleIDs))
+	for i, vehicleID := range vehicleIDs {
+		keys[i] = redisLatestLocationKey(tenantID, vehicleID)
+	}
+	payloads, err := r.store.MGet(keys...)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]application.LatestLocation, 0, len(payloads))
+	for _, payload := range payloads {
+		if payload == nil {
 			continue
 		}
 		entry, err := unmarshalLatestLocation(payload)

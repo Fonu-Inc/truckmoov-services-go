@@ -10,8 +10,6 @@ import (
 	"github.com/truckmoov/services-go/internal/tracking/domain"
 )
 
-const telemetryWriteTimeout = 500 * time.Millisecond
-
 type IngestLocationCommand struct {
 	TenantID  string
 	VehicleID string
@@ -262,10 +260,9 @@ func (u *IngestLocationUseCase) Execute(
 
 	// Time-series persistence is best-effort: the live path (Redis snapshot + NATS
 	// event) is the source of truth, so a Timescale outage must not fail ingest.
+	// The wired store is async; this call returns immediately.
 	if u.telemetryStore != nil {
-		sampleCtx, cancel := context.WithTimeout(ctx, telemetryWriteTimeout)
-		defer cancel()
-		_ = u.telemetryStore.SaveSample(sampleCtx, TelemetrySample{
+		_ = u.telemetryStore.SaveSample(ctx, TelemetrySample{
 			TenantID:        locationUpdate.TenantID,
 			DeviceID:        locationUpdate.DeviceID,
 			VehicleID:       locationUpdate.VehicleID,
