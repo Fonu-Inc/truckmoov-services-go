@@ -79,7 +79,10 @@ func main() {
 	clock := infrastructure.SystemClock{}
 	idGenerator := infrastructure.TimeIDGenerator{}
 	latestLocationStore := infrastructure.NewRedisLatestLocationRepository(redisClient, cfg.LatestTTLSeconds)
-	historyStore := infrastructure.NewRedisLocationHistoryRepository(redisClient, cfg.HistoryTTLSeconds)
+	historyStore := infrastructure.NewOrderedAsyncHistoryRepository(
+		infrastructure.NewRedisLocationHistoryRepository(redisClient, cfg.HistoryTTLSeconds),
+		log,
+	)
 	imeiResolver := infrastructure.NewRedisIMEIResolver(redisClient, cfg.IMEIIdentityTTLSeconds)
 	simResolver := infrastructure.NewRedisSIMResolver(redisClient, cfg.SIMTTLSeconds)
 

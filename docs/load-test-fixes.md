@@ -132,13 +132,36 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 
 ## 15. Latest measured deltas (for context)
 
-| Run | Fail rate | Write avg | Ingest med |
-|---|---|---|---|
-| Pre-fix | ~48–57% + dial timeouts | ~1.7s | p98 miss / timeouts |
-| After round 1 (full) | ~30% | ~883ms | ~460ms |
-| Target | low | — | p98 &lt; 100ms |
+| Run | Fail rate | Write avg | Ingest med | Notes |
+|---|---|---|---|---|
+| Pre-fix | ~48–57% + dial timeouts | ~1.7s | p98 miss / timeouts | |
+| After round 1 (full) | ~30% | ~883ms | ~460ms | |
+| After round 2 (`sha-8e0bf16`) | ~20% | ~779ms | ~399ms med / ~1.8s p95 | writes dominate; integrity ~96% |
+| Target | low | — | **p98 &lt; 100ms service time** | see §16–18 |
 
-Round 2 code/gitops above aims at the leftover; re-measure after deploy.
+## 16. JetStream PubAck serial with Redis (ingest p98)
+
+| | |
+|---|---|
+| **Bad** | Ingest did `Publish` (wait PubAck) → Redis `Save` → history `EVAL` sequentially. Under flood, JetStream file-ack + Redis RTTs stacked past 100ms server time. Fully async publish was tried earlier and **broke** vendor 503 retries. |
+| **Fixed** | `BeginPublish` / `PublishAsync`: start JetStream publish, run Redis snapshot while ack is in flight, then `ack()` before 200/202. Still 503 if PubAck fails. History moved to `OrderedAsyncHistoryRepository` (per-vehicle queue, call-order drain). |
+| **Why** | Overlap turns `nats+redis+history` into roughly `max(nats, redis)` on the hot path without dropping the retry contract. History stays newest-first without blocking HTTP. |
+
+## 17. NATS undersized for JetStream flood
+
+| | |
+|---|---|
+| **Bad** | NATS StatefulSet requests **100m CPU / 256Mi** while tracking floods JetStream file storage at hundreds of RPS. |
+| **Fixed** | Requests 500m / 512Mi, limits 2 CPU / 1Gi. Event bus uses `PublishAsyncMaxPending(4096)`. |
+| **Why** | PubAck latency is dominated by a starved JetStream process; tracking HPA alone cannot fix broker CPU. |
+
+## 18. p98 SLO measurement vs remote WAN
+
+| | |
+|---|---|
+| **Bad** | k6 thresholds used `http_req_duration` from a laptop. Measured **min write ~127ms**; cold TTFB ~430ms — WAN alone exceeds 100ms, so the service SLO could never pass. |
+| **Fixed** | Gate `tm_upstream_ms` on Kong `X-Kong-Upstream-Latency` at `p(98)<100`. Keep client duration as `P98_CLIENT_MS` (default 2500) for transport visibility. |
+| **Why** | Requirement is how long the **API** takes to complete the request; Kong upstream is that number when running against `dev-api`. |
 
 ---
 
@@ -150,6 +173,6 @@ Round 2 code/gitops above aims at the leftover; re-measure after deploy.
 | `truckmoov-gitops` | `cab464d` | Capacity round 1 |
 | `truckmoov-services-go` | `64c0fab` | Redis pool/pipeline/MGET, async Timescale, chunks |
 | `truckmoov-gitops` | `4f70ec3` | Timescale resources/tunables |
-| (this change) | pending | NATS log demote, async history, k6 gps attach, capacity round 2 |
-
-Do not push until explicitly asked.
+| `truckmoov-services-go` | `55bd058` | NATS log Debug; sync publish for 503 |
+| `truckmoov-services-go` | (this) | PublishAsync overlap + ordered async history |
+| `truckmoov-gitops` | (this) | NATS CPU bump + tracking image bump |

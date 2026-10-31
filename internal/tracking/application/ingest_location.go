@@ -219,9 +219,10 @@ func (u *IngestLocationUseCase) Execute(
 		return IngestLocationResult{}, fmt.Errorf("build location event: %w", err)
 	}
 
-	// Publish before Redis so a bus failure returns 503 and vendors (Traccar) retry.
-	// Hot-path cost is JetStream ack; do not async this without an alternate retry signal.
-	if err := u.publisher.PublishLocationUpdate(ctx, locationUpdate); err != nil {
+	// Start JetStream publish first, then overlap Redis snapshot with the PubAck.
+	// Still wait for ack before success so a bus failure returns 503 and vendors retry.
+	ack, err := u.beginPublish(ctx, locationUpdate)
+	if err != nil {
 		return IngestLocationResult{}, fmt.Errorf("publish location event: %w: %w", ErrIngestUnavailable, err)
 	}
 
@@ -239,6 +240,7 @@ func (u *IngestLocationUseCase) Execute(
 		EventID:          locationUpdate.EventID,
 		VendorPositionID: command.VendorPositionID,
 	}); err != nil {
+		_ = ack()
 		return IngestLocationResult{}, fmt.Errorf("save latest location: %w: %w", ErrIngestUnavailable, err)
 	}
 
@@ -256,6 +258,10 @@ func (u *IngestLocationUseCase) Execute(
 		EventID:    locationUpdate.EventID,
 	}); err != nil {
 		slog.Warn("location_history_append_failed", "tenant", tenantID, "vehicle", vehicleID, "error", err)
+	}
+
+	if err := ack(); err != nil {
+		return IngestLocationResult{}, fmt.Errorf("publish location event: %w: %w", ErrIngestUnavailable, err)
 	}
 
 	// Time-series persistence is best-effort: the live path (Redis snapshot + NATS
@@ -294,6 +300,22 @@ func (u *IngestLocationUseCase) Execute(
 		Subject:   locationUpdate.Subject(),
 		EventID:   locationUpdate.EventID,
 	}, nil
+}
+
+// locationUpdateBeginner starts a publish and returns an ack wait so Redis I/O
+// can overlap the JetStream PubAck. Optional — fakes only implement Publish.
+type locationUpdateBeginner interface {
+	BeginLocationUpdate(ctx context.Context, event domain.LocationUpdate) (ack func() error, err error)
+}
+
+func (u *IngestLocationUseCase) beginPublish(ctx context.Context, event domain.LocationUpdate) (func() error, error) {
+	if beginner, ok := u.publisher.(locationUpdateBeginner); ok {
+		return beginner.BeginLocationUpdate(ctx, event)
+	}
+	if err := u.publisher.PublishLocationUpdate(ctx, event); err != nil {
+		return nil, err
+	}
+	return func() error { return nil }, nil
 }
 
 // ResolveDevice answers who owns an IMEI through the same resolver as ingest.

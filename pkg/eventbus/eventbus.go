@@ -159,7 +159,9 @@ func New(ctx context.Context, natsURL, streamName string, creds Credentials, log
 		return nil, fmt.Errorf("connect nats %q: %w", natsURL, err)
 	}
 
-	js, err := nc.JetStream()
+	// PublishAsyncMaxPending lets ingest overlap JetStream acks with Redis I/O
+	// under GPS flood without stalling the async pub window.
+	js, err := nc.JetStream(nats.PublishAsyncMaxPending(4096))
 	if err != nil {
 		_ = nc.Drain()
 		return nil, fmt.Errorf("init jetstream: %w", err)
@@ -202,20 +204,40 @@ func (b *natsEventBus) sign(subject string, envelope EventEnvelope) EventEnvelop
 	return envelope
 }
 
-func (b *natsEventBus) Publish(_ context.Context, subject string, envelope EventEnvelope) error {
+func (b *natsEventBus) Publish(ctx context.Context, subject string, envelope EventEnvelope) error {
+	ack, err := b.BeginPublish(ctx, subject, envelope)
+	if err != nil {
+		return err
+	}
+	return ack()
+}
+
+// BeginPublish sends the message and returns an ack wait. Callers that have
+// other critical-path work (e.g. Redis snapshot) can overlap it with the
+// JetStream PubAck, then still fail the request if ack() errors — vendors
+// need that 503 to retry.
+func (b *natsEventBus) BeginPublish(_ context.Context, subject string, envelope EventEnvelope) (func() error, error) {
 	payload, err := json.Marshal(b.sign(subject, envelope))
 	if err != nil {
-		return fmt.Errorf("marshal event: %w", err)
+		return nil, fmt.Errorf("marshal event: %w", err)
 	}
 
-	_, err = b.js.Publish(subject, payload)
+	future, err := b.js.PublishAsync(subject, payload)
 	if err != nil {
-		return fmt.Errorf("publish event: %w", err)
+		return nil, fmt.Errorf("publish event: %w", err)
 	}
 
 	// Info-per-publish saturates CPU/IO under GPS flood (~1k RPS); keep on Debug.
 	b.log.Debug("event_published", "subject", subject, "type", envelope.Type, "tenant_id", envelope.TenantID)
-	return nil
+
+	return func() error {
+		select {
+		case <-future.Ok():
+			return nil
+		case err := <-future.Err():
+			return fmt.Errorf("publish event: %w", err)
+		}
+	}, nil
 }
 
 func (b *natsEventBus) Subscribe(_ context.Context, subject, durable string, handler Handler) (Subscription, error) {

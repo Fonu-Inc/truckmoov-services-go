@@ -15,8 +15,8 @@ func NewEventPublisher(bus eventbus.EventBus) *EventPublisher {
 	return &EventPublisher{bus: bus}
 }
 
-func (p *EventPublisher) PublishLocationUpdate(ctx context.Context, event domain.LocationUpdate) error {
-	return p.bus.Publish(ctx, event.Subject(), eventbus.EventEnvelope{
+func (p *EventPublisher) locationEnvelope(event domain.LocationUpdate) eventbus.EventEnvelope {
+	return eventbus.EventEnvelope{
 		ID:         event.EventID,
 		Type:       "vehicle.location.updated",
 		Version:    1,
@@ -34,7 +34,31 @@ func (p *EventPublisher) PublishLocationUpdate(ctx context.Context, event domain
 			"fix_time":   event.FixTimeRFC,
 			"protocol":   event.Protocol,
 		},
-	})
+	}
+}
+
+type beginPublisher interface {
+	BeginPublish(ctx context.Context, subject string, envelope eventbus.EventEnvelope) (func() error, error)
+}
+
+func (p *EventPublisher) PublishLocationUpdate(ctx context.Context, event domain.LocationUpdate) error {
+	ack, err := p.BeginLocationUpdate(ctx, event)
+	if err != nil {
+		return err
+	}
+	return ack()
+}
+
+// BeginLocationUpdate starts the JetStream publish so Redis work can overlap the PubAck.
+func (p *EventPublisher) BeginLocationUpdate(ctx context.Context, event domain.LocationUpdate) (func() error, error) {
+	envelope := p.locationEnvelope(event)
+	if bp, ok := p.bus.(beginPublisher); ok {
+		return bp.BeginPublish(ctx, event.Subject(), envelope)
+	}
+	if err := p.bus.Publish(ctx, event.Subject(), envelope); err != nil {
+		return nil, err
+	}
+	return func() error { return nil }, nil
 }
 
 func (p *EventPublisher) PublishAlertTriggered(ctx context.Context, event domain.AlertTriggered) error {
