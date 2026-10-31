@@ -45,9 +45,9 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 
 | | |
 |---|---|
-| **Bad** | Sync `PushCapped` EVAL on every ingest after the pool fix still added a Redis RTT to p98 (~460ms med remaining). |
-| **Fixed** | Fire-and-forget goroutine for history append (errors still logged). |
-| **Why** | Live map uses latest snapshot + NATS; ring history can lag a beat without failing the GPS 200. |
+| **Bad** | Dial-per-command made each `PushCapped` EVAL expensive; async append was tried next. |
+| **Fixed** | Keep sync Append (pool reuse). Async was **reverted**: concurrent goroutines reordered the ring so newest fix was not always head. |
+| **Why** | History contract requires newest-first; per-vehicle serial queue would be the upgrade if EVAL RTT returns as the bottleneck. |
 
 ## 6. Redis read — fleet latest locations list
 

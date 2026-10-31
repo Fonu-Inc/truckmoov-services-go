@@ -190,31 +190,24 @@ func TestHandler_VehicleHistoryContract(t *testing.T) {
 		}
 	}
 
-	// History append is async off the ingest path; wait briefly for the entry.
+	historyReq := httptest.NewRequest(http.MethodGet, "/tracking/vehicles/vehicle-2/history?limit=1", nil)
+	historyReq.Header.Set("Authorization", "Bearer "+makeTrackingBearerToken("replace-me", "tenant-2", "DISPATCHER"))
+	historyRes := httptest.NewRecorder()
+	server.ServeHTTP(historyRes, historyReq)
+	if historyRes.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, historyRes.Code)
+	}
+
 	var historyPayload struct {
 		VehicleID string           `json:"vehicle_id"`
 		History   []map[string]any `json:"history"`
 	}
-	deadline := time.Now().Add(time.Second)
-	for {
-		historyReq := httptest.NewRequest(http.MethodGet, "/tracking/vehicles/vehicle-2/history?limit=1", nil)
-		historyReq.Header.Set("Authorization", "Bearer "+makeTrackingBearerToken("replace-me", "tenant-2", "DISPATCHER"))
-		historyRes := httptest.NewRecorder()
-		server.ServeHTTP(historyRes, historyReq)
-		if historyRes.Code != http.StatusOK {
-			t.Fatalf("expected status %d, got %d", http.StatusOK, historyRes.Code)
-		}
-		decodeData(t, historyRes.Body.Bytes(), &historyPayload)
-		if len(historyPayload.History) == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("expected 1 history entry within 1s, got %d", len(historyPayload.History))
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	decodeData(t, historyRes.Body.Bytes(), &historyPayload)
 	if historyPayload.VehicleID != "vehicle-2" {
 		t.Fatalf("expected vehicle-2 returned, got %s", historyPayload.VehicleID)
+	}
+	if len(historyPayload.History) != 1 {
+		t.Fatalf("expected 1 history entry, got %d", len(historyPayload.History))
 	}
 	if historyPayload.History[0]["fix_time"] != "2026-02-02T11:05:00Z" {
 		t.Fatalf("expected most recent fix_time, got %#v", historyPayload.History[0]["fix_time"])
