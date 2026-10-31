@@ -82,3 +82,23 @@ func TestWithRateLimit_XForwardedForUsedAsIP(t *testing.T) {
 		t.Fatalf("expected 429 after burst, got %d", res2.Code)
 	}
 }
+
+func TestWithRateLimit_IngestPathBypassesLimit(t *testing.T) {
+	handler := WithRateLimit(okHandler(), 1, 1)
+	for i := 0; i < 20; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", nil)
+		req.RemoteAddr = "9.9.9.9:1234"
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, req)
+		if res.Code != http.StatusOK {
+			t.Fatalf("ingest request %d: expected 200, got %d", i+1, res.Code)
+		}
+	}
+	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest/vendor/teltonika", nil)
+	req.RemoteAddr = "9.9.9.9:1234"
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("vendor ingest: expected 200, got %d", res.Code)
+	}
+}

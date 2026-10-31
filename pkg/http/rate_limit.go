@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -69,12 +70,18 @@ func (rl *rateLimiter) bucket(ip string) *tokenBucket {
 // WithRateLimit wraps a handler with per-IP token bucket rate limiting.
 // rps = sustained requests per second, burst = max burst size.
 // If rps <= 0 the middleware is a no-op.
+// GPS ingest is excluded: device traffic funnels through a few gateway IPs
+// (Traccar/vendors), so an IP bucket of ~100 RPS starves the live map under load.
 func WithRateLimit(next http.Handler, rps, burst int) http.Handler {
 	if rps <= 0 {
 		return next
 	}
 	rl := newRateLimiter(rps, burst)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isGPSIngestPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		ip := clientIP(r)
 		if !rl.bucket(ip).allow() {
 			w.Header().Set("Retry-After", "1")
@@ -83,6 +90,10 @@ func WithRateLimit(next http.Handler, rps, burst int) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isGPSIngestPath(path string) bool {
+	return strings.HasPrefix(path, "/tracking/ingest")
 }
 
 func clientIP(r *http.Request) string {
