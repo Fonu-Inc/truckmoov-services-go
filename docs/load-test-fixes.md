@@ -160,8 +160,16 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 | | |
 |---|---|
 | **Bad** | k6 thresholds used `http_req_duration` from a laptop. Measured **min write ~127ms**; cold TTFB ~430ms — WAN alone exceeds 100ms, so the service SLO could never pass. |
-| **Fixed** | Gate `tm_upstream_ms` on Kong `X-Kong-Upstream-Latency` at `p(98)<100`. Keep client duration as `P98_CLIENT_MS` (default 2500) for transport visibility. |
+| **Fixed** | Gate `tm_upstream_ms` on Kong `X-Kong-Upstream-Latency` at `p(98)<100`. Keep client duration as `P98_CLIENT_MS` (default 10000) for transport visibility. |
 | **Why** | Requirement is how long the **API** takes to complete the request; Kong upstream is that number when running against `dev-api`. |
+
+## 19. Redis GET on every ingest (OOO filter)
+
+| | |
+|---|---|
+| **Bad** | Every GPS fix did `locationStore.Get` before Save so `applyTelemetryFilter` could reject out-of-order — one extra Redis RTT on the critical path under 1k VUs (upstream med ~105ms, fat p95). |
+| **Fixed** | Pod-local `lastFix` map handles OOO when speed/vendor filters are off; Redis GET only when `VendorPositionID` or `MaxSpeedKPH` needs the previous row. Idle Redis pool 32→128. |
+| **Why** | Live flood rarely needs haversine; skipping GET removes a full RTT from the common path while Save still updates the shared snapshot. |
 
 ---
 

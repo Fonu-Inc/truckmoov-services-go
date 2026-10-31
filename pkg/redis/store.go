@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const defaultIdleConns = 32
+const defaultIdleConns = 128
 
 type Store struct {
 	addr     string

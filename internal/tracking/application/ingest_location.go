@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/truckmoov/services-go/internal/tracking/domain"
@@ -69,6 +70,8 @@ type IngestLocationUseCase struct {
 	warmup         *Warmup
 	idMetrics      IdentityMetrics
 	roadMatch      *RoadMatchService
+	// Pod-local last fix times skip a Redis GET for out-of-order checks under flood.
+	lastFix sync.Map // key tenant|vehicle -> time.Time
 }
 
 func NewIngestLocationUseCase(
@@ -189,7 +192,18 @@ func (u *IngestLocationUseCase) Execute(
 	if err != nil {
 		return IngestLocationResult{}, ErrInvalidFixTime
 	}
-	prev, _ := u.locationStore.Get(tenantID, vehicleID)
+
+	lastKey := tenantID + "|" + vehicleID
+	needPrev := command.VendorPositionID != "" || u.telemetry.MaxSpeedKPH > 0
+	var prev *LatestLocation
+	if needPrev {
+		prev, _ = u.locationStore.Get(tenantID, vehicleID)
+	} else if last, ok := u.lastFix.Load(lastKey); ok {
+		// Hot path: skip Redis GET; pod-local stamp catches obvious OOO under flood.
+		if lastTime, ok := last.(time.Time); ok && !parsedFix.After(lastTime) {
+			return IngestLocationResult{Skipped: true, SkipReason: "out_of_order"}, nil
+		}
+	}
 
 	if command.VendorPositionID != "" && prev != nil && prev.VendorPositionID == command.VendorPositionID {
 		return IngestLocationResult{Skipped: true, SkipReason: "duplicate_vendor_position"}, nil
@@ -263,6 +277,7 @@ func (u *IngestLocationUseCase) Execute(
 	if err := ack(); err != nil {
 		return IngestLocationResult{}, fmt.Errorf("publish location event: %w: %w", ErrIngestUnavailable, err)
 	}
+	u.lastFix.Store(lastKey, parsedFix)
 
 	// Time-series persistence is best-effort: the live path (Redis snapshot + NATS
 	// event) is the source of truth, so a Timescale outage must not fail ingest.
