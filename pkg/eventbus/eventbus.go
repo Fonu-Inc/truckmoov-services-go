@@ -240,6 +240,28 @@ func (b *natsEventBus) BeginPublish(_ context.Context, subject string, envelope 
 	}, nil
 }
 
+// BeginPublishCore publishes on core NATS and returns a Flush wait. GPS ingest
+// uses this: realtime/fleet fan-out already listens on core, Redis is the live
+// snapshot SoT, and JetStream file PubAck was dominating p98 under 1k VU floods.
+// shortcut: durable JetStream consumers do not see these location events —
+// upgrade to a memory stream or async PubAck waiter if a durable audit is required.
+func (b *natsEventBus) BeginPublishCore(_ context.Context, subject string, envelope EventEnvelope) (func() error, error) {
+	payload, err := json.Marshal(b.sign(subject, envelope))
+	if err != nil {
+		return nil, fmt.Errorf("marshal event: %w", err)
+	}
+	if err := b.nc.Publish(subject, payload); err != nil {
+		return nil, fmt.Errorf("publish event: %w", err)
+	}
+	b.log.Debug("event_published", "subject", subject, "type", envelope.Type, "tenant_id", envelope.TenantID, "mode", "core")
+	return func() error {
+		if err := b.nc.FlushTimeout(100 * time.Millisecond); err != nil {
+			return fmt.Errorf("publish event: %w", err)
+		}
+		return nil
+	}, nil
+}
+
 func (b *natsEventBus) Subscribe(_ context.Context, subject, durable string, handler Handler) (Subscription, error) {
 	sub, err := b.js.QueueSubscribe(
 		subject,

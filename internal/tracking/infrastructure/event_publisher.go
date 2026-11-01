@@ -41,6 +41,10 @@ type beginPublisher interface {
 	BeginPublish(ctx context.Context, subject string, envelope eventbus.EventEnvelope) (func() error, error)
 }
 
+type beginCorePublisher interface {
+	BeginPublishCore(ctx context.Context, subject string, envelope eventbus.EventEnvelope) (func() error, error)
+}
+
 func (p *EventPublisher) PublishLocationUpdate(ctx context.Context, event domain.LocationUpdate) error {
 	ack, err := p.BeginLocationUpdate(ctx, event)
 	if err != nil {
@@ -49,9 +53,13 @@ func (p *EventPublisher) PublishLocationUpdate(ctx context.Context, event domain
 	return ack()
 }
 
-// BeginLocationUpdate starts the JetStream publish so Redis work can overlap the PubAck.
+// BeginLocationUpdate starts a core-NATS publish (Flush ack) so Redis work can
+// overlap; JetStream is best-effort async for durable consumers.
 func (p *EventPublisher) BeginLocationUpdate(ctx context.Context, event domain.LocationUpdate) (func() error, error) {
 	envelope := p.locationEnvelope(event)
+	if bp, ok := p.bus.(beginCorePublisher); ok {
+		return bp.BeginPublishCore(ctx, event.Subject(), envelope)
+	}
 	if bp, ok := p.bus.(beginPublisher); ok {
 		return bp.BeginPublish(ctx, event.Subject(), envelope)
 	}

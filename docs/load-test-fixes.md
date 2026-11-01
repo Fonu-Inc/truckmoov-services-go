@@ -184,3 +184,20 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 | `truckmoov-services-go` | `55bd058` | NATS log Debug; sync publish for 503 |
 | `truckmoov-services-go` | (this) | PublishAsync overlap + ordered async history |
 | `truckmoov-gitops` | (this) | NATS CPU bump + tracking image bump |
+
+## 20. Capacity round 3 (ingest upstream med ~170ms at 1k VU)
+
+| | |
+|---|---|
+| **Bad** | Tracking floor 6 replicas / Redis 500m still left ingest Kong-upstream med ~170ms and fat p95 under 1k GPS VUs after PubAck overlap + GET skip. |
+| **Fixed** | Tracking HPA min 12 / max 24; Redis requests 1 CPU (limit 4). k6 GPS_ONLY=1 isolates ingest from signup contention. |
+| **Why** | Per-pod work was already ~ms on a warm path; the remaining gap is horizontal capacity on tracking+Redis under concurrent PubAck+SET. |
+
+## 21. JetStream file PubAck on GPS location events
+
+| | |
+|---|---|
+| **Bad** | Every ingest waited for JetStream *file* PubAck. Under 1k VU that alone kept Kong-upstream med ~170ms+ with fat tails even after Redis/overlap fixes. |
+| **Fixed** | Location updates publish on **core NATS** + . Realtime and fleet already fan-out on core; Redis remains live SoT. Flush failure still returns 503 for vendor retry. |
+| **Why** | Live map does not need durable stream ack on the HTTP path. File PubAck is the wrong consistency tool for 1k RPS GPS. |
+
