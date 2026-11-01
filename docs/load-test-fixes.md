@@ -198,6 +198,6 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 | | |
 |---|---|
 | **Bad** | Every ingest waited for JetStream *file* PubAck. Under 1k VU that alone kept Kong-upstream med ~170ms+ with fat tails even after Redis/overlap fixes. |
-| **Fixed** | Location updates publish on **core NATS** + . Realtime and fleet already fan-out on core; Redis remains live SoT. Flush failure still returns 503 for vendor retry. |
-| **Why** | Live map does not need durable stream ack on the HTTP path. File PubAck is the wrong consistency tool for 1k RPS GPS. |
+| **Fixed** | Location updates use JetStream `PublishAsync` + connection `FlushTimeout(100ms)` — do **not** wait for PubAck. Durable/core consumers still receive the event; Flush failure still returns 503. |
+| **Why** | PubAck waits on disk under flood; Flush only needs the server to accept the bytes. Live path SoT is Redis. |
 
