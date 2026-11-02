@@ -7,11 +7,19 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 func WithLogging(next http.Handler, log *slog.Logger) http.Handler {
+	sampleEvery := 0
+	if v, err := strconv.Atoi(os.Getenv("HTTP_ACCESS_LOG_SAMPLE")); err == nil && v > 0 {
+		sampleEvery = v
+	}
+	var sampled atomic.Uint64
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w}
@@ -21,15 +29,21 @@ func WithLogging(next http.Handler, log *slog.Logger) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		args := []any{"method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", duration.Milliseconds()}
-		// Access logs are Debug: 1k VU means ~1k lines/s, which swamps
-		// Promtail/Loki and can block handlers on stdout. Errors and slow
-		// requests stay visible at Info/Warn.
-		if status >= http.StatusInternalServerError || duration >= time.Second {
-			log.Warn("http_request", args...)
+		// Access logs are off by default: 1k VU means ~1k lines/s, which swamps
+		// Promtail/Loki and can block handlers on stdout. Errors and >500ms
+		// requests stay visible; HTTP_ACCESS_LOG_SAMPLE=100 keeps 1% of the
+		// rest for latency percentiles, and LOG_LEVEL=debug logs every request.
+		if status >= http.StatusInternalServerError || duration >= 500*time.Millisecond {
+			log.Warn("http_request", "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", duration.Milliseconds())
 			return
 		}
-		log.Debug("http_request", args...)
+		if sampleEvery > 0 && sampled.Add(1)%uint64(sampleEvery) == 0 {
+			log.Info("http_request_sample", "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", duration.Milliseconds())
+			return
+		}
+		if log.Enabled(context.Background(), slog.LevelDebug) {
+			log.Debug("http_request", "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", duration.Milliseconds())
+		}
 	})
 }
 
