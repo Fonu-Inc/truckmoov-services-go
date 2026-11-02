@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -181,6 +182,22 @@ func (s *Store) Pipeline(commands ...[]string) ([]any, error) {
 	if len(commands) == 0 {
 		return nil, nil
 	}
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		replies, err := s.pipelineOnce(commands...)
+		if err == nil {
+			return replies, nil
+		}
+		lastErr = err
+		if !retryableConnErr(err) {
+			return nil, err
+		}
+		s.dropIdle()
+	}
+	return nil, lastErr
+}
+
+func (s *Store) pipelineOnce(commands ...[]string) ([]any, error) {
 	if s.addr == "" {
 		return nil, errors.New("redis address is required")
 	}
@@ -246,6 +263,22 @@ func (s *Store) Range(key string, count int) ([][]byte, error) {
 }
 
 func (s *Store) do(command string, args ...string) (any, error) {
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		reply, err := s.doOnce(command, args...)
+		if err == nil {
+			return reply, nil
+		}
+		lastErr = err
+		if !retryableConnErr(err) {
+			return nil, err
+		}
+		s.dropIdle()
+	}
+	return nil, lastErr
+}
+
+func (s *Store) doOnce(command string, args ...string) (any, error) {
 	if s.addr == "" {
 		return nil, errors.New("redis address is required")
 	}
@@ -266,6 +299,36 @@ func (s *Store) do(command string, args ...string) (any, error) {
 	}
 	broken = false
 	return reply, nil
+}
+
+// retryableConnErr covers the case a Redis restart leaves every pooled socket
+// stale: the first command hits a broken pipe, and without a retry the caller
+// fails until something else drains the pool. A Redis restart is exactly when
+// that pool is full of dead sockets.
+func retryableConnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "use of closed network connection")
+}
+
+// dropIdle closes every idle socket so the next acquire dials fresh. Only used
+// after a connection-level error; the server just went away.
+func (s *Store) dropIdle() {
+	for {
+		select {
+		case pc := <-s.idle:
+			_ = pc.conn.Close()
+		default:
+			return
+		}
+	}
 }
 
 func (s *Store) acquire() (*pooledConn, error) {

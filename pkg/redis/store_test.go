@@ -92,3 +92,37 @@ func TestStoreReusesConnectionAcrossCommands(t *testing.T) {
 		t.Fatalf("expected 1 dial for 2 commands, got %d", accepts.Load())
 	}
 }
+
+func TestStoreRetriesOnceAfterStaleConnection(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	go func() {
+		// First connection dies without a reply, like a Redis restart leaving a
+		// stale socket in the pool.
+		first, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		buf := make([]byte, 64)
+		_, _ = first.Read(buf)
+		_ = first.Close()
+
+		// The retry must dial a fresh connection and get a real PONG.
+		second, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer second.Close()
+		_, _ = second.Read(buf)
+		_, _ = second.Write([]byte("+PONG\r\n"))
+	}()
+
+	store := NewStore(ln.Addr().String(), "", "0")
+	if err := store.Ping(); err != nil {
+		t.Fatalf("expected retry to recover from stale connection: %v", err)
+	}
+}
