@@ -28,11 +28,14 @@ const readinessProbeTimeout = 3 * time.Second
 func ReadinessHandler(service string, checks ...ReadinessCheck) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		results := make(map[string]string, len(checks))
+		timings := make(map[string]int64, len(checks))
 		ready := true
 
 		for _, check := range checks {
 			ctx, cancel := context.WithTimeout(r.Context(), readinessProbeTimeout)
+			start := time.Now()
 			err := check.Probe(ctx)
+			timings[check.Name] = time.Since(start).Milliseconds()
 			cancel()
 			if err != nil {
 				ready = false
@@ -47,9 +50,10 @@ func ReadinessHandler(service string, checks ...ReadinessCheck) http.HandlerFunc
 			return
 		}
 		WriteOK(w, http.StatusOK, map[string]any{
-			"ready":   true,
-			"service": service,
-			"checks":  results,
+			"ready":      true,
+			"service":    service,
+			"checks":     results,
+			"timings_ms": timings,
 		})
 	}
 }
