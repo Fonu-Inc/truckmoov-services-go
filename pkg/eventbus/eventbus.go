@@ -193,9 +193,11 @@ func New(ctx context.Context, natsURL, streamName string, creds Credentials, log
 		return nil, fmt.Errorf("connect nats %q: %w", natsURL, err)
 	}
 
-	// PublishAsyncMaxPending lets ingest overlap JetStream acks with Redis I/O
-	// under GPS flood without stalling the async pub window.
-	js, err := nc.JetStream(nats.PublishAsyncMaxPending(4096))
+	// PublishAsyncMaxPending bounds unacked async publishes. At 1k VU each
+	// tracking pod queues ~80-95/s; 4096 fills in ~43s and then the hot path
+	// blocks, which is the latency ramp seen in the 1k runs. The node has
+	// memory headroom, so buffer a full 5m spike (65k ≈ 11 min at that rate).
+	js, err := nc.JetStream(nats.PublishAsyncMaxPending(65536))
 	if err != nil {
 		_ = nc.Drain()
 		return nil, fmt.Errorf("init jetstream: %w", err)
