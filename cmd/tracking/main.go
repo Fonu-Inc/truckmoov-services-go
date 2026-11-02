@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -64,11 +65,19 @@ func main() {
 		_ = shutdownTelemetry(context.Background())
 	}()
 
-	bus, err := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, eventbus.Credentials{User: cfg.NATSUser, Password: cfg.NATSPassword}, log, eventbus.WithSigningSecret(cfg.EventSigningSecret))
+	publishWait := eventbus.IngestPublishWait(strings.ToLower(strings.TrimSpace(os.Getenv("TRACKING_INGEST_PUBLISH_WAIT"))))
+	if publishWait == "" {
+		publishWait = eventbus.IngestPublishWaitFlush
+	}
+	bus, err := eventbus.New(ctx, cfg.NATSURL, cfg.NATSStream, eventbus.Credentials{User: cfg.NATSUser, Password: cfg.NATSPassword}, log,
+		eventbus.WithSigningSecret(cfg.EventSigningSecret),
+		eventbus.WithIngestPublishWait(publishWait),
+	)
 	if err != nil {
 		log.Error("eventbus_init_failed", "error", err.Error())
 		os.Exit(1)
 	}
+	log.Info("ingest_publish_wait", "mode", string(publishWait))
 	defer func() {
 		_ = bus.Close()
 	}()

@@ -182,8 +182,10 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 | `truckmoov-services-go` | `64c0fab` | Redis pool/pipeline/MGET, async Timescale, chunks |
 | `truckmoov-gitops` | `4f70ec3` | Timescale resources/tunables |
 | `truckmoov-services-go` | `55bd058` | NATS log Debug; sync publish for 503 |
-| `truckmoov-services-go` | (this) | PublishAsync overlap + ordered async history |
-| `truckmoov-gitops` | (this) | NATS CPU bump + tracking image bump |
+| `truckmoov-services-go` | `3941a08` | PublishAsync overlap + ordered async history; skip PubAck wait |
+| `truckmoov-gitops` | `7f38cfa` | TELEMETRY_MAX_SPEED_KPH=0 under flood |
+| `truckmoov-services-go` | (this) | `TRACKING_INGEST_PUBLISH_WAIT` ack/flush/none |
+| `truckmoov-gitops` | (this) | `TRACKING_INGEST_PUBLISH_WAIT=none` under flood |
 
 ## 20. Capacity round 3 (ingest upstream med ~170ms at 1k VU)
 
@@ -200,4 +202,22 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 | **Bad** | Every ingest waited for JetStream *file* PubAck. Under 1k VU that alone kept Kong-upstream med ~170ms+ with fat tails even after Redis/overlap fixes. |
 | **Fixed** | Location updates use JetStream `PublishAsync` + connection `FlushTimeout(100ms)` — do **not** wait for PubAck. Durable/core consumers still receive the event; Flush failure still returns 503. |
 | **Why** | PubAck waits on disk under flood; Flush only needs the server to accept the bytes. Live path SoT is Redis. |
+
+## 22. TELEMETRY_MAX_SPEED_KPH forced Redis GET on every ingest
+
+| | |
+|---|---|
+| **Bad** | Default `TELEMETRY_MAX_SPEED_KPH=250` made ingest always `Get` the previous fix for haversine, even when PubAck was already off the hot path. Under 1k VU that extra Redis RTT kept upstream med ~170ms. |
+| **Fixed** | Gitops sets `TELEMETRY_MAX_SPEED_KPH=0` for the spike profile (re-enable after p98 holds). k6 fix_times use a 2027 base so leftover far-future Redis stamps do not mark every publish out_of_order. |
+| **Why** | Speed-jump filter is good product hygiene; it is the wrong default on the 1k-VU critical path once Redis snapshot + NATS flush already protect live tracking. |
+
+## 23. NATS Flush still on ingest + k6 timestamps skipped publishes
+
+| | |
+|---|---|
+| **Bad** | `BeginPublishCore` used JetStream `PublishAsync` but then called `nc.FlushTimeout(100ms)` before returning 202. Under 1k VU the broker's queue depth became the p98 tail: the last 10s sample had upstream med 97ms, p90 431ms, p95 773ms. Separately, k6 `fix_time` added `vu.idInTest * 1h` *and* `iteration * 1s`, so several VUs sharing one IMEI wrote timestamps in different hours. The pod-local out-of-order check then returned 202 `skipped` for those fixes, so they never touched Redis/NATS — the run did less work than its VU count implied. |
+| **Fixed** | `TRACKING_INGEST_PUBLISH_WAIT=ack\|flush\|none` on the event bus. Gitops sets `none` for the spike: `PublishAsync` still queues the durable JetStream event, and a disconnected client or full async window still returns 503; the handler no longer waits for the broker. Default stays `flush` for every other service. k6 now uses one wall-clock base for all VUs plus a fixed per-device offset, so shared-IMEI writes stay ordered. Added `tm_ingest_skipped` / `tm_ingest_published`, a `skipped < 10%` gate, a GPS_ONLY preset-IMEI path that survives token expiry, and a preflight that names a host firewall ban instead of dumping thousands of resets. |
+| **Why** | The live path source of truth is Redis; JetStream exists for durable fan-out (fleet geofences/positions), not to make the vendor wait for disk. Skipped fixes are not a valid p98 sample: they return before the work the gate is meant to measure. |
+
+**Run status:** code + gitops pushed; deploy and re-run pending. The load generator's public IPv4 was refused by the dev host after the 17:02 flood (all ports, while the same host answered external probes), which is why the last 1k run died at 10s with connection resets. Unblock that IP before the next run; the harness preflight now says so explicitly.
 

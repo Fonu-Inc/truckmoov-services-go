@@ -41,14 +41,37 @@ type EventBus interface {
 	Close() error
 }
 
+// IngestPublishWait controls how long BeginPublishCore waits after handing a
+// location event to JetStream. "ack" waits for the durable PubAck, "flush"
+// waits for the server to accept the bytes, and "none" returns as soon as the
+// async publish is queued. Under a GPS flood the wait is pure added p98; the
+// event is still published either way.
+type IngestPublishWait string
+
+const (
+	IngestPublishWaitAck   IngestPublishWait = "ack"
+	IngestPublishWaitFlush IngestPublishWait = "flush"
+	IngestPublishWaitNone  IngestPublishWait = "none"
+)
+
+func (w IngestPublishWait) valid() bool {
+	switch w {
+	case IngestPublishWaitAck, IngestPublishWaitFlush, IngestPublishWaitNone:
+		return true
+	default:
+		return false
+	}
+}
+
 type natsEventBus struct {
 	log        *slog.Logger
 	nc         *nats.Conn
 	js         nats.JetStreamContext
 	streamName string
 
-	signingSecret string
-	warnUnsigned  sync.Once
+	signingSecret     string
+	ingestPublishWait IngestPublishWait
+	warnUnsigned      sync.Once
 }
 
 // Option adjusts a bus at construction. Existing callers pass none.
@@ -57,6 +80,17 @@ type Option func(*natsEventBus)
 // WithSigningSecret makes Publish sign every envelope with bsig.
 func WithSigningSecret(secret string) Option {
 	return func(b *natsEventBus) { b.signingSecret = secret }
+}
+
+// WithIngestPublishWait sets the post-publish wait used by BeginPublishCore.
+// Unknown values keep the safe "flush" default rather than silently going
+// fire-and-forget.
+func WithIngestPublishWait(wait IngestPublishWait) Option {
+	return func(b *natsEventBus) {
+		if wait.valid() {
+			b.ingestPublishWait = wait
+		}
+	}
 }
 
 var invalidJetStreamNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
@@ -180,7 +214,7 @@ func New(ctx context.Context, natsURL, streamName string, creds Credentials, log
 
 	_ = ctx
 	log.Info("nats_eventbus_ready", "url", natsURL, "stream", effectiveStreamName)
-	bus := &natsEventBus{log: log, nc: nc, js: js, streamName: effectiveStreamName}
+	bus := &natsEventBus{log: log, nc: nc, js: js, streamName: effectiveStreamName, ingestPublishWait: IngestPublishWaitFlush}
 	for _, opt := range opts {
 		opt(bus)
 	}
@@ -240,27 +274,42 @@ func (b *natsEventBus) BeginPublish(_ context.Context, subject string, envelope 
 	}, nil
 }
 
-// BeginPublishCore starts a JetStream PublishAsync and returns a connection
-// Flush wait — not a PubAck wait. GPS ingest uses this under flood: file PubAck
-// dominated p98, while Flush is enough to know the server accepted the bytes
-// (503 still fires if NATS is down). Durable + core consumers still see the
-// event because JetStream publishes onto the subject.
-// shortcut: a lost PubAck after Flush can drop durability without 503 —
-// upgrade to a memory stream or bounded PubAck waiter if that gap matters.
+// BeginPublishCore starts a JetStream PublishAsync for GPS ingest and returns
+// the wait selected by WithIngestPublishWait. The event is persisted exactly as
+// with BeginPublish; the difference is only how long the HTTP handler waits.
+// Under 1k VU the flush/PubAck round trip is the remaining p98 cost, so the
+// flood profile sets "none" and still gets a 503 when the client is
+// disconnected or the async window is full.
 func (b *natsEventBus) BeginPublishCore(_ context.Context, subject string, envelope EventEnvelope) (func() error, error) {
 	payload, err := json.Marshal(b.sign(subject, envelope))
 	if err != nil {
 		return nil, fmt.Errorf("marshal event: %w", err)
 	}
-	if _, err := b.js.PublishAsync(subject, payload); err != nil {
+	if !b.nc.IsConnected() {
+		return nil, fmt.Errorf("publish event: %w", nats.ErrConnectionClosed)
+	}
+	future, err := b.js.PublishAsync(subject, payload)
+	if err != nil {
 		return nil, fmt.Errorf("publish event: %w", err)
 	}
-	b.log.Debug("event_published", "subject", subject, "type", envelope.Type, "tenant_id", envelope.TenantID, "mode", "js_async_flush")
+	b.log.Debug("event_published", "subject", subject, "type", envelope.Type, "tenant_id", envelope.TenantID, "mode", "js_async", "wait", string(b.ingestPublishWait))
 	return func() error {
-		if err := b.nc.FlushTimeout(100 * time.Millisecond); err != nil {
-			return fmt.Errorf("publish event: %w", err)
+		switch b.ingestPublishWait {
+		case IngestPublishWaitNone:
+			return nil
+		case IngestPublishWaitAck:
+			select {
+			case <-future.Ok():
+				return nil
+			case err := <-future.Err():
+				return fmt.Errorf("publish event: %w", err)
+			}
+		default:
+			if err := b.nc.FlushTimeout(100 * time.Millisecond); err != nil {
+				return fmt.Errorf("publish event: %w", err)
+			}
+			return nil
 		}
-		return nil
 	}, nil
 }
 

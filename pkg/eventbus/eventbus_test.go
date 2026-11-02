@@ -47,3 +47,19 @@ func TestSanitizeJetStreamName(t *testing.T) {
 		}
 	}
 }
+
+func TestIngestPublishWaitOption(t *testing.T) {
+	for _, mode := range []IngestPublishWait{IngestPublishWaitAck, IngestPublishWaitFlush, IngestPublishWaitNone} {
+		bus := &natsEventBus{ingestPublishWait: IngestPublishWaitFlush}
+		WithIngestPublishWait(mode)(bus)
+		if bus.ingestPublishWait != mode {
+			t.Errorf("WithIngestPublishWait(%q) = %q", mode, bus.ingestPublishWait)
+		}
+	}
+
+	bus := &natsEventBus{ingestPublishWait: IngestPublishWaitFlush}
+	WithIngestPublishWait("not-a-mode")(bus)
+	if bus.ingestPublishWait != IngestPublishWaitFlush {
+		t.Errorf("invalid mode must keep flush, got %q", bus.ingestPublishWait)
+	}
+}
