@@ -73,6 +73,7 @@ type Config struct {
 	CORSEnabled               bool
 	MaxAccuracyM              float64
 	MaxSpeedKPH               float64
+	TelemetryAsyncInflight    int
 	HistoryTTLSeconds         int
 	LatestTTLSeconds          int
 	IMEIIdentityTTLSeconds    int
@@ -170,6 +171,7 @@ func Load(serviceName, defaultPort string) Config {
 		RedisDB:                      getEnv("REDIS_DB", "0"),
 		MaxAccuracyM:                 getEnvFloat("TELEMETRY_MAX_ACCURACY_M", 500.0),
 		MaxSpeedKPH:                  getEnvFloat("TELEMETRY_MAX_SPEED_KPH", 250.0),
+		TelemetryAsyncInflight:       getEnvInt("TELEMETRY_ASYNC_INFLIGHT", 8),
 		HistoryTTLSeconds:            getEnvInt("TRACKING_HISTORY_TTL_SECONDS", 7*24*3600),
 		RoadMatchEnabled:             getEnvBoolStrict("TRACKING_ROAD_MATCH_ENABLED", false),
 		RoadMatchMinSpeedKPH:         getEnvFloat("TRACKING_ROAD_MATCH_MIN_SPEED_KPH", 20),

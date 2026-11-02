@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/truckmoov/services-go/internal/tracking/application"
@@ -44,10 +45,37 @@ type TimescaleTelemetryRepository struct {
 	db            *sql.DB
 	log           *slog.Logger
 	retentionDays int
+
+	// A saturated pool fails every queued sample. Logging each failure turns a
+	// DB outage into a log flood, which can block the ingest path on stdout
+	// under 1k VU; keep one warning per interval with a suppressed count.
+	logMu              sync.Mutex
+	lastFailureLog     time.Time
+	suppressedFailures int
 }
 
 func NewTimescaleTelemetryRepository(db *sql.DB, log *slog.Logger, retentionDays int) *TimescaleTelemetryRepository {
 	return &TimescaleTelemetryRepository{db: db, log: log, retentionDays: retentionDays}
+}
+
+const telemetryFailureLogEvery = 5 * time.Second
+
+func (r *TimescaleTelemetryRepository) logSaveFailure(deviceID string, err error) {
+	if r.log == nil {
+		return
+	}
+	r.logMu.Lock()
+	r.suppressedFailures++
+	if time.Since(r.lastFailureLog) < telemetryFailureLogEvery {
+		r.logMu.Unlock()
+		return
+	}
+	suppressed := r.suppressedFailures
+	r.suppressedFailures = 0
+	r.lastFailureLog = time.Now()
+	r.logMu.Unlock()
+
+	r.log.Warn("telemetry_sample_save_failed", "device_id", deviceID, "error", err.Error(), "suppressed_since_last_log", suppressed)
 }
 
 // EnsureSchema creates the table + indexes (mandatory) then promotes it to a
@@ -110,8 +138,9 @@ INSERT INTO telemetry_samples (
 	if err != nil {
 		// Surfaced here because the ingest caller intentionally discards the error to
 		// keep the live path non-failing; this is the only observability for a
-		// persistent write failure (disk/connection/schema drift).
-		r.log.Warn("telemetry_sample_save_failed", "device_id", s.DeviceID, "error", err.Error())
+		// persistent write failure (disk/connection/schema drift). Rate-limited so
+		// a pool outage cannot turn into a log flood.
+		r.logSaveFailure(s.DeviceID, err)
 	}
 	return err
 }

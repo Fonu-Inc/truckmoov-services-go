@@ -219,5 +219,41 @@ What failed under k6, what we changed, and why. Covers rate limits, capacity, Re
 | **Fixed** | `TRACKING_INGEST_PUBLISH_WAIT=ack\|flush\|none` on the event bus. Gitops sets `none` for the spike: `PublishAsync` still queues the durable JetStream event, and a disconnected client or full async window still returns 503; the handler no longer waits for the broker. Default stays `flush` for every other service. k6 now uses one wall-clock base for all VUs plus a fixed per-device offset, so shared-IMEI writes stay ordered. Added `tm_ingest_skipped` / `tm_ingest_published`, a `skipped < 10%` gate, a GPS_ONLY preset-IMEI path that survives token expiry, and a preflight that names a host firewall ban instead of dumping thousands of resets. |
 | **Why** | The live path source of truth is Redis; JetStream exists for durable fan-out (fleet geofences/positions), not to make the vendor wait for disk. Skipped fixes are not a valid p98 sample: they return before the work the gate is meant to measure. |
 
-**Run status:** code + gitops pushed; deploy and re-run pending. The load generator's public IPv4 was refused by the dev host after the 17:02 flood (all ports, while the same host answered external probes), which is why the last 1k run died at 10s with connection resets. Unblock that IP before the next run; the harness preflight now says so explicitly.
+**Run status:** code + gitops pushed; deploy and re-run pending. The last 1k sample was interrupted at 10s (8,404 writes, 98% accepted, 170 resets), and immediately afterwards the dev host refused **all** ports from the load generator's public IPv4 while the same host answered external probes. Unblock that IP before the next run; the harness preflight now says so explicitly.
+
+**Operational note (learned the hard way):** never SSH or port-scan the dev host from the load-generator machine. A handful of failed key attempts is enough for the host's all-port ban (sshguard/fail2ban) to reject **every** port from that IP, which looks identical to the API being down. Server access is login → root → deploy on a separate admin path; the load generator should only send HTTPS to `dev-api`. The k6 preflight now checks `/tracking/health` and names a firewall ban instead of dumping thousands of resets.
+
+## 24. Timescale connection storm + log flood under 1k VU
+
+| | |
+|---|---|
+| **Bad** | `DB_MAX_OPEN_CONNS=25` per tracking pod × 12–24 pods = 300–600 connections against Timescale's default `max_connections=100`. Every async insert failed with `SQLSTATE 53300` (`too many clients already` / `remaining connection slots are reserved`), the 128-in-flight async store then dropped samples, and both paths logged one warning per sample. At the same time Info-level HTTP access logs wrote ~950 lines/s. Promtail/Loki could not keep up, stdout writes blocked, and handlers stalled: the 1k run peaked at ~950 req/s for ~30s, then log volume fell to 72/min and the run collapsed. |
+| **Fixed** | Tracking pool 6/pod, idle 2, lifetime 10m; async in-flight 4; Timescale `max_connections=200`; telemetry failure/drop warnings rate-limited to one per 5s per pod with a suppressed count; HTTP access logs moved to Debug (errors and >1s requests stay Warn). `LOG_LEVEL=debug` re-enables access logs when debugging. |
+| **Why** | A best-effort telemetry store must fail cheaply. Connection count must satisfy `pods × pool ≤ max_connections`; log volume must be bounded independently of request rate, otherwise observability becomes the outage. |
+
+### 1k GPS_ONLY result before this fix
+
+| Metric | Value |
+|---|---|
+| Writes | 81,012 over 5m (270 RPS avg, ~950 RPS peak) |
+| Ingest accepted / skipped / published | 93.8% / 10.1% / 67,774 |
+| Client failures | 6.2% (5,047), max 60s timeout |
+| Kong upstream | med 131ms, p90 405ms, p95 603ms — **p98 gate FAIL** |
+| Behaviour | collapsed after ~2.5m; Timescale `53300` + log flood in Loki |
+
+The 10.1% skip is a harness artifact: 1,000 VUs share only the 80 preset IMEIs (12.5 writers per device), so cross-VU timestamps still collide at the server. A representative run needs one device per VU (tenant token + `SEED_DEVICES=1000`).
+
+## Repro after deploy
+
+```bash
+# 1k GPS-only, no tenant token (80 registered IMEIs captured from the last run)
+GPS_API_KEY=$(doppler secrets get GPS_API_KEY -p truckmoov -c stg_tracking --plain) \
+GPS_ONLY=1 PRESET_IMEIS_FILE="$PWD/k6/preset-imeis.txt" VUS=1000 DURATION=5m \
+k6 run k6/signup_vehicle_gps.js
+
+# Full journey once a fresh tenant ACCESS_TOKEN exists
+GPS_API_KEY=… ACCESS_TOKEN=… VUS=1000 DURATION=5m k6 run k6/signup_vehicle_gps.js
+```
+
+Pass criteria: `tm_upstream_ms{endpoint:ingest} p(98) < 100`, `tm_ingest_skipped < 10%`, `tm_ingest_accepted > 90%`, `tm_integrity_ok > 95%` in full mode, and writes > reads in the summary.
 

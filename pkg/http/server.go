@@ -14,8 +14,22 @@ import (
 func WithLogging(next http.Handler, log *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		next.ServeHTTP(w, r)
-		log.Info("http_request", "method", r.Method, "path", r.URL.Path, "duration_ms", time.Since(start).Milliseconds())
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+		duration := time.Since(start)
+		status := rec.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		args := []any{"method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", duration.Milliseconds()}
+		// Access logs are Debug: 1k VU means ~1k lines/s, which swamps
+		// Promtail/Loki and can block handlers on stdout. Errors and slow
+		// requests stay visible at Info/Warn.
+		if status >= http.StatusInternalServerError || duration >= time.Second {
+			log.Warn("http_request", args...)
+			return
+		}
+		log.Debug("http_request", args...)
 	})
 }
 
