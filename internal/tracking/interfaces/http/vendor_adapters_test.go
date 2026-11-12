@@ -84,6 +84,32 @@ func TestTraccarAdapter_DecodesTraccarForward(t *testing.T) {
 	}
 }
 
+func TestTraccarAdapter_GT06Attributes(t *testing.T) {
+	body := `{"position":{"protocol":"gt06","valid":false,"latitude":6.5,"longitude":3.4,"speed":10,"fixTime":"2026-11-12T10:00:00.000+00:00","attributes":{"battery":4.1,"power":12.6,"odometer":15000,"iccid":"8923401234567890123","alarm":"door","ignition":true}},"device":{"uniqueId":"359779090012345"}}`
+	cmd, err := traccarAdapter{}.decode(httptest.NewRequest(http.MethodPost, "/tracking/ingest/vendor/traccar", strings.NewReader(body)))
+	if err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if cmd.Protocol != "gt06" || cmd.IMEI != "359779090012345" {
+		t.Fatalf("expected gt06 device, got %q/%q", cmd.Protocol, cmd.IMEI)
+	}
+	if cmd.BatteryLevel != nil {
+		t.Fatalf("battery voltage must not become a level, got %v", *cmd.BatteryLevel)
+	}
+	if cmd.EngineOn == nil || !*cmd.EngineOn {
+		t.Fatal("expected ignition on")
+	}
+	if cmd.BatteryVoltage == nil || *cmd.BatteryVoltage != 4.1 || cmd.PowerVoltage == nil || *cmd.PowerVoltage != 12.6 {
+		t.Fatalf("expected battery 4.1V and power 12.6V, got %v/%v", cmd.BatteryVoltage, cmd.PowerVoltage)
+	}
+	if cmd.OdometerM == nil || *cmd.OdometerM != 15000 || cmd.ICCID != "8923401234567890123" || cmd.Alarm != "door" {
+		t.Fatalf("expected odometer/iccid/alarm, got %v/%q/%q", cmd.OdometerM, cmd.ICCID, cmd.Alarm)
+	}
+	if !cmd.NoFix {
+		t.Fatal("valid:false must mark the report as no fix")
+	}
+}
+
 func TestGenericAdapter_SetsProtocol(t *testing.T) {
 	body := `{"imei":"359779090012345","lat":6.5,"lng":3.4}`
 	req := httptest.NewRequest(http.MethodPost, "/tracking/ingest", strings.NewReader(body))

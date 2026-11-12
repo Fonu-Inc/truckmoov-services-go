@@ -129,6 +129,7 @@ type traccarPayload struct {
 		Longitude  float64        `json:"longitude"`
 		Speed      float64        `json:"speed"` // knots
 		Course     float64        `json:"course"`
+		Valid      *bool          `json:"valid"`
 		DeviceTime string         `json:"deviceTime"`
 		FixTime    string         `json:"fixTime"`
 		Attributes map[string]any `json:"attributes"`
@@ -164,11 +165,17 @@ func (traccarAdapter) decode(r *http.Request) (application.IngestLocationCommand
 		Longitude:        p.Position.Longitude,
 		SpeedKPH:         &speed,
 		Heading:          &heading,
-		BatteryLevel:     attrFloat(attrs, "batteryLevel", "battery"),
+		BatteryLevel:     attrFloat(attrs, "batteryLevel"), // "battery" is volts (GT06), not percent
 		SignalStrength:   attrFloat(attrs, "rssi", "signal"),
 		FuelLevel:        attrFloat(attrs, "fuel", "fuelLevel"),
 		EngineOn:         attrBool(attrs, "ignition"),
 		FirmwareVersion:  attrString(attrs, "firmware", "version"),
+		BatteryVoltage:   attrFloat(attrs, "battery"),
+		PowerVoltage:     attrFloat(attrs, "power"),
+		OdometerM:        attrFloat(attrs, "odometer", "totalDistance"),
+		ICCID:            attrString(attrs, "iccid"),
+		Alarm:            attrString(attrs, "alarm"),
+		NoFix:            p.Position.Valid != nil && !*p.Position.Valid,
 		FixTime:          fixTime,
 		Protocol:         p.Position.Protocol,
 		VendorPositionID: vendorPositionID,

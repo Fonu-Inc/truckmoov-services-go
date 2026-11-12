@@ -97,9 +97,11 @@ func (u *DeviceTelemetryQueryUseCase) Overview(ctx context.Context, tenantID, de
 	view.SignalStrength = latest.SignalStrength
 	view.BatteryLevel = latest.BatteryLevel
 	view.FirmwareVersion = latest.FirmwareVersion
-	lat, lng := latest.Latitude, latest.Longitude
-	view.Latitude = &lat
-	view.Longitude = &lng
+	if !latest.NoFix {
+		lat, lng := latest.Latitude, latest.Longitude
+		view.Latitude = &lat
+		view.Longitude = &lng
+	}
 	view.Health = string(DeriveHealth(latest.ObservedAt, u.clock.Now(), u.statusTimeoutSeconds))
 	return view, nil
 }

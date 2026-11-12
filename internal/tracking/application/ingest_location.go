@@ -30,8 +30,16 @@ type IngestLocationCommand struct {
 	FuelLevel       *float64
 	EngineOn        *bool
 	FirmwareVersion string
-	Protocol        string
-	FixTime         string
+	BatteryVoltage  *float64
+	PowerVoltage    *float64
+	OdometerM       *float64
+	ICCID           string
+	Alarm           string
+	// NoFix marks a report without a valid GPS fix (e.g. Traccar valid:false):
+	// telemetry is kept but the vehicle's location is not moved.
+	NoFix    bool
+	Protocol string
+	FixTime  string
 	// VendorPositionID, when set by a vendor adapter (e.g. Traccar's
 	// position.id), lets Execute detect and skip a re-delivered fix — a
 	// forwarding webhook retry after a timeout or non-2xx response — without
@@ -193,6 +201,11 @@ func (u *IngestLocationUseCase) Execute(
 		return IngestLocationResult{}, ErrInvalidFixTime
 	}
 
+	if command.NoFix {
+		u.saveSample(ctx, command, tenantID, vehicleID, deviceID, parsedFix, u.clock.Now(), "")
+		return IngestLocationResult{Skipped: true, SkipReason: "no_gps_fix"}, nil
+	}
+
 	lastKey := tenantID + "|" + vehicleID
 	needPrev := command.VendorPositionID != "" || u.telemetry.MaxSpeedKPH > 0
 	var prev *LatestLocation
@@ -279,31 +292,7 @@ func (u *IngestLocationUseCase) Execute(
 	}
 	u.lastFix.Store(lastKey, parsedFix)
 
-	// Time-series persistence is best-effort: the live path (Redis snapshot + NATS
-	// event) is the source of truth, so a Timescale outage must not fail ingest.
-	// The wired store is async; this call returns immediately.
-	if u.telemetryStore != nil {
-		_ = u.telemetryStore.SaveSample(ctx, TelemetrySample{
-			TenantID:        locationUpdate.TenantID,
-			DeviceID:        locationUpdate.DeviceID,
-			VehicleID:       locationUpdate.VehicleID,
-			IMEI:            command.IMEI,
-			Latitude:        locationUpdate.Latitude,
-			Longitude:       locationUpdate.Longitude,
-			SpeedKPH:        locationUpdate.SpeedKPH,
-			Heading:         locationUpdate.Heading,
-			AccuracyM:       locationUpdate.AccuracyM,
-			BatteryLevel:    command.BatteryLevel,
-			SignalStrength:  command.SignalStrength,
-			FuelLevel:       command.FuelLevel,
-			EngineOn:        command.EngineOn,
-			FirmwareVersion: command.FirmwareVersion,
-			Protocol:        command.Protocol,
-			FixTime:         &parsedFix,
-			ObservedAt:      locationUpdate.OccurredAt,
-			EventID:         locationUpdate.EventID,
-		})
-	}
+	u.saveSample(ctx, command, tenantID, vehicleID, deviceID, parsedFix, locationUpdate.OccurredAt, locationUpdate.EventID)
 
 	u.rate.Record(u.clock.Now())
 	if u.roadMatch != nil {
@@ -315,6 +304,41 @@ func (u *IngestLocationUseCase) Execute(
 		Subject:   locationUpdate.Subject(),
 		EventID:   locationUpdate.EventID,
 	}, nil
+}
+
+// saveSample is best-effort: the live path (Redis snapshot + NATS event) is the
+// source of truth, so a Timescale outage must not fail ingest. The wired store
+// is async; this call returns immediately.
+func (u *IngestLocationUseCase) saveSample(ctx context.Context, command IngestLocationCommand, tenantID, vehicleID, deviceID string, fix, observed time.Time, eventID string) {
+	if u.telemetryStore == nil {
+		return
+	}
+	_ = u.telemetryStore.SaveSample(ctx, TelemetrySample{
+		TenantID:        tenantID,
+		DeviceID:        deviceID,
+		VehicleID:       vehicleID,
+		IMEI:            command.IMEI,
+		Latitude:        command.Latitude,
+		Longitude:       command.Longitude,
+		SpeedKPH:        command.SpeedKPH,
+		Heading:         command.Heading,
+		AccuracyM:       command.AccuracyM,
+		BatteryLevel:    command.BatteryLevel,
+		SignalStrength:  command.SignalStrength,
+		FuelLevel:       command.FuelLevel,
+		EngineOn:        command.EngineOn,
+		FirmwareVersion: command.FirmwareVersion,
+		BatteryVoltage:  command.BatteryVoltage,
+		PowerVoltage:    command.PowerVoltage,
+		OdometerM:       command.OdometerM,
+		ICCID:           command.ICCID,
+		Alarm:           command.Alarm,
+		NoFix:           command.NoFix,
+		Protocol:        command.Protocol,
+		FixTime:         &fix,
+		ObservedAt:      observed,
+		EventID:         eventID,
+	})
 }
 
 // locationUpdateBeginner starts a publish and returns an ack wait so Redis I/O

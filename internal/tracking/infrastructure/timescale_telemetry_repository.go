@@ -33,6 +33,12 @@ CREATE TABLE IF NOT EXISTS telemetry_samples (
 );
 
 ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT '';
+ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS battery_voltage DOUBLE PRECISION NULL;
+ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS power_voltage DOUBLE PRECISION NULL;
+ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS odometer_m DOUBLE PRECISION NULL;
+ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS iccid TEXT NOT NULL DEFAULT '';
+ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS alarm TEXT NOT NULL DEFAULT '';
+ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS no_fix BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_telemetry_device_time
     ON telemetry_samples (tenant_id, device_id, observed_at DESC);
@@ -128,12 +134,14 @@ func (r *TimescaleTelemetryRepository) SaveSample(ctx context.Context, s applica
 INSERT INTO telemetry_samples (
     tenant_id, device_id, vehicle_id, imei, observed_at, fix_time,
     latitude, longitude, speed_kph, heading, accuracy_m,
-    battery_level, signal_strength, fuel_level, engine_on, firmware_version, event_id, protocol
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+    battery_level, signal_strength, fuel_level, engine_on, firmware_version, event_id, protocol,
+    battery_voltage, power_voltage, odometer_m, iccid, alarm, no_fix
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
 		s.TenantID, s.DeviceID, s.VehicleID, s.IMEI, s.ObservedAt, nullTime(s.FixTime),
 		s.Latitude, s.Longitude, nullFloat(s.SpeedKPH), nullFloat(s.Heading), nullFloat(s.AccuracyM),
 		nullFloat(s.BatteryLevel), nullFloat(s.SignalStrength), nullFloat(s.FuelLevel), nullBool(s.EngineOn),
 		s.FirmwareVersion, s.EventID, s.Protocol,
+		nullFloat(s.BatteryVoltage), nullFloat(s.PowerVoltage), nullFloat(s.OdometerM), s.ICCID, s.Alarm, s.NoFix,
 	)
 	if err != nil {
 		// Surfaced here because the ingest caller intentionally discards the error to
@@ -147,7 +155,8 @@ INSERT INTO telemetry_samples (
 
 const telemetryColumns = `tenant_id, device_id, vehicle_id, imei, observed_at, fix_time,
     latitude, longitude, speed_kph, heading, accuracy_m,
-    battery_level, signal_strength, fuel_level, engine_on, firmware_version, event_id, protocol`
+    battery_level, signal_strength, fuel_level, engine_on, firmware_version, event_id, protocol,
+    battery_voltage, power_voltage, odometer_m, iccid, alarm, no_fix`
 
 func (r *TimescaleTelemetryRepository) LatestSample(ctx context.Context, tenantID, deviceID string) (*application.TelemetrySample, bool, error) {
 	row := r.db.QueryRowContext(ctx,
@@ -260,13 +269,14 @@ type rowScanner interface {
 func scanSample(row rowScanner) (application.TelemetrySample, error) {
 	var s application.TelemetrySample
 	var fixTime sql.NullTime
-	var speed, heading, accuracy, battery, signal, fuel sql.NullFloat64
+	var speed, heading, accuracy, battery, signal, fuel, batteryV, powerV, odometer sql.NullFloat64
 	var engineOn sql.NullBool
 
 	if err := row.Scan(
 		&s.TenantID, &s.DeviceID, &s.VehicleID, &s.IMEI, &s.ObservedAt, &fixTime,
 		&s.Latitude, &s.Longitude, &speed, &heading, &accuracy,
 		&battery, &signal, &fuel, &engineOn, &s.FirmwareVersion, &s.EventID, &s.Protocol,
+		&batteryV, &powerV, &odometer, &s.ICCID, &s.Alarm, &s.NoFix,
 	); err != nil {
 		return application.TelemetrySample{}, err
 	}
@@ -280,6 +290,9 @@ func scanSample(row rowScanner) (application.TelemetrySample, error) {
 	s.BatteryLevel = floatPtr(battery)
 	s.SignalStrength = floatPtr(signal)
 	s.FuelLevel = floatPtr(fuel)
+	s.BatteryVoltage = floatPtr(batteryV)
+	s.PowerVoltage = floatPtr(powerV)
+	s.OdometerM = floatPtr(odometer)
 	if engineOn.Valid {
 		s.EngineOn = &engineOn.Bool
 	}

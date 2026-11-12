@@ -23,6 +23,12 @@ type TelemetrySample struct {
 	FuelLevel       *float64   `json:"fuel_level,omitempty"`
 	EngineOn        *bool      `json:"engine_on,omitempty"`
 	FirmwareVersion string     `json:"firmware_version,omitempty"`
+	BatteryVoltage  *float64   `json:"battery_voltage,omitempty"`
+	PowerVoltage    *float64   `json:"power_voltage,omitempty"`
+	OdometerM       *float64   `json:"odometer_m,omitempty"`
+	ICCID           string     `json:"iccid,omitempty"`
+	Alarm           string     `json:"alarm,omitempty"`
+	NoFix           bool       `json:"no_fix,omitempty"`
 	Protocol        string     `json:"protocol,omitempty"`
 	FixTime         *time.Time `json:"fix_time,omitempty"`
 	ObservedAt      time.Time  `json:"observed_at"`

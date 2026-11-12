@@ -79,6 +79,34 @@ func TestIngestLocation_ResolvesIMEIToVehicle(t *testing.T) {
 	}
 }
 
+func TestIngestLocation_NoFixKeepsTelemetryButNotLocation(t *testing.T) {
+	resolver := newFakeIMEIResolver()
+	_ = resolver.Upsert(DeviceIdentity{IMEI: "359779090012345", TenantID: "tenant-9", VehicleUUID: "vehicle-uuid-9", DeviceID: "device-uuid-9"})
+	publisher := &fakeTrackingPublisher{}
+	repository := &fakeLatestLocationRepository{}
+	store := &fakeTelemetryStore{}
+	useCase := NewIngestLocationUseCase(publisher, repository,
+		fixedTrackingClock{now: time.Date(2026, 2, 2, 11, 0, 0, 0, time.UTC)},
+		fixedTrackingIDGenerator{value: "evt-1"}, "default", &fakeLocationHistoryRepository{},
+		TelemetryConfig{}, resolver, store)
+
+	result, err := useCase.Execute(context.Background(), IngestLocationCommand{
+		IMEI: "359779090012345", Latitude: 6.5, Longitude: 3.4, Alarm: "door", NoFix: true,
+	})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !result.Skipped || result.SkipReason != "no_gps_fix" {
+		t.Fatalf("expected no_gps_fix skip, got %+v", result)
+	}
+	if repository.entry.VehicleID != "" {
+		t.Fatalf("no-fix report must not move the vehicle, got %+v", repository.entry)
+	}
+	if len(store.samples) != 1 || store.samples[0].Alarm != "door" || !store.samples[0].NoFix || store.samples[0].DeviceID != "device-uuid-9" {
+		t.Fatalf("expected one no-fix telemetry sample, got %+v", store.samples)
+	}
+}
+
 type fakeQuarantineStore struct {
 	counts  map[string]int
 	fail    bool
