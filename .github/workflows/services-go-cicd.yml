@@ -17,6 +17,7 @@ on:
       - "go.sum"
       - ".env.example"
       - ".github/workflows/services-go-cicd.yml"
+      - ".trivyignore"
   push:
     branches:
       - main
@@ -35,10 +36,14 @@ on:
       - "go.sum"
       - ".env.example"
       - ".github/workflows/services-go-cicd.yml"
+      - ".trivyignore"
   workflow_dispatch:
+  # Weekly re-scan catches CVEs published after the last merge.
+  schedule:
+    - cron: "0 6 * * 1"
 
 concurrency:
-  group: services-go-cicd-${{ github.ref }}
+  group: services-go-cicd-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
@@ -110,23 +115,14 @@ jobs:
           go install honnef.co/go/tools/cmd/staticcheck@latest
           "$(go env GOPATH)/bin/staticcheck" ./...
 
-      - name: Trivy filesystem scan (CRITICAL, report only)
-        continue-on-error: true
+      - name: Trivy dependency scan (HIGH/CRITICAL, blocking)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
-          severity: CRITICAL
+          scanners: vuln
+          severity: HIGH,CRITICAL
           exit-code: "1"
-          ignore-unfixed: true
-
-      - name: Trivy filesystem scan (HIGH, non-blocking)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: HIGH
-          exit-code: "0"
           ignore-unfixed: true
 
       - name: Trivy config/Dockerfile scan (CRITICAL, report only)
@@ -166,7 +162,7 @@ jobs:
     needs:
       - validate
       - security
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'schedule'
     permissions:
       contents: read
       packages: write
@@ -198,6 +194,19 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ghcr.io/fonu-inc/truckmoov-${{ matrix.service }}:sha-${{ github.sha }}
+
+      # Blocks update-gitops, so an image with a known HIGH/CRITICAL CVE is never deployed.
+      - name: Trivy image scan (HIGH/CRITICAL, blocking)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ghcr.io/fonu-inc/truckmoov-${{ matrix.service }}:sha-${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
 
   update-gitops:
     runs-on: ubuntu-latest
