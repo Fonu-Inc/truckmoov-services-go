@@ -13,7 +13,7 @@ func TestComplianceSnapshotUseCase_RollsUpEachActiveLinkedOperator(t *testing.T)
 	now := time.Now()
 
 	active, _ := domain.NewAggregatorRelationship(domain.AggregatorRelationship{
-		ID: "rel-1", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1",
+		ID: "rel-1", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1", Status: domain.RelationshipStatusActive,
 		Types: []domain.RelationshipType{domain.RelationshipOwnerOperator}, CreatedAt: now, UpdatedAt: now,
 	})
 	_, _ = relationships.Create(context.Background(), active)
@@ -48,7 +48,7 @@ func TestAssignSubDispatchJobUseCase_RefusesInactiveRelationship(t *testing.T) {
 	relationships := newFakeRelationshipRepository()
 	jobs := newLifecycleRepository()
 	offers := newFakeOfferRepository(jobs)
-	createOffer := NewCreateJobOfferUseCase(offers, jobs, &recordingOfferPublisher{}, fixedOfferClock{now: time.Now()}, &sequentialOfferIDs{})
+	createOffer := NewCreateJobOfferUseCase(offers, jobs, relationships, &recordingOfferPublisher{}, fixedOfferClock{now: time.Now()}, &sequentialOfferIDs{})
 	useCase := NewAssignSubDispatchJobUseCase(relationships, createOffer, newFakeActivityRepository(), fixedOfferClock{now: time.Now()}, &sequentialAggregatorIDs{})
 
 	_, err := useCase.Execute(context.Background(), AssignSubDispatchJobCommand{
@@ -67,7 +67,7 @@ func TestAssignSubDispatchJobUseCase_CreatesOfferAndRecordsActivity(t *testing.T
 	now := time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC)
 
 	rel, _ := domain.NewAggregatorRelationship(domain.AggregatorRelationship{
-		ID: "rel-1", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1",
+		ID: "rel-1", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1", Status: domain.RelationshipStatusActive,
 		Types: []domain.RelationshipType{domain.RelationshipOwnerOperator}, CreatedAt: now, UpdatedAt: now,
 	})
 	_, _ = relationships.Create(context.Background(), rel)
@@ -79,7 +79,7 @@ func TestAssignSubDispatchJobUseCase_CreatesOfferAndRecordsActivity(t *testing.T
 	})
 	_ = jobs.Save(job)
 
-	createOffer := NewCreateJobOfferUseCase(offers, jobs, &recordingOfferPublisher{}, fixedOfferClock{now: now}, &sequentialOfferIDs{})
+	createOffer := NewCreateJobOfferUseCase(offers, jobs, relationships, &recordingOfferPublisher{}, fixedOfferClock{now: now}, &sequentialOfferIDs{})
 	useCase := NewAssignSubDispatchJobUseCase(relationships, createOffer, activity, fixedOfferClock{now: now}, &sequentialAggregatorIDs{})
 
 	offer, err := useCase.Execute(context.Background(), AssignSubDispatchJobCommand{

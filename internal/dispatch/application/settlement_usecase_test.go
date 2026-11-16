@@ -61,7 +61,7 @@ func TestWeeklySettlementCloseUseCase_ClosesAPeriodWithDeliveredJobs(t *testing.
 	deliveredAt := periodStart.Add(24 * time.Hour)
 
 	rel, _ := domain.NewAggregatorRelationship(domain.AggregatorRelationship{
-		ID: "rel-1", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1",
+		ID: "rel-1", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1", Status: domain.RelationshipStatusActive,
 		Types: []domain.RelationshipType{domain.RelationshipOwnerOperator}, FeeRatePct: 10,
 		CreatedAt: periodStart.Add(-time.Hour), UpdatedAt: periodStart.Add(-time.Hour),
 	})
@@ -111,7 +111,7 @@ func TestWeeklySettlementCloseUseCase_IsIdempotent(t *testing.T) {
 	deliveredAt := periodStart.Add(24 * time.Hour)
 
 	rel, _ := domain.NewAggregatorRelationship(domain.AggregatorRelationship{
-		ID: "rel-1", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1",
+		ID: "rel-1", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1", Status: domain.RelationshipStatusActive,
 		Types: []domain.RelationshipType{domain.RelationshipOwnerOperator}, FeeRatePct: 10,
 		CreatedAt: periodStart.Add(-time.Hour), UpdatedAt: periodStart.Add(-time.Hour),
 	})
@@ -149,7 +149,7 @@ func TestWeeklySettlementCloseUseCase_SkipsZeroGrossPeriods(t *testing.T) {
 	periodStart, _ := previousWeekWindow(now)
 
 	rel, _ := domain.NewAggregatorRelationship(domain.AggregatorRelationship{
-		ID: "rel-1", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1",
+		ID: "rel-1", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1", Status: domain.RelationshipStatusActive,
 		Types: []domain.RelationshipType{domain.RelationshipOwnerOperator}, FeeRatePct: 10,
 		CreatedAt: periodStart.Add(-time.Hour), UpdatedAt: periodStart.Add(-time.Hour),
 	})

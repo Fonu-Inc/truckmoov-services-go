@@ -10,9 +10,10 @@ import (
 )
 
 var (
-	ErrJobOfferNotFound = errors.New("job offer not found")
-	ErrNotYourOffer     = errors.New("this offer does not belong to you")
-	ErrOverActiveJobCap = errors.New("accepting this offer would exceed the active job limit")
+	ErrJobOfferNotFound   = errors.New("job offer not found")
+	ErrNotYourOffer       = errors.New("this offer does not belong to you")
+	ErrOverActiveJobCap   = errors.New("accepting this offer would exceed the active job limit")
+	ErrPendingOfferExists = errors.New("this job already has a pending offer to that operator")
 )
 
 type CreateJobOfferCommand struct {
@@ -23,36 +24,55 @@ type CreateJobOfferCommand struct {
 	ExpiresAt        time.Time
 }
 
-// CreateJobOfferUseCase puts a job in front of a carrier.
+// CreateJobOfferUseCase puts a job in front of a carrier in the offering
+// tenant's network: only an operator with an active relationship to it.
 //
 // The job stays owned by the offering tenant until an offer is accepted — an
 // offer is a proposal, and a job that has merely been offered has not changed
 // hands.
 type CreateJobOfferUseCase struct {
-	offers    JobOfferRepository
-	jobs      JobRepository
-	publisher JobOfferEventPublisher
-	clock     Clock
-	idGen     IDGenerator
+	offers        JobOfferRepository
+	jobs          JobRepository
+	relationships AggregatorRelationshipRepository
+	publisher     JobOfferEventPublisher
+	clock         Clock
+	idGen         IDGenerator
 }
 
 func NewCreateJobOfferUseCase(
 	offers JobOfferRepository,
 	jobs JobRepository,
+	relationships AggregatorRelationshipRepository,
 	publisher JobOfferEventPublisher,
 	clock Clock,
 	idGen IDGenerator,
 ) *CreateJobOfferUseCase {
-	return &CreateJobOfferUseCase{offers: offers, jobs: jobs, publisher: publisher, clock: clock, idGen: idGen}
+	return &CreateJobOfferUseCase{offers: offers, jobs: jobs, relationships: relationships, publisher: publisher, clock: clock, idGen: idGen}
 }
 
 func (u *CreateJobOfferUseCase) Execute(ctx context.Context, command CreateJobOfferCommand) (domain.JobOffer, error) {
+	relationship, found, err := u.relationships.FindActiveBetween(ctx, command.OfferingTenantID, command.TargetTenantID)
+	if err != nil {
+		return domain.JobOffer{}, err
+	}
+	if !found || !relationship.IsActive() {
+		return domain.JobOffer{}, ErrSubDispatchRelationshipNotActive
+	}
+
 	job, err := u.jobs.FindByTenantAndID(command.OfferingTenantID, command.JobID)
 	if err != nil {
 		return domain.JobOffer{}, err
 	}
 	if !job.IsActive() {
 		return domain.JobOffer{}, errors.New("a completed or cancelled job cannot be offered")
+	}
+
+	pending, err := u.offers.HasPending(ctx, command.OfferingTenantID, command.JobID, command.TargetTenantID)
+	if err != nil {
+		return domain.JobOffer{}, fmt.Errorf("check pending offers: %w", err)
+	}
+	if pending {
+		return domain.JobOffer{}, ErrPendingOfferExists
 	}
 
 	offer, err := domain.NewJobOffer(domain.JobOffer{

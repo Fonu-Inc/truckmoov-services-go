@@ -456,10 +456,10 @@ func respondAggregatorError(w http.ResponseWriter, err error) {
 	case errors.Is(err, application.ErrRelationshipNotYours),
 		errors.Is(err, application.ErrSettlementNotYours),
 		errors.Is(err, application.ErrInvitedEmailMismatch),
-		errors.Is(err, application.ErrSubDispatchRelationshipNotActive),
-		errors.Is(err, application.ErrJobNotSubDispatched):
+		errors.Is(err, application.ErrSubDispatchRelationshipNotActive):
 		httpx.WriteError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, application.ErrRelationshipAlreadyExists),
+		errors.Is(err, application.ErrPendingOfferExists),
 		errors.Is(err, application.ErrOperatorHasActiveJobs),
 		errors.Is(err, application.ErrRatingAlreadyExists),
 		errors.Is(err, application.ErrJobNotDelivered):

@@ -63,10 +63,10 @@ func TestNewAggregatorRelationship_InviteYieldsPendingStatus(t *testing.T) {
 	}
 }
 
-func TestNewAggregatorRelationship_ExistingOperatorYieldsActiveStatus(t *testing.T) {
+func TestNewAggregatorRelationship_ExistingOperatorYieldsPendingStatus(t *testing.T) {
 	rel := validRelationshipFixture(t)
-	if rel.Status != RelationshipStatusActive {
-		t.Fatalf("expected active status, got %q", rel.Status)
+	if rel.Status != RelationshipStatusPending {
+		t.Fatalf("expected pending status until the operator accepts, got %q", rel.Status)
 	}
 }
 
@@ -152,7 +152,10 @@ func TestAggregatorRelationship_AcceptInvite(t *testing.T) {
 }
 
 func TestAggregatorRelationship_AcceptInvite_RefusedWhenNotPending(t *testing.T) {
-	rel := validRelationshipFixture(t)
+	rel, err := validRelationshipFixture(t).AcceptInvite("operator-1", time.Now())
+	if err != nil {
+		t.Fatalf("unexpected error accepting pending link: %v", err)
+	}
 	if _, err := rel.AcceptInvite("operator-9", time.Now()); err == nil {
 		t.Fatal("expected error accepting invite on an already-active relationship")
 	}

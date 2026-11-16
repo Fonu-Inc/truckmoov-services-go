@@ -8,7 +8,7 @@ import (
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
 )
 
-func TestAddOperatorUseCase_LinksAnExistingOperator(t *testing.T) {
+func TestAddOperatorUseCase_DirectLinkWaitsForOperatorAcceptance(t *testing.T) {
 	relationships := newFakeRelationshipRepository()
 	activity := newFakeActivityRepository()
 	clock := fixedOfferClock{now: time.Now()}
@@ -21,11 +21,11 @@ func TestAddOperatorUseCase_LinksAnExistingOperator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if rel.Status != domain.RelationshipStatusActive {
-		t.Fatalf("expected active status, got %q", rel.Status)
+	if rel.Status != domain.RelationshipStatusPending {
+		t.Fatalf("expected pending status until the operator accepts, got %q", rel.Status)
 	}
-	if len(activity.entries) != 1 {
-		t.Fatalf("expected one activity entry recorded, got %d", len(activity.entries))
+	if len(activity.entries) != 0 {
+		t.Fatalf("expected no activity entry before acceptance, got %d", len(activity.entries))
 	}
 }
 
@@ -104,6 +104,46 @@ func TestAcceptAggregatorInviteUseCase_RequiresMatchingEmail(t *testing.T) {
 	}
 	if accepted.Status != domain.RelationshipStatusActive {
 		t.Fatalf("expected active status, got %q", accepted.Status)
+	}
+}
+
+func TestAcceptAggregatorInviteUseCase_DirectLinkOnlyByTheNamedOperator(t *testing.T) {
+	relationships := newFakeRelationshipRepository()
+	activity := newFakeActivityRepository()
+	now := time.Now()
+	rel, err := domain.NewAggregatorRelationship(domain.AggregatorRelationship{
+		ID: "rel-1", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1",
+		Types: []domain.RelationshipType{domain.RelationshipOwnerOperator}, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("unexpected fixture error: %v", err)
+	}
+	_, _ = relationships.Create(context.Background(), rel)
+
+	useCase := NewAcceptAggregatorInviteUseCase(relationships, activity, fixedOfferClock{now: now}, &sequentialAggregatorIDs{})
+
+	for _, tenant := range []string{"operator-9", "aggregator-1", ""} {
+		if _, err := useCase.Execute(context.Background(), AcceptAggregatorInviteCommand{
+			RelationshipID: "rel-1", AcceptingTenantID: tenant,
+		}); err != ErrRelationshipNotFound {
+			t.Fatalf("tenant %q: expected ErrRelationshipNotFound, got %v", tenant, err)
+		}
+	}
+	if stored, _, _ := relationships.FindByID(context.Background(), "rel-1"); stored.Status != domain.RelationshipStatusPending {
+		t.Fatalf("expected link to stay pending after refused accepts, got %q", stored.Status)
+	}
+
+	accepted, err := useCase.Execute(context.Background(), AcceptAggregatorInviteCommand{
+		RelationshipID: "rel-1", AcceptingTenantID: "operator-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error accepting as the named operator: %v", err)
+	}
+	if accepted.Status != domain.RelationshipStatusActive || accepted.OperatorTenantID != "operator-1" {
+		t.Fatalf("expected active link to operator-1, got %+v", accepted)
+	}
+	if len(activity.entries) != 1 {
+		t.Fatalf("expected one onboarding activity entry, got %d", len(activity.entries))
 	}
 }
 
@@ -189,7 +229,7 @@ func TestListLinkedOperatorsUseCase_OnlyReturnsActiveRelationships(t *testing.T)
 	now := time.Now()
 
 	active, _ := domain.NewAggregatorRelationship(domain.AggregatorRelationship{
-		ID: "rel-active", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1",
+		ID: "rel-active", AggregatorTenantID: "aggregator-1", OperatorTenantID: "operator-1", Status: domain.RelationshipStatusActive,
 		Types: []domain.RelationshipType{domain.RelationshipOwnerOperator}, CreatedAt: now, UpdatedAt: now,
 	})
 	_, _ = relationships.Create(context.Background(), active)

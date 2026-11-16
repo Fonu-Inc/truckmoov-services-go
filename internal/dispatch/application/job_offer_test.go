@@ -57,6 +57,15 @@ func (r *fakeOfferRepository) CountPending(_ context.Context, targetTenantID str
 	return count, nil
 }
 
+func (r *fakeOfferRepository) HasPending(_ context.Context, offeringTenantID, jobID, targetTenantID string) (bool, error) {
+	for _, offer := range r.offers {
+		if offer.OfferingTenantID == offeringTenantID && offer.JobID == jobID && offer.TargetTenantID == targetTenantID && offer.Status == domain.OfferStatusPending {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (r *fakeOfferRepository) ListAccepted(_ context.Context, offeringTenantID, targetTenantID string) ([]domain.JobOffer, error) {
 	matched := []domain.JobOffer{}
 	for _, offer := range r.offers {
@@ -157,7 +166,7 @@ func TestCreateJobOfferRefusesAnOfferForAJobTheTenantDoesNotOwn(t *testing.T) {
 	jobs := newLifecycleRepository()
 	offers := newFakeOfferRepository(jobs)
 	clock := fixedOfferClock{now: time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC)}
-	useCase := NewCreateJobOfferUseCase(offers, jobs, &recordingOfferPublisher{}, clock, &sequentialOfferIDs{})
+	useCase := NewCreateJobOfferUseCase(offers, jobs, linkedRelationships(t, "tenant-owner", "tenant-carrier", domain.RelationshipStatusActive), &recordingOfferPublisher{}, clock, &sequentialOfferIDs{})
 
 	_, err := useCase.Execute(context.Background(), CreateJobOfferCommand{
 		OfferingTenantID: "tenant-owner", JobID: "job-does-not-exist", TargetTenantID: "tenant-carrier",
@@ -191,7 +200,7 @@ func TestCreateJobOfferPublishesToTheTargetTenant(t *testing.T) {
 	offers := newFakeOfferRepository(jobs)
 	publisher := &recordingOfferPublisher{}
 	clock := fixedOfferClock{now: time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC)}
-	useCase := NewCreateJobOfferUseCase(offers, jobs, publisher, clock, &sequentialOfferIDs{})
+	useCase := NewCreateJobOfferUseCase(offers, jobs, linkedRelationships(t, "tenant-owner", "tenant-carrier", domain.RelationshipStatusActive), publisher, clock, &sequentialOfferIDs{})
 
 	offer, err := useCase.Execute(context.Background(), CreateJobOfferCommand{
 		OfferingTenantID: "tenant-owner", JobID: "job-1", TargetTenantID: "tenant-carrier",
@@ -205,6 +214,53 @@ func TestCreateJobOfferPublishesToTheTargetTenant(t *testing.T) {
 	// this without refreshing.
 	if len(publisher.created) != 1 || publisher.created[0].ID != offer.ID {
 		t.Fatal("expected the offer to be published on creation")
+	}
+}
+
+func TestCreateJobOfferRequiresAnActiveRelationshipWithTheTarget(t *testing.T) {
+	clock := fixedOfferClock{now: time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC)}
+	cases := map[string]*fakeRelationshipRepository{
+		"no link":      newFakeRelationshipRepository(),
+		"pending link": linkedRelationships(t, "tenant-owner", "tenant-carrier", domain.RelationshipStatusPending),
+		"reverse link": linkedRelationships(t, "tenant-carrier", "tenant-owner", domain.RelationshipStatusActive),
+		"ended link":   linkedRelationships(t, "tenant-owner", "tenant-carrier", domain.RelationshipStatusEnded),
+	}
+	for name, relationships := range cases {
+		jobs := newLifecycleRepository()
+		mustSaveJob(t, jobs, "tenant-owner", "job-1")
+		offers := newFakeOfferRepository(jobs)
+		publisher := &recordingOfferPublisher{}
+		useCase := NewCreateJobOfferUseCase(offers, jobs, relationships, publisher, clock, &sequentialOfferIDs{})
+
+		_, err := useCase.Execute(context.Background(), CreateJobOfferCommand{
+			OfferingTenantID: "tenant-owner", JobID: "job-1", TargetTenantID: "tenant-carrier",
+			OfferedRateNgn: 100000, ExpiresAt: clock.now.Add(time.Hour),
+		})
+		if err != ErrSubDispatchRelationshipNotActive {
+			t.Fatalf("%s: expected ErrSubDispatchRelationshipNotActive, got %v", name, err)
+		}
+		if len(offers.offers) != 0 || len(publisher.created) != 0 {
+			t.Fatalf("%s: expected no offer saved or published", name)
+		}
+	}
+}
+
+func TestCreateJobOfferRefusesASecondPendingOfferToTheSameTarget(t *testing.T) {
+	jobs := newLifecycleRepository()
+	mustSaveJob(t, jobs, "tenant-owner", "job-1")
+	offers := newFakeOfferRepository(jobs)
+	clock := fixedOfferClock{now: time.Date(2026, 3, 1, 8, 0, 0, 0, time.UTC)}
+	useCase := NewCreateJobOfferUseCase(offers, jobs, linkedRelationships(t, "tenant-owner", "tenant-carrier", domain.RelationshipStatusActive), &recordingOfferPublisher{}, clock, &sequentialOfferIDs{})
+
+	cmd := CreateJobOfferCommand{
+		OfferingTenantID: "tenant-owner", JobID: "job-1", TargetTenantID: "tenant-carrier",
+		OfferedRateNgn: 100000, ExpiresAt: clock.now.Add(time.Hour),
+	}
+	if _, err := useCase.Execute(context.Background(), cmd); err != nil {
+		t.Fatalf("first offer: %v", err)
+	}
+	if _, err := useCase.Execute(context.Background(), cmd); err != ErrPendingOfferExists {
+		t.Fatalf("expected ErrPendingOfferExists, got %v", err)
 	}
 }
 

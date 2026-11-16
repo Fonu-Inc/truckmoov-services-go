@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/truckmoov/services-go/internal/dispatch/domain"
 )
@@ -82,35 +81,12 @@ func (u *AddOperatorUseCase) Execute(ctx context.Context, command AddOperatorCom
 	if err != nil {
 		return domain.AggregatorRelationship{}, fmt.Errorf("save relationship: %w", err)
 	}
-
-	if saved.Status == domain.RelationshipStatusActive {
-		u.recordOnboarded(ctx, saved, now)
-	}
-
 	return saved, nil
 }
 
-func (u *AddOperatorUseCase) recordOnboarded(ctx context.Context, relationship domain.AggregatorRelationship, now time.Time) {
-	if u.activity == nil {
-		return
-	}
-	entry, err := domain.NewAggregatorActivityEntry(domain.AggregatorActivityEntry{
-		ID:                 "act-" + u.idGen.New(),
-		AggregatorTenantID: relationship.AggregatorTenantID,
-		Type:               domain.ActivityOperatorOnboarded,
-		Description:        "Operator " + relationship.OperatorTenantID + " onboarded to the network",
-		RelatedEntityType:  "aggregator_relationship",
-		RelatedEntityID:    relationship.ID,
-		OccurredAt:         now,
-	})
-	if err != nil {
-		return
-	}
-	_ = u.activity.Append(ctx, entry)
-}
-
-// AcceptAggregatorInviteUseCase turns a pending invitation into an active
-// relationship once the invited organisation registers and confirms.
+// AcceptAggregatorInviteUseCase turns a pending link into an active
+// relationship once the operator confirms: an email invite by the invited
+// account, a direct link by the named operator tenant itself.
 type AcceptAggregatorInviteUseCase struct {
 	relationships AggregatorRelationshipRepository
 	activity      AggregatorActivityRepository
@@ -141,7 +117,11 @@ func (u *AcceptAggregatorInviteUseCase) Execute(ctx context.Context, command Acc
 	if !found {
 		return domain.AggregatorRelationship{}, ErrRelationshipNotFound
 	}
-	if !equalFoldTrim(relationship.InvitedEmail, command.AcceptingAccountEmail) {
+	if relationship.OperatorTenantID != "" {
+		if relationship.OperatorTenantID != strings.TrimSpace(command.AcceptingTenantID) {
+			return domain.AggregatorRelationship{}, ErrRelationshipNotFound
+		}
+	} else if !equalFoldTrim(relationship.InvitedEmail, command.AcceptingAccountEmail) {
 		return domain.AggregatorRelationship{}, ErrInvitedEmailMismatch
 	}
 

@@ -92,6 +92,17 @@ func (r *InMemoryJobOfferRepository) CountPending(_ context.Context, targetTenan
 	return count, nil
 }
 
+func (r *InMemoryJobOfferRepository) HasPending(_ context.Context, offeringTenantID, jobID, targetTenantID string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, offer := range r.offers {
+		if offer.OfferingTenantID == offeringTenantID && offer.JobID == jobID && offer.TargetTenantID == targetTenantID && offer.Status == domain.OfferStatusPending {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (r *InMemoryJobOfferRepository) ListAccepted(_ context.Context, offeringTenantID, targetTenantID string) ([]domain.JobOffer, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

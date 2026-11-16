@@ -15,6 +15,7 @@ type JobOfferRepository interface {
 	// selected by role. Neither side may see an offer made to someone else.
 	List(ctx context.Context, query JobOfferQuery) ([]domain.JobOffer, int, error)
 	CountPending(ctx context.Context, targetTenantID string) (int, error)
+	HasPending(ctx context.Context, offeringTenantID, jobID, targetTenantID string) (bool, error)
 	// ListAccepted returns every accepted offer between one specific pair of
 	// tenants, regardless of when — used by the aggregator screen to find a
 	// linked operator's sub-dispatched jobs and by settlement close to total

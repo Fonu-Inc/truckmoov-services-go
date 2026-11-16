@@ -24,7 +24,7 @@ func isKnownRelationshipType(t RelationshipType) bool {
 type RelationshipStatus string
 
 const (
-	// Pending: an invitation sent to an operator not yet on the platform.
+	// Pending: awaiting the operator's acceptance, by invited email or by tenant id.
 	RelationshipStatusPending RelationshipStatus = "pending"
 	RelationshipStatusActive  RelationshipStatus = "active"
 	// Ended: relationship closed. Kept, not deleted — settlements and past
@@ -124,13 +124,10 @@ func NewAggregatorRelationship(params AggregatorRelationship) (AggregatorRelatio
 		return AggregatorRelationship{}, errors.New("created_at and updated_at are required")
 	}
 
+	// Linking another tenant needs its consent, so every new link starts pending.
 	status := params.Status
 	if status == "" {
-		if operatorTenantID == "" {
-			status = RelationshipStatusPending
-		} else {
-			status = RelationshipStatusActive
-		}
+		status = RelationshipStatusPending
 	}
 
 	return AggregatorRelationship{
@@ -148,7 +145,7 @@ func NewAggregatorRelationship(params AggregatorRelationship) (AggregatorRelatio
 }
 
 // AcceptInvite is what turns a pending invitation into an active
-// relationship once the invited organisation registers.
+// relationship once the invited organisation accepts it.
 func (a AggregatorRelationship) AcceptInvite(operatorTenantID string, now time.Time) (AggregatorRelationship, error) {
 	operatorTenantID = strings.TrimSpace(operatorTenantID)
 	if operatorTenantID == "" {

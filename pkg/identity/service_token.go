@@ -76,8 +76,10 @@ func (s *ServiceTokens) For(callee string) string {
 
 // ServiceTokenVerifier checks the token a calling service presents.
 type ServiceTokenVerifier struct {
-	self      string
-	keys      *clusterKeys
+	self string
+	keys *clusterKeys
+	// namespace is this pod's own: only service accounts from it are callers.
+	namespace string
 	devSecret []byte
 	now       func() time.Time
 }
@@ -89,6 +91,9 @@ func NewServiceTokenVerifier(self, devSecret string) *ServiceTokenVerifier {
 	v := &ServiceTokenVerifier{self: self, devSecret: devSecretOutsideCluster(devSecret), now: time.Now}
 	if inCluster() {
 		v.keys = newClusterKeys()
+		if raw, err := os.ReadFile(filepath.Join(serviceAccountDir, "namespace")); err == nil {
+			v.namespace = strings.TrimSpace(string(raw))
+		}
 	}
 	return v
 }
@@ -112,28 +117,31 @@ func (v *ServiceTokenVerifier) Verify(token string) (ServiceCaller, error) {
 	switch {
 	case len(parts) == 3 && v.keys != nil:
 		issuer, err := v.keys.verify(parts)
-		if err != nil || !decodeSegment(parts[1], &payload) || payload.Issuer != issuer {
+		if err != nil || v.namespace == "" || !decodeSegment(parts[1], &payload) || payload.Issuer != issuer {
 			return ServiceCaller{}, ErrInvalidToken
 		}
+		return v.caller(payload, v.namespace)
 	case len(parts) == 2 && len(v.devSecret) > 0:
 		if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(devSignature(v.devSecret, parts[0]))) != 1 ||
 			!decodeSegment(parts[0], &payload) || payload.Issuer != devServiceTokenIssuer {
 			return ServiceCaller{}, ErrInvalidToken
 		}
+		return v.caller(payload, "")
 	default:
 		return ServiceCaller{}, ErrInvalidToken
 	}
-	return v.caller(payload)
 }
 
-func (v *ServiceTokenVerifier) caller(p serviceTokenPayload) (ServiceCaller, error) {
+// caller names the service a token speaks for. An empty namespace accepts any,
+// which only the dev path outside the cluster passes.
+func (v *ServiceTokenVerifier) caller(p serviceTokenPayload, namespace string) (ServiceCaller, error) {
 	now := v.now().Unix()
 	if p.Expiry <= now || p.NotBefore > now || !audienceIncludes(p.Audience, v.self) {
 		return ServiceCaller{}, ErrInvalidToken
 	}
 	account, ok := strings.CutPrefix(p.Subject, serviceAccountPrefix)
-	_, name, found := strings.Cut(account, ":")
-	if !ok || !found || name == "" {
+	ns, name, found := strings.Cut(account, ":")
+	if !ok || !found || name == "" || (namespace != "" && ns != namespace) {
 		return ServiceCaller{}, ErrInvalidToken
 	}
 	return ServiceCaller{Service: name}, nil

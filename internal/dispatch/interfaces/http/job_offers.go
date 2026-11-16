@@ -186,9 +186,9 @@ func respondJobOfferError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, application.ErrJobOfferNotFound), errors.Is(err, application.ErrJobNotFound):
 		httpx.WriteError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, application.ErrNotYourOffer):
+	case errors.Is(err, application.ErrNotYourOffer), errors.Is(err, application.ErrSubDispatchRelationshipNotActive):
 		httpx.WriteError(w, http.StatusForbidden, err.Error())
-	case errors.Is(err, application.ErrOverActiveJobCap):
+	case errors.Is(err, application.ErrOverActiveJobCap), errors.Is(err, application.ErrPendingOfferExists):
 		httpx.WriteError(w, http.StatusConflict, err.Error())
 	default:
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())

@@ -41,7 +41,7 @@ func clusterVerifier(t *testing.T, self string) (*ServiceTokenVerifier, *rsa.Pri
 		N:   base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
 		E:   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes()),
 	}
-	v := &ServiceTokenVerifier{self: self, now: time.Now, keys: &clusterKeys{
+	v := &ServiceTokenVerifier{self: self, namespace: "truckmoov", now: time.Now, keys: &clusterKeys{
 		fetch: func() (string, []jwk, error) { return testIssuer, []jwk{published}, nil },
 	}}
 	return v, key
@@ -65,6 +65,16 @@ func TestClusterTokenNamesTheCallingService(t *testing.T) {
 	}
 }
 
+// Without this pod's own namespace no cluster caller can be placed, so none is accepted.
+func TestClusterTokenRefusedWhenOwnNamespaceUnknown(t *testing.T) {
+	v, key := clusterVerifier(t, "fleet")
+	v.namespace = ""
+
+	if _, err := v.Verify(clusterToken(t, key, "k1", claimsFor("dispatch", "fleet"))); err == nil {
+		t.Fatal("expected refusal when this pod's namespace is unknown")
+	}
+}
+
 // A token is bound to the service it was issued for, so one taken from a
 // call to notification cannot be replayed against fleet.
 func TestClusterTokenForAnotherServiceIsRefused(t *testing.T) {
@@ -84,14 +94,17 @@ func TestClusterTokenRefusals(t *testing.T) {
 	wrongIssuer["iss"] = "https://elsewhere"
 	notAService := claimsFor("dispatch", "fleet")
 	notAService["sub"] = "someone"
+	otherNamespace := claimsFor("dispatch", "fleet")
+	otherNamespace["sub"] = "system:serviceaccount:intruder:dispatch"
 
 	cases := map[string]string{
-		"expired":        clusterToken(t, key, "k1", expired),
-		"another issuer": clusterToken(t, key, "k1", wrongIssuer),
-		"another key":    clusterToken(t, other, "k1", claimsFor("dispatch", "fleet")),
-		"unknown key":    clusterToken(t, key, "k9", claimsFor("dispatch", "fleet")),
-		"not a service":  clusterToken(t, key, "k1", notAService),
-		"garbage":        "a.b.c",
+		"expired":         clusterToken(t, key, "k1", expired),
+		"another issuer":  clusterToken(t, key, "k1", wrongIssuer),
+		"another key":     clusterToken(t, other, "k1", claimsFor("dispatch", "fleet")),
+		"unknown key":     clusterToken(t, key, "k9", claimsFor("dispatch", "fleet")),
+		"not a service":   clusterToken(t, key, "k1", notAService),
+		"other namespace": clusterToken(t, key, "k1", otherNamespace),
+		"garbage":         "a.b.c",
 	}
 	for name, token := range cases {
 		if _, err := v.Verify(token); err == nil {

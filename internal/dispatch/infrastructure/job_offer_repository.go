@@ -35,6 +35,9 @@ CREATE INDEX IF NOT EXISTS idx_job_offers_offering_status ON job_offers (offerin
 CREATE INDEX IF NOT EXISTS idx_job_offers_pending_expiry
     ON job_offers (expires_at)
     WHERE status = 'pending';
+CREATE UNIQUE INDEX IF NOT EXISTS uq_job_offers_pending_job_target
+    ON job_offers (offering_tenant_id, job_id, target_tenant_id)
+    WHERE status = 'pending';
 `
 
 // PostgresJobOfferRepository owns both job_offers and, for the Accept path
@@ -159,6 +162,16 @@ func (r *PostgresJobOfferRepository) CountPending(ctx context.Context, targetTen
 		targetTenantID, domain.OfferStatusPending,
 	).Scan(&count)
 	return count, err
+}
+
+func (r *PostgresJobOfferRepository) HasPending(ctx context.Context, offeringTenantID, jobID, targetTenantID string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM job_offers
+         WHERE offering_tenant_id = $1 AND job_id = $2 AND target_tenant_id = $3 AND status = $4)`,
+		offeringTenantID, jobID, targetTenantID, domain.OfferStatusPending,
+	).Scan(&exists)
+	return exists, err
 }
 
 func (r *PostgresJobOfferRepository) ListAccepted(ctx context.Context, offeringTenantID, targetTenantID string) ([]domain.JobOffer, error) {

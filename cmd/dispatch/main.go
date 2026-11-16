@@ -199,8 +199,12 @@ func main() {
 	jobOfferPublisher := infrastructure.NewJobOfferEventPublisher(bus)
 	activeJobCounter := jobRepository.CountActive
 
+	aggregatorRelationshipRepository := infrastructure.NewPostgresAggregatorRelationshipRepository(postgresDB)
+	if err := aggregatorRelationshipRepository.EnsureSchema(ctx); err != nil {
+		log.Error("aggregator_relationship_schema_failed", "error", err)
+	}
 	createJobOfferUseCase := application.NewCreateJobOfferUseCase(
-		jobOfferRepository, jobRepository, jobOfferPublisher,
+		jobOfferRepository, jobRepository, aggregatorRelationshipRepository, jobOfferPublisher,
 		infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{},
 	)
 	acceptJobOfferUseCase := application.NewAcceptJobOfferUseCase(
@@ -230,10 +234,6 @@ func main() {
 		}
 	}()
 
-	aggregatorRelationshipRepository := infrastructure.NewPostgresAggregatorRelationshipRepository(postgresDB)
-	if err := aggregatorRelationshipRepository.EnsureSchema(ctx); err != nil {
-		log.Error("aggregator_relationship_schema_failed", "error", err)
-	}
 	operatorRatingRepository := infrastructure.NewPostgresOperatorRatingRepository(postgresDB)
 	if err := operatorRatingRepository.EnsureSchema(ctx); err != nil {
 		log.Error("operator_rating_schema_failed", "error", err)
@@ -258,7 +258,7 @@ func main() {
 	assignSubDispatchJobUseCase := application.NewAssignSubDispatchJobUseCase(aggregatorRelationshipRepository, createJobOfferUseCase, aggregatorActivityRepository, infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{})
 	operatorPerformanceUseCase := application.NewOperatorPerformanceUseCase(aggregatorRelationshipRepository, jobOfferRepository, jobRepository, operatorRatingRepository, infrastructure.SystemClock{})
 	topPerformingOperatorsUseCase := application.NewTopPerformingOperatorsUseCase(aggregatorRelationshipRepository, jobOfferRepository, jobRepository, operatorRatingRepository)
-	rateOperatorUseCase := application.NewRateOperatorUseCase(jobOfferRepository, jobRepository, operatorRatingRepository, infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{})
+	rateOperatorUseCase := application.NewRateOperatorUseCase(aggregatorRelationshipRepository, jobOfferRepository, jobRepository, operatorRatingRepository, infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{})
 	listSettlementsUseCase := application.NewListSettlementsUseCase(settlementRepository)
 	paySettlementUseCase := application.NewPaySettlementUseCase(settlementRepository, aggregatorActivityRepository, infrastructure.SystemClock{}, infrastructure.TimeIDGenerator{})
 	listAggregatorActivityUseCase := application.NewListAggregatorActivityUseCase(aggregatorActivityRepository)
