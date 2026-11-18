@@ -188,6 +188,7 @@ type Handler struct {
 	inboxTools                              *PlatformInboxTools
 	preferences                             *application.NotificationPreferencesUseCase
 	deadLetters                             *application.DeadLetters
+	pushDevices                             *application.PushDevicesUseCase
 }
 
 // WithCampaigns attaches the campaign use cases.
@@ -289,6 +290,7 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 	routes.HandleFunc("/notify/whatsapp/send-message-with-media", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.sendWhatsAppMediaMessage)
 	routes.HandleFunc("/notify/whatsapp/conversations", []httpx.Audience{httpx.Tenant, httpx.Service}, httpx.On("tenant.messaging"), h.listWhatsAppConversations)
 	routes.HandleFunc("/notify/whatsapp/conversations/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.whatsAppConversationByPath)
+	routes.HandleFunc("/notify/devices", []httpx.Audience{httpx.Tenant}, httpx.SignedIn(), h.pushDevicesRoute)
 	routes.HandleFunc("/notify/preferences", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.messaging"), h.notificationPreferences)
 	routes.HandleFunc("/notify/system/dead-letters", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemDeadLetters)
 	routes.HandleFunc("/notify/system/dead-letters/", []httpx.Audience{httpx.Admin}, httpx.On("admin.messaging"), h.systemDeadLetterByPath)

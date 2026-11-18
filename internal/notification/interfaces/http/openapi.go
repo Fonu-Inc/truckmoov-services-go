@@ -270,6 +270,34 @@ func notificationOpenAPISpec() map[string]any {
 					},
 				},
 			},
+			"/notify/devices": map[string]any{
+				"put": map[string]any{
+					"tags":        []string{"notification"},
+					"summary":     "Register this app install for push notifications",
+					"description": "The user and tenant come from the token. A token already registered is re-bound to the caller.",
+					"operationId": "putPushDevice",
+					"requestBody": openAPIRequestBody("#/components/schemas/PushDeviceRequest"),
+					"responses": map[string]any{
+						"200": openAPIJSONResponse("Registered", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"400": openAPIJSONResponse("Validation error", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"401": openAPIJSONResponse("Authentication required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"502": openAPIJSONResponse("Repository failure", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+					},
+				},
+				"delete": map[string]any{
+					"tags":        []string{"notification"},
+					"summary":     "Stop push notifications to this app install",
+					"description": "Removes the token only while it belongs to the caller.",
+					"operationId": "deletePushDevice",
+					"requestBody": openAPIRequestBody("#/components/schemas/PushDeviceDeleteRequest"),
+					"responses": map[string]any{
+						"200": openAPIJSONResponse("Removed", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"400": openAPIJSONResponse("Validation error", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"401": openAPIJSONResponse("Authentication required", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+						"502": openAPIJSONResponse("Repository failure", map[string]any{"$ref": "#/components/schemas/NotificationEnvelope"}),
+					},
+				},
+			},
 			"/notify/preferences": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"notification"},
@@ -788,6 +816,22 @@ func notificationOpenAPISpec() map[string]any {
 						"whatsapp":   map[string]any{"type": "boolean"},
 						"sms":        map[string]any{"type": "boolean"},
 						"updated_at": map[string]any{"type": "string", "format": "date-time"},
+					},
+				},
+				"PushDeviceRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"token", "platform"},
+					"properties": map[string]any{
+						"token":      map[string]any{"type": "string"},
+						"platform":   map[string]any{"type": "string", "enum": []string{"ios", "android"}},
+						"appVersion": map[string]any{"type": "string"},
+					},
+				},
+				"PushDeviceDeleteRequest": map[string]any{
+					"type":     "object",
+					"required": []string{"token"},
+					"properties": map[string]any{
+						"token": map[string]any{"type": "string"},
 					},
 				},
 				"NotificationPreferencesRequest": map[string]any{
