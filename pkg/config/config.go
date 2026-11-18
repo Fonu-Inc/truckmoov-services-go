@@ -134,6 +134,14 @@ type Config struct {
 	RoadMatchMaxTraceAgeSeconds int
 	RoadMatchTimeoutSeconds     int
 	RoadMatchConcurrency        int
+
+	FCMProjectID          string
+	FCMServiceAccountJSON string
+	// Push noise limits: one push per user per coalescing key per window, and
+	// at most PushUserCap pushes per user per cap window.
+	PushCoalesceWindowSeconds int
+	PushUserCap               int
+	PushUserCapWindowSeconds  int
 }
 
 func Load(serviceName, defaultPort string) Config {
@@ -230,6 +238,12 @@ func Load(serviceName, defaultPort string) Config {
 			"CORS_ALLOWED_ORIGINS",
 			"http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000",
 		),
+
+		FCMProjectID:              getEnv("FCM_PROJECT_ID", ""),
+		FCMServiceAccountJSON:     getEnv("FCM_SERVICE_ACCOUNT_JSON", ""),
+		PushCoalesceWindowSeconds: getEnvInt("PUSH_COALESCE_WINDOW_SECONDS", 600),
+		PushUserCap:               getEnvInt("PUSH_USER_CAP", 8),
+		PushUserCapWindowSeconds:  getEnvInt("PUSH_USER_CAP_WINDOW_SECONDS", 600),
 	}
 }
 
