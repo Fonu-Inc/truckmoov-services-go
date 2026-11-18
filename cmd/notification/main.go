@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/truckmoov/services-go/internal/notification/application"
@@ -150,7 +151,18 @@ func main() {
 	if strings.TrimSpace(cfg.SMTPHost) == "" || strings.TrimSpace(cfg.SMTPFromAddress) == "" {
 		log.Warn("email_provider_unconfigured", "message", "set SMTP_HOST, SMTP_PORT, and SMTP_FROM_ADDRESS before enabling email delivery")
 	}
-	messageProvider := infrastructure.NewMultiChannelMessageProvider(whatsAppMessageProvider, smsMessageProvider, emailMessageProvider)
+	pushDeviceRepository := infrastructure.NewPostgresPushDeviceRepository(postgresDB)
+	if err := pushDeviceRepository.EnsureSchema(ctx); err != nil {
+		log.Error("push_devices_schema_failed", "error", err)
+	}
+	pushProvider, err := infrastructure.NewFCMPushProvider("", cfg.FCMProjectID, cfg.FCMServiceAccountJSON, pushDeviceRepository, nil)
+	if err != nil {
+		log.Error("push_provider_invalid", "error", err.Error())
+	}
+	if pushProvider == nil {
+		log.Warn("push_provider_unconfigured", "message", "set FCM_PROJECT_ID and FCM_SERVICE_ACCOUNT_JSON to enable push notifications")
+	}
+	messageProvider := infrastructure.NewMultiChannelMessageProvider(whatsAppMessageProvider, smsMessageProvider, emailMessageProvider).WithPush(pushProvider)
 	templateProvider := infrastructure.NewMetaWhatsAppTemplateProvider(
 		cfg.WhatsAppAPIBaseURL,
 		whatsAppAccountRepository,
@@ -290,6 +302,23 @@ func main() {
 		log.Error("job_offer_responded_subscribe_failed", "error", subErr.Error())
 	}
 
+	if pushProvider != nil {
+		wirePushFanout(ctx, bus, verified, log, application.NewPushFanout(
+			sendMessageUseCase,
+			infrastructure.NewAuthPushRecipientReader(cfg.AuthServiceURL, serviceCaller, nil),
+			infrastructure.NewFleetVehicleScopeReader(cfg.FleetServiceURL, serviceCaller, nil),
+			pushDeviceRepository,
+			eventClaims,
+			infrastructure.NewRedisPushCounter(redisClient),
+			application.PushLimits{
+				CoalesceWindow: time.Duration(cfg.PushCoalesceWindowSeconds) * time.Second,
+				UserCap:        cfg.PushUserCap,
+				UserCapWindow:  time.Duration(cfg.PushUserCapWindowSeconds) * time.Second,
+			},
+			log,
+		))
+	}
+
 	instructionOutcomes := infrastructure.NewPostgresInstructionOutcomeRepository(postgresDB)
 	if err := instructionOutcomes.EnsureSchema(ctx); err != nil {
 		log.Error("instruction_outcome_schema_failed", "error", err)
@@ -414,6 +443,7 @@ func main() {
 		cfg.DotgoWebhookSecret,
 	)
 	handler = handler.WithPreferences(notificationPreferences)
+	handler = handler.WithPushDevices(application.NewPushDevicesUseCase(pushDeviceRepository, clock))
 	handler = handler.WithDeadLetters(wireDeadLetters(ctx, deadLetterWiring{
 		bus: bus, verified: verified, log: log, db: postgresDB, claims: eventClaims, clock: clock, ids: idGenerator,
 	}))
