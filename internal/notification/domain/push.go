@@ -54,4 +54,7 @@ type PushMessage struct {
 	ID          string `json:"id"`
 	CollapseKey string `json:"collapseKey"`
 	Category    string `json:"category"`
+	// DeliveryID is stable across redeliveries of one push, so each device
+	// gets it at most once.
+	DeliveryID string `json:"deliveryId,omitempty"`
 }

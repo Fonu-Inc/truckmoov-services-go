@@ -169,3 +169,11 @@ func (c *RedisPushCounter) Increment(_ context.Context, key string, window time.
 	}
 	return count, nil
 }
+
+// Decrement only touches a key that still exists, so it never recreates one
+// without an expiry after its window has ended.
+func (c *RedisPushCounter) Decrement(_ context.Context, key string) error {
+	full := pushCounterPrefix + key
+	_, err := c.store.Pipeline([]string{"EVAL", "if redis.call('EXISTS', KEYS[1]) == 1 then return redis.call('DECR', KEYS[1]) end return 0", "1", full})
+	return err
+}
