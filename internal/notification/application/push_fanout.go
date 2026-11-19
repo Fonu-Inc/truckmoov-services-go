@@ -36,6 +36,7 @@ type VehicleScopeReader interface {
 // PushCounter counts within a window that starts at the first increment.
 type PushCounter interface {
 	Increment(ctx context.Context, key string, window time.Duration) (int64, error)
+	Decrement(ctx context.Context, key string) error
 }
 
 type PushLimits struct {
@@ -299,7 +300,8 @@ func (f *PushFanout) pushWithLimits(ctx context.Context, event pushEvent, userID
 	if err != nil || !first {
 		return err
 	}
-	count, err := f.counter.Increment(ctx, "push-cap|"+userID, f.limits.UserCapWindow)
+	capKey := "push-cap|" + userID
+	count, err := f.counter.Increment(ctx, capKey, f.limits.UserCapWindow)
 	if err != nil {
 		_ = f.claims.Release(ctx, coalesce)
 		return err
@@ -323,20 +325,24 @@ func (f *PushFanout) pushWithLimits(ctx context.Context, event pushEvent, userID
 	if message.CollapseKey == "" {
 		message.CollapseKey = event.coalesceKey
 	}
+	messageID := "push_" + strings.ReplaceAll(event.eventID+"_"+userID, "|", "_")
+	message.DeliveryID = messageID
 	content, err := json.Marshal(message)
-	if err != nil {
-		return err
+	if err == nil {
+		_, err = f.send.Execute(ctx, SendMessageCommand{
+			TenantID:         event.tenantID,
+			Channel:          domain.ChannelPush,
+			Recipient:        userID,
+			Content:          string(content),
+			NotificationType: "push_" + message.Kind,
+			MessageID:        messageID,
+		})
 	}
-	_, err = f.send.Execute(ctx, SendMessageCommand{
-		TenantID:         event.tenantID,
-		Channel:          domain.ChannelPush,
-		Recipient:        userID,
-		Content:          string(content),
-		NotificationType: "push_" + message.Kind,
-		MessageID:        "push_" + strings.ReplaceAll(event.eventID+"_"+userID, "|", "_"),
-	})
 	if err != nil {
+		// A failed attempt must not use up the user's cap, or retries of one
+		// event silence every other event in the window.
 		_ = f.claims.Release(ctx, coalesce)
+		_ = f.counter.Decrement(ctx, capKey)
 	}
 	return err
 }

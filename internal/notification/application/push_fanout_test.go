@@ -69,6 +69,11 @@ func (c *fakePushCounter) Increment(_ context.Context, key string, _ time.Durati
 	return c.counts[key], nil
 }
 
+func (c *fakePushCounter) Decrement(_ context.Context, key string) error {
+	c.counts[key]--
+	return nil
+}
+
 type pushHarness struct {
 	fanout   *PushFanout
 	provider *recordingPushProvider
@@ -316,5 +321,34 @@ func TestFailedPushIsRetriedOnRedelivery(t *testing.T) {
 	}
 	if len(h.provider.sent) != 1 {
 		t.Fatalf("the redelivery must not be coalesced away, got %d", len(h.provider.sent))
+	}
+}
+
+// A high alert raised while another event keeps failing must still go out:
+// failed attempts give their cap slot back.
+func TestFailedAttemptsDoNotUseUpTheCap(t *testing.T) {
+	h := newPushHarness([]PushRecipient{dispatcher("u1")}, stubScope{})
+	ctx := context.Background()
+	failing := alertEnvelope("route", "route_deviation", "high", "veh-1")
+	h.provider.err = errors.New("fcm 503")
+	for i := 0; i < 12; i++ {
+		_ = h.fanout.HandleAlert(ctx, failing)
+	}
+	h.provider.err = nil
+	if err := h.fanout.HandleAlert(ctx, envelope("eta", "alert.triggered", map[string]any{
+		"alert_id": "alt-eta", "alert_type": "eta_breach", "severity": "high",
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.provider.sent) != 1 || h.provider.sent[0].message.ID != "alt-eta" || h.provider.sent[0].message.Body == "" {
+		t.Fatalf("eta_breach must be pushed, got %+v", h.provider.sent)
+	}
+}
+
+func TestPushCarriesAStableDeliveryID(t *testing.T) {
+	h := newPushHarness([]PushRecipient{dispatcher("u1")}, stubScope{})
+	_ = h.fanout.HandleAlert(context.Background(), alertEnvelope("e1", "road_speeding", "high", "veh-1"))
+	if len(h.provider.sent) != 1 || h.provider.sent[0].message.DeliveryID != "push_e1_u1" {
+		t.Fatalf("want a delivery id tied to the event and user, got %+v", h.provider.sent)
 	}
 }
