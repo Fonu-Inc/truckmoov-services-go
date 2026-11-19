@@ -155,7 +155,7 @@ func main() {
 	if err := pushDeviceRepository.EnsureSchema(ctx); err != nil {
 		log.Error("push_devices_schema_failed", "error", err)
 	}
-	pushProvider, err := infrastructure.NewFCMPushProvider("", cfg.FCMProjectID, cfg.FCMServiceAccountJSON, pushDeviceRepository, nil)
+	pushProvider, err := infrastructure.NewFCMPushProvider("", cfg.FCMProjectID, cfg.FCMServiceAccountJSON, pushDeviceRepository, infrastructure.NewRedisEventClaims(redisClient), nil)
 	if err != nil {
 		log.Error("push_provider_invalid", "error", err.Error())
 	}

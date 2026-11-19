@@ -29,6 +29,25 @@ const (
 	fcmScope          = "https://www.googleapis.com/auth/firebase.messaging"
 	// Renewed this long before Google's expiry, so a send never races it.
 	fcmTokenSlack = 5 * time.Minute
+	// Outlives the whole JetStream redelivery schedule for one event.
+	fcmDeviceClaimTTL = 24 * time.Hour
+)
+
+// pushDeviceClaims remembers which devices already got a delivery, so a
+// redelivery re-sends only to those that have not.
+type pushDeviceClaims interface {
+	Claim(ctx context.Context, key string, ttl time.Duration) (bool, error)
+	Release(ctx context.Context, key string) error
+}
+
+// fcmOutcome is what one device's send means for the event as a whole.
+type fcmOutcome int
+
+const (
+	fcmDelivered fcmOutcome = iota
+	fcmDead
+	fcmRejected
+	fcmRetry
 )
 
 type pushDeviceStore interface {
@@ -51,6 +70,7 @@ type FCMPushProvider struct {
 	account   fcmServiceAccount
 	key       *rsa.PrivateKey
 	devices   pushDeviceStore
+	claims    pushDeviceClaims
 	client    *http.Client
 	now       func() time.Time
 
@@ -61,7 +81,7 @@ type FCMPushProvider struct {
 
 // NewFCMPushProvider returns nil, nil when push is not configured, which the
 // caller reports and carries on without.
-func NewFCMPushProvider(baseURL, projectID, serviceAccountJSON string, devices pushDeviceStore, client *http.Client) (*FCMPushProvider, error) {
+func NewFCMPushProvider(baseURL, projectID, serviceAccountJSON string, devices pushDeviceStore, claims pushDeviceClaims, client *http.Client) (*FCMPushProvider, error) {
 	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(serviceAccountJSON) == "" {
 		return nil, nil
 	}
@@ -93,11 +113,15 @@ func NewFCMPushProvider(baseURL, projectID, serviceAccountJSON string, devices p
 		account:   account,
 		key:       key,
 		devices:   devices,
+		claims:    claims,
 		client:    client,
 		now:       time.Now,
 	}, nil
 }
 
+// Send fails only when a device hit a transient error (429, 5xx, auth or the
+// network), and only those devices are tried again on redelivery. A device
+// that rejected the message for good is reported in the status, not retried.
 func (p *FCMPushProvider) Send(ctx context.Context, tenantID, _, userID, content string) (string, error) {
 	var message domain.PushMessage
 	if err := json.Unmarshal([]byte(content), &message); err != nil {
@@ -107,47 +131,101 @@ func (p *FCMPushProvider) Send(ctx context.Context, tenantID, _, userID, content
 	if err != nil {
 		return domain.StatusFailed, fmt.Errorf("read push devices: %w", err)
 	}
-	var failures []string
+	if len(tokens) == 0 {
+		return domain.StatusSent, nil
+	}
+	accessToken, err := p.token(ctx)
+	if err != nil {
+		return domain.StatusFailed, err
+	}
+	var retries, rejections []string
+	delivered := 0
 	for _, token := range tokens {
-		if sendErr := p.sendToToken(ctx, token, message); sendErr != nil {
-			failures = append(failures, sendErr.Error())
+		claim := ""
+		if message.DeliveryID != "" {
+			claim = "push-device|" + message.DeliveryID + "|" + token
+			first, claimErr := p.claims.Claim(ctx, claim, fcmDeviceClaimTTL)
+			if claimErr != nil {
+				retries = append(retries, claimErr.Error())
+				continue
+			}
+			if !first {
+				delivered++
+				continue
+			}
+		}
+		outcome, sendErr := p.sendToToken(ctx, accessToken, token, message)
+		switch outcome {
+		case fcmDelivered:
+			delivered++
+		case fcmDead:
+			if deleteErr := p.devices.DeleteToken(ctx, token); deleteErr != nil {
+				retries = append(retries, deleteErr.Error())
+				p.release(ctx, claim)
+			}
+		case fcmRejected:
+			rejections = append(rejections, sendErr.Error())
+		case fcmRetry:
+			retries = append(retries, sendErr.Error())
+			p.release(ctx, claim)
 		}
 	}
-	if len(failures) > 0 {
-		return domain.StatusFailed, fmt.Errorf("fcm: %s", strings.Join(failures, "; "))
+	if len(retries) > 0 {
+		return domain.StatusFailed, fmt.Errorf("fcm: %s", strings.Join(retries, "; "))
+	}
+	if delivered == 0 && len(rejections) > 0 {
+		return domain.StatusFailed, nil
 	}
 	return domain.StatusSent, nil
 }
 
-func (p *FCMPushProvider) sendToToken(ctx context.Context, token string, message domain.PushMessage) error {
-	accessToken, err := p.token(ctx)
-	if err != nil {
-		return err
+func (p *FCMPushProvider) release(ctx context.Context, claim string) {
+	if claim != "" {
+		_ = p.claims.Release(ctx, claim)
 	}
+}
+
+func (p *FCMPushProvider) sendToToken(ctx context.Context, accessToken, token string, message domain.PushMessage) (fcmOutcome, error) {
 	body, err := json.Marshal(map[string]any{"message": fcmMessage(token, message)})
 	if err != nil {
-		return err
+		return fcmRejected, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		fmt.Sprintf("%s/v1/projects/%s/messages:send", p.baseURL, url.PathEscape(p.projectID)), bytes.NewReader(body))
 	if err != nil {
-		return err
+		return fcmRejected, err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("send: %w", err)
+		return fcmRetry, fmt.Errorf("send: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusOK {
-		return nil
+		return fcmDelivered, nil
 	}
 	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	if deadToken(resp.StatusCode, responseBody) {
-		return p.devices.DeleteToken(ctx, token)
+		return fcmDead, nil
 	}
-	return fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	sendErr := fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	switch {
+	case resp.StatusCode == http.StatusTooManyRequests, resp.StatusCode >= 500,
+		resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
+		return fcmRetry, sendErr
+	default:
+		return fcmRejected, sendErr
+	}
+}
+
+// deadApnsReasons are Apple's answers that no retry or wait can change.
+// TopicDisallowed comes from a build signed by another team than the APNs key.
+var deadApnsReasons = map[string]bool{
+	"BadDeviceToken":         true,
+	"DeviceTokenNotForTopic": true,
+	"TopicDisallowed":        true,
+	"Unregistered":           true,
 }
 
 // deadToken reports an install that will never accept a push again. A bare
@@ -164,6 +242,7 @@ func deadToken(status int, body []byte) bool {
 			Status  string `json:"status"`
 			Details []struct {
 				ErrorCode string `json:"errorCode"`
+				Reason    string `json:"reason"`
 			} `json:"details"`
 		} `json:"error"`
 	}
@@ -171,7 +250,7 @@ func deadToken(status int, body []byte) bool {
 		return false
 	}
 	for _, detail := range payload.Error.Details {
-		if detail.ErrorCode == "UNREGISTERED" {
+		if detail.ErrorCode == "UNREGISTERED" || detail.ErrorCode == "SENDER_ID_MISMATCH" || deadApnsReasons[detail.Reason] {
 			return true
 		}
 	}

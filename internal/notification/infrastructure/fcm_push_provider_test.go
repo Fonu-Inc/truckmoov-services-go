@@ -35,6 +35,21 @@ func (m *memoryPushDevices) DeleteToken(_ context.Context, token string) error {
 	return nil
 }
 
+type memoryClaims struct{ held map[string]bool }
+
+func (m *memoryClaims) Claim(_ context.Context, key string, _ time.Duration) (bool, error) {
+	if m.held[key] {
+		return false, nil
+	}
+	m.held[key] = true
+	return true, nil
+}
+
+func (m *memoryClaims) Release(_ context.Context, key string) error {
+	delete(m.held, key)
+	return nil
+}
+
 type fakeFCM struct {
 	tokenCalls int
 	messages   []map[string]any
@@ -88,7 +103,7 @@ func newTestFCMProvider(t *testing.T, f *fakeFCM, devices *memoryPushDevices) *F
 		"private_key":  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})),
 		"token_uri":    f.server.URL + "/token",
 	})
-	provider, err := NewFCMPushProvider(f.server.URL, "fonudev", string(account), devices, f.server.Client())
+	provider, err := NewFCMPushProvider(f.server.URL, "fonudev", string(account), devices, &memoryClaims{held: map[string]bool{}}, f.server.Client())
 	if err != nil || provider == nil {
 		t.Fatalf("provider: %v", err)
 	}
@@ -98,12 +113,13 @@ func newTestFCMProvider(t *testing.T, f *fakeFCM, devices *memoryPushDevices) *F
 func pushContent() string {
 	content, _ := json.Marshal(domain.PushMessage{
 		Title: "Job assigned", Body: "A job is now assigned.", Kind: "job", ID: "job-1", CollapseKey: "job:job-1", Category: "jobs",
+		DeliveryID: "push_evt-1_user-1",
 	})
 	return string(content)
 }
 
 func TestFCMProviderIsOffWithoutConfig(t *testing.T) {
-	provider, err := NewFCMPushProvider("", "", "", &memoryPushDevices{}, nil)
+	provider, err := NewFCMPushProvider("", "", "", &memoryPushDevices{}, nil, nil)
 	if provider != nil || err != nil {
 		t.Fatalf("missing config must mean no provider, not an error: %v", err)
 	}
@@ -156,10 +172,15 @@ func TestFCMProviderDeletesDeadTokens(t *testing.T) {
 		status int
 		body   string
 	}{
-		"unregistered":     {404, `{"error":{"code":404,"status":"NOT_FOUND","details":[{"errorCode":"UNREGISTERED"}]}}`},
-		"bare 404":         {404, `{}`},
-		"unregistered 400": {400, `{"error":{"status":"INVALID_ARGUMENT","details":[{"errorCode":"UNREGISTERED"}]}}`},
-		"invalid token":    {400, `{"error":{"status":"INVALID_ARGUMENT","message":"The registration token is not a valid FCM registration token"}}`},
+		"unregistered":          {404, `{"error":{"code":404,"status":"NOT_FOUND","details":[{"errorCode":"UNREGISTERED"}]}}`},
+		"bare 404":              {404, `{}`},
+		"unregistered 400":      {400, `{"error":{"status":"INVALID_ARGUMENT","details":[{"errorCode":"UNREGISTERED"}]}}`},
+		"invalid token":         {400, `{"error":{"status":"INVALID_ARGUMENT","message":"The registration token is not a valid FCM registration token"}}`},
+		"apns topic disallowed": {400, `{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"INVALID_ARGUMENT"},{"@type":"type.googleapis.com/google.firebase.fcm.v1.ApnsError","statusCode":400,"reason":"TopicDisallowed"}]}}`},
+		"apns bad token":        {400, `{"error":{"status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.ApnsError","statusCode":400,"reason":"BadDeviceToken"}]}}`},
+		"apns wrong topic":      {400, `{"error":{"status":"INVALID_ARGUMENT","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.ApnsError","statusCode":400,"reason":"DeviceTokenNotForTopic"}]}}`},
+		"apns unregistered":     {410, `{"error":{"status":"NOT_FOUND","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.ApnsError","statusCode":410,"reason":"Unregistered"}]}}`},
+		"sender id mismatch":    {403, `{"error":{"status":"PERMISSION_DENIED","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"SENDER_ID_MISMATCH"}]}}`},
 	}
 	for name, tc := range cases {
 		f := newFakeFCM(t)
@@ -182,7 +203,7 @@ func TestFCMProviderRetriesThrottlingAndOutages(t *testing.T) {
 	}{
 		{429, `{"error":{"status":"RESOURCE_EXHAUSTED"}}`},
 		{503, `{"error":{"status":"UNAVAILABLE"}}`},
-		{400, `{"error":{"status":"INVALID_ARGUMENT","message":"Invalid JSON payload"}}`},
+		{401, `{"error":{"status":"UNAUTHENTICATED"}}`},
 	} {
 		f := newFakeFCM(t)
 		f.reply = func(string) (int, string) { return tc.status, tc.body }
@@ -201,5 +222,56 @@ func TestCollapseIDFitsAPNsLimit(t *testing.T) {
 	long := "alert:" + strings.Repeat("v", 80) + ":road_speeding"
 	if got := collapseID(long); len(got) > 64 || got != collapseID(long) {
 		t.Fatalf("collapse id %q", got)
+	}
+}
+
+func TestFCMProviderRetriesOnlyTheDevicesThatFailed(t *testing.T) {
+	f := newFakeFCM(t)
+	failing := true
+	f.reply = func(token string) (int, string) {
+		if token == "tok-b" && failing {
+			return 503, `{"error":{"status":"UNAVAILABLE"}}`
+		}
+		return 200, `{"name":"projects/p/messages/1"}`
+	}
+	provider := newTestFCMProvider(t, f, &memoryPushDevices{tokens: []string{"tok-a", "tok-b", "tok-c"}})
+
+	if _, err := provider.Send(context.Background(), "t", "push", "u", pushContent()); err == nil {
+		t.Fatal("a transient failure on one device must ask for a redelivery")
+	}
+	failing = false
+	if status, err := provider.Send(context.Background(), "t", "push", "u", pushContent()); err != nil || status != domain.StatusSent {
+		t.Fatalf("redelivery: %s %v", status, err)
+	}
+	sent := map[string]int{}
+	for _, message := range f.messages {
+		sent[message["token"].(string)]++
+	}
+	if sent["tok-a"] != 1 || sent["tok-c"] != 1 || sent["tok-b"] != 2 {
+		t.Fatalf("delivered devices must not be pushed again: %v", sent)
+	}
+}
+
+func TestFCMProviderDoesNotFailTheSendForOneRejectedDevice(t *testing.T) {
+	f := newFakeFCM(t)
+	f.reply = func(token string) (int, string) {
+		if token == "tok-bad" {
+			return 400, `{"error":{"status":"INVALID_ARGUMENT","message":"Invalid JSON payload"}}`
+		}
+		return 200, `{}`
+	}
+	devices := &memoryPushDevices{tokens: []string{"tok-bad", "tok-ok"}}
+	provider := newTestFCMProvider(t, f, devices)
+	if status, err := provider.Send(context.Background(), "t", "push", "u", pushContent()); err != nil || status != domain.StatusSent {
+		t.Fatalf("one rejected device must not fail the send: %s %v", status, err)
+	}
+	if len(devices.deleted) != 0 {
+		t.Fatal("a malformed message is not a dead token")
+	}
+
+	devices.tokens = []string{"tok-bad"}
+	content := strings.Replace(pushContent(), "push_evt-1_user-1", "push_evt-2_user-1", 1)
+	if status, err := provider.Send(context.Background(), "t", "push", "u", content); err != nil || status != domain.StatusFailed {
+		t.Fatalf("every device rejecting is a failed send that is not retried: %s %v", status, err)
 	}
 }
