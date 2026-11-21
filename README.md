@@ -51,13 +51,9 @@ Notification WhatsApp vars (Meta Cloud API transport):
 - `WHATSAPP_ACCESS_TOKEN`: legacy fallback permanent/system-user access token when no tenant WhatsApp account has been connected yet
 - `WHATSAPP_WEBHOOK_VERIFY_TOKEN`: used for inbound webhook verification
 
-Notification SMS fallback vars (Dotgo REST API, the same one `fonu-api` uses; messages go through the transactional account):
-- `DOTGO_BASE_URL`
-- `DOTGO_TRANSACTIONAL_ACCOUNT_ID`
-- `DOTGO_TRANSACTIONAL_API_TOKEN`
-- `DOTGO_TRANSACTIONAL_SENDER_MASK`
-- `DOTGO_CALLBACK_URL` (optional): public address of this service's own receipt route, `https://<public-api-host>/notify/sms/webhook`
-- `DOTGO_WEBHOOK_SECRET` (optional): token that route requires, sent to Dotgo as `?token=` on the callback address. Dotgo does not sign callbacks, so the route refuses a request without it. Receipts are only requested when both this and `DOTGO_CALLBACK_URL` are set.
+Notification SMS receipts:
+- SMS is sent by the TS auth service's unified endpoint (`POST /auth/internal/otp/send`); notification no longer holds Dotgo send credentials.
+- `DOTGO_WEBHOOK_SECRET` (optional): validates the `?token=` on Dotgo's receipts at `POST <public-api-host>/notify/sms/webhook`. Dotgo does not sign callbacks, so the route refuses a request without it. It must match the `DOTGO_WEBHOOK_SECRET` auth uses to build the callback URL.
 
 Migration note from `fonu-api`:
 - Truckmoov uses `WHATSAPP_PHONE_NUMBER_ID` as the canonical env name.

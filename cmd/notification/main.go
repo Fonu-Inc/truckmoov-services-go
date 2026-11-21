@@ -129,17 +129,9 @@ func main() {
 		cfg.WhatsAppPhoneNumberID,
 		cfg.WhatsAppAccessToken,
 	)
-	dotgoCallbackURL := infrastructure.DotgoCallbackURLWithToken(cfg.DotgoCallbackURL, cfg.DotgoWebhookSecret)
-	if strings.TrimSpace(cfg.DotgoCallbackURL) != "" && dotgoCallbackURL == "" {
-		log.Warn("sms_callback_unusable", "message", "delivery receipts are not requested: DOTGO_CALLBACK_URL must be an absolute http(s) URL of this service's /notify/sms/webhook route, and DOTGO_WEBHOOK_SECRET must be set")
-	}
-	smsMessageProvider := infrastructure.NewDotgoSMSMessageProvider(
-		cfg.DotgoBaseURL,
-		cfg.DotgoAccountID,
-		cfg.DotgoAPIToken,
-		cfg.DotgoSenderMask,
-		dotgoCallbackURL,
-	)
+	// SMS is owned by the TS auth service's unified OTP/SMS endpoint. Notification
+	// keeps the delivery-log/outbox/charge layer, but no longer talks to Dotgo.
+	smsMessageProvider := infrastructure.NewAuthSMSMessageProvider(cfg.AuthServiceURL, serviceCaller, nil)
 	emailMessageProvider := infrastructure.NewSMTPEmailMessageProvider(
 		cfg.SMTPHost,
 		cfg.SMTPPort,
@@ -170,8 +162,8 @@ func main() {
 		cfg.WhatsAppBusinessAccountID,
 		cfg.WhatsAppAccessToken,
 	)
-	if cfg.DotgoBaseURL == "" || cfg.DotgoAccountID == "" || cfg.DotgoAPIToken == "" || cfg.DotgoSenderMask == "" {
-		log.Warn("sms_provider_unconfigured", "message", "set DOTGO_BASE_URL, DOTGO_TRANSACTIONAL_ACCOUNT_ID, DOTGO_TRANSACTIONAL_API_TOKEN, and DOTGO_TRANSACTIONAL_SENDER_MASK before enabling SMS fallback delivery")
+	if cfg.DotgoWebhookSecret == "" {
+		log.Warn("sms_receipts_unconfigured", "message", "set DOTGO_WEBHOOK_SECRET to validate Dotgo delivery receipts for SMS sent by the auth service")
 	}
 	deliveryPublisher := infrastructure.NewDeliveryEventPublisher(bus)
 	deliveryLogRepository := infrastructure.NewPostgresDeliveryLogRepository(postgresDB)

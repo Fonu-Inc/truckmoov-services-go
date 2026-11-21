@@ -100,19 +100,16 @@ type Config struct {
 	WhatsAppPhoneNumberID        string
 	WhatsAppBusinessAccountID    string
 	WhatsAppWebhookVerifyToken   string
-	DotgoBaseURL                 string
-	DotgoAccountID               string
-	DotgoAPIToken                string
-	DotgoSenderMask              string
-	DotgoCallbackURL             string
-	DotgoWebhookSecret           string
-	SMTPHost                     string
-	SMTPPort                     int
-	SMTPUsername                 string
-	SMTPPassword                 string
-	SMTPFromAddress              string
-	SMTPFromName                 string
-	RouteSolverAddr              string
+	// Dotgo credentials live on the TS auth service now. Notification only
+	// validates delivery receipts for messages that service sent.
+	DotgoWebhookSecret string
+	SMTPHost           string
+	SMTPPort           int
+	SMTPUsername       string
+	SMTPPassword       string
+	SMTPFromAddress    string
+	SMTPFromName       string
+	RouteSolverAddr    string
 	// RouteSolverAuthToken, when set, is sent as a bearer token in gRPC call
 	// metadata on every route-solver request. Empty by default — matches
 	// the route-solver service's own rollout-safety default (see its
@@ -212,11 +209,6 @@ func Load(serviceName, defaultPort string) Config {
 		WhatsAppPhoneNumberID:      getFirstEnv([]string{"WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_BUSINESS_NUMBER_ID"}, ""),
 		WhatsAppBusinessAccountID:  getFirstEnv([]string{"WHATSAPP_BUSINESS_ACCOUNT_ID", "WHATSAPP_WABA_ID"}, ""),
 		WhatsAppWebhookVerifyToken: getFirstEnv([]string{"WHATSAPP_WEBHOOK_VERIFY_TOKEN", "WEBHOOK_VERIFY_TOKEN"}, ""),
-		DotgoBaseURL:               getEnv("DOTGO_BASE_URL", ""),
-		DotgoAccountID:             getEnv("DOTGO_TRANSACTIONAL_ACCOUNT_ID", ""),
-		DotgoAPIToken:              getEnv("DOTGO_TRANSACTIONAL_API_TOKEN", ""),
-		DotgoSenderMask:            getEnv("DOTGO_TRANSACTIONAL_SENDER_MASK", ""),
-		DotgoCallbackURL:           getEnv("DOTGO_CALLBACK_URL", ""),
 		DotgoWebhookSecret:         getEnv("DOTGO_WEBHOOK_SECRET", ""),
 		SMTPHost:                   getEnv("SMTP_HOST", ""),
 		SMTPPort:                   getEnvInt("SMTP_PORT", 465),

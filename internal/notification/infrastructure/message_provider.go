@@ -44,6 +44,10 @@ type MetaWhatsAppMessageProvider struct {
 // fonu-api uses: one POST per message to the account's Messages resource,
 // authenticated with the account token. The account is the transactional one,
 // which is what job and installer notices are.
+//
+// Deprecated: notification now sends SMS through the TS auth service's unified
+// endpoint (see AuthSMSMessageProvider). Kept for reference while the cutover
+// is verified; it is no longer constructed by the notification service.
 type DotgoSMSMessageProvider struct {
 	baseURL     string
 	accountID   string
@@ -53,9 +57,16 @@ type DotgoSMSMessageProvider struct {
 	client      *http.Client
 }
 
+// SMSMessageProvider is one SMS sender. The notification service uses the auth
+// client; the Dotgo implementation stays as the reference/fallback.
+type SMSMessageProvider interface {
+	Send(ctx context.Context, tenantID, channel, recipient, content string) (string, error)
+	SendTracked(ctx context.Context, tenantID, channel, recipient, content string) (domain.MessageSendResult, error)
+}
+
 type MultiChannelMessageProvider struct {
 	whatsApp *MetaWhatsAppMessageProvider
-	sms      *DotgoSMSMessageProvider
+	sms      SMSMessageProvider
 	email    *SMTPEmailMessageProvider
 	push     *FCMPushProvider
 }
@@ -101,7 +112,7 @@ func NewDotgoSMSMessageProviderWithClient(baseURL, accountID, apiToken, senderMa
 	}
 }
 
-func NewMultiChannelMessageProvider(whatsApp *MetaWhatsAppMessageProvider, sms *DotgoSMSMessageProvider, email *SMTPEmailMessageProvider) *MultiChannelMessageProvider {
+func NewMultiChannelMessageProvider(whatsApp *MetaWhatsAppMessageProvider, sms SMSMessageProvider, email *SMTPEmailMessageProvider) *MultiChannelMessageProvider {
 	return &MultiChannelMessageProvider{whatsApp: whatsApp, sms: sms, email: email}
 }
 
