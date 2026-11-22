@@ -833,6 +833,28 @@ func buildDriverInstructionMessage(job domain.Job) string {
 
 func buildJobStatusMatcher(raw string) (func(domain.JobStatus) bool, error) {
 	status := strings.ToLower(strings.TrimSpace(raw))
+	// A comma list matches any of its parts, e.g. "assigned,en-route" for the jobs on the road.
+	if strings.Contains(status, ",") {
+		var matchers []func(domain.JobStatus) bool
+		for _, part := range strings.Split(status, ",") {
+			match, err := buildJobStatusMatcher(part)
+			if err != nil {
+				return nil, err
+			}
+			if match == nil {
+				return nil, nil
+			}
+			matchers = append(matchers, match)
+		}
+		return func(current domain.JobStatus) bool {
+			for _, match := range matchers {
+				if match(current) {
+					return true
+				}
+			}
+			return false
+		}, nil
+	}
 	switch status {
 	case "", "all":
 		return nil, nil
