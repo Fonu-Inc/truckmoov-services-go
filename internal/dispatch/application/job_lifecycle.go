@@ -387,6 +387,9 @@ func (u *JobLifecycleUseCase) AssignJob(ctx context.Context, command AssignJobCo
 	if err := verifyAssignees(ctx, u.fleet, job.TenantID, command.DriverID, command.VehicleID); err != nil {
 		return domain.Job{}, err
 	}
+	if err := verifyMaintenance(ctx, u.fleet, job.TenantID, command.VehicleID, job.AssignedVehicleID); err != nil {
+		return domain.Job{}, err
+	}
 
 	if err := u.repository.Save(updatedJob); err != nil {
 		return domain.Job{}, fmt.Errorf("save assigned job: %w", err)

@@ -94,6 +94,29 @@ func (c *FleetClient) exists(ctx context.Context, tenantID, path string) (bool, 
 	return err == nil, err
 }
 
+// MaintenanceBlockReason asks fleet whether the tenant's maintenance rules
+// block the vehicle. A 404 means a fleet without the rule, so nothing blocks.
+func (c *FleetClient) MaintenanceBlockReason(ctx context.Context, tenantID, vehicleID string) (string, error) {
+	var envelope struct {
+		Data struct {
+			Eligible    bool   `json:"eligible"`
+			BlockReason string `json:"blockReason"`
+		} `json:"data"`
+	}
+	err := c.get(ctx, tenantID, "/fleet/maintenance/dispatch-eligibility/"+url.PathEscape(strings.TrimSpace(vehicleID)), &envelope)
+	var statusErr fleetStatusError
+	if errors.As(err, &statusErr) && statusErr.status == http.StatusNotFound {
+		return "", nil
+	}
+	if err != nil || envelope.Data.Eligible {
+		return "", err
+	}
+	if envelope.Data.BlockReason == "" {
+		return "Vehicle is blocked by maintenance rules", nil
+	}
+	return envelope.Data.BlockReason, nil
+}
+
 // Escaped so an id cannot reach a different fleet path.
 func driverPath(driverID string) string {
 	return "/fleet/drivers/" + url.PathEscape(strings.TrimSpace(driverID))

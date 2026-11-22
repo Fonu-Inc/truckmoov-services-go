@@ -1555,6 +1555,8 @@ func respondFleetLookupError(w http.ResponseWriter, err error) bool {
 		httpx.WriteError(w, http.StatusNotFound, application.ErrDriverNotFound.Error())
 	case errors.Is(err, application.ErrVehicleNotFound):
 		httpx.WriteError(w, http.StatusNotFound, application.ErrVehicleNotFound.Error())
+	case errors.Is(err, application.ErrVehicleMaintenanceBlocked):
+		httpx.WriteError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, application.ErrFleetUnavailable):
 		log.Printf("dispatch: fleet lookup failed: %v", err)
 		httpx.WriteError(w, http.StatusServiceUnavailable, application.ErrFleetUnavailable.Error())

@@ -8,10 +8,35 @@ import (
 )
 
 var (
-	ErrDriverNotFound   = errors.New("driver not found")
-	ErrVehicleNotFound  = errors.New("vehicle not found")
-	ErrFleetUnavailable = errors.New("fleet service unavailable")
+	ErrDriverNotFound            = errors.New("driver not found")
+	ErrVehicleNotFound           = errors.New("vehicle not found")
+	ErrFleetUnavailable          = errors.New("fleet service unavailable")
+	ErrVehicleMaintenanceBlocked = errors.New("vehicle blocked by maintenance")
 )
+
+// MaintenanceGate is an optional FleetDirectory extra: the reason the tenant's
+// maintenance rules block a vehicle from dispatch, or "" when it may go.
+type MaintenanceGate interface {
+	MaintenanceBlockReason(ctx context.Context, tenantID, vehicleID string) (string, error)
+}
+
+// verifyMaintenance applies only when the vehicle changes, so a job already on
+// a vehicle is not trapped by a rule saved after it was assigned.
+func verifyMaintenance(ctx context.Context, fleet FleetDirectory, tenantID, vehicleID, currentVehicleID string) error {
+	gate, ok := fleet.(MaintenanceGate)
+	vehicleID = strings.TrimSpace(vehicleID)
+	if !ok || vehicleID == "" || vehicleID == strings.TrimSpace(currentVehicleID) {
+		return nil
+	}
+	reason, err := gate.MaintenanceBlockReason(ctx, tenantID, vehicleID)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrFleetUnavailable, err)
+	}
+	if reason != "" {
+		return fmt.Errorf("%w: %s", ErrVehicleMaintenanceBlocked, reason)
+	}
+	return nil
+}
 
 // FleetDirectory answers whether a driver or vehicle exists in a tenant. A
 // false with no error means fleet answered no; an error means it could not say.
