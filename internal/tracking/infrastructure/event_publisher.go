@@ -16,7 +16,7 @@ func NewEventPublisher(bus eventbus.EventBus) *EventPublisher {
 }
 
 func (p *EventPublisher) locationEnvelope(event domain.LocationUpdate) eventbus.EventEnvelope {
-	return eventbus.EventEnvelope{
+	envelope := eventbus.EventEnvelope{
 		ID:         event.EventID,
 		Type:       "vehicle.location.updated",
 		Version:    1,
@@ -35,6 +35,10 @@ func (p *EventPublisher) locationEnvelope(event domain.LocationUpdate) eventbus.
 			"protocol":   event.Protocol,
 		},
 	}
+	if event.Alarm != "" {
+		envelope.Data["alarm"] = event.Alarm
+	}
+	return envelope
 }
 
 type beginPublisher interface {

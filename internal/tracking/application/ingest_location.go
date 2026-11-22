@@ -241,6 +241,7 @@ func (u *IngestLocationUseCase) Execute(
 		AccuracyM:  command.AccuracyM,
 		FixTimeRFC: fixTime,
 		Protocol:   command.Protocol,
+		Alarm:      command.Alarm,
 	})
 	if err != nil {
 		return IngestLocationResult{}, fmt.Errorf("build location event: %w", err)

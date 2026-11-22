@@ -26,6 +26,10 @@ type LocationUpdate struct {
 	// Protocol the vendor adapter observed the device speaking, e.g. "teltonika"
 	// or "queclink". Empty when the adapter did not report one.
 	Protocol string
+	// Alarm is the device's own alarm for this fix (Traccar's normalised names,
+	// e.g. "hardBraking"), empty when it sent none. Fleet turns harsh-driving
+	// alarms into violations; only trackers with an accelerometer report them.
+	Alarm string
 }
 
 func NewLocationUpdate(params LocationUpdate) (LocationUpdate, error) {
@@ -62,6 +66,7 @@ func NewLocationUpdate(params LocationUpdate) (LocationUpdate, error) {
 		AccuracyM:  params.AccuracyM,
 		FixTimeRFC: strings.TrimSpace(params.FixTimeRFC),
 		Protocol:   strings.TrimSpace(params.Protocol),
+		Alarm:      strings.TrimSpace(params.Alarm),
 	}, nil
 }
 
