@@ -40,6 +40,7 @@ Tracking state/cache vars:
 
 Notification service auth vars:
 - `JWT_SECRET`: must match the auth service signing secret so template-management endpoints can derive tenant scope from bearer tokens.
+- `AUTH_SERVICE_URL`: base URL of the TS auth service (default `http://auth-service:3001`). Notification uses it for SMS sending, usage charging, alert settings, tenant contacts and push recipients.
 
 Notification WhatsApp vars (Meta Cloud API transport):
 - `WHATSAPP_API_BASE_URL`: defaults to `https://graph.facebook.com/v23.0`
@@ -53,7 +54,9 @@ Notification WhatsApp vars (Meta Cloud API transport):
 
 Notification SMS receipts:
 - SMS is sent by the TS auth service's unified endpoint (`POST /auth/internal/otp/send`); notification no longer holds Dotgo send credentials.
-- `DOTGO_WEBHOOK_SECRET` (optional): validates the `?token=` on Dotgo's receipts at `POST <public-api-host>/notify/sms/webhook`. Dotgo does not sign callbacks, so the route refuses a request without it. It must match the `DOTGO_WEBHOOK_SECRET` auth uses to build the callback URL.
+- For notification-originated SMS to receive delivery receipts, auth's `DOTGO_CALLBACK_URL` must be `https://<public-api-host>/notify/sms/webhook`. Auth only requests receipts when both that URL and its `DOTGO_WEBHOOK_SECRET` are set.
+- `DOTGO_WEBHOOK_SECRET` (optional): validates the `?token=` on Dotgo's receipts at `POST <public-api-host>/notify/sms/webhook`. Dotgo does not sign callbacks, so the route refuses a request without it. It must be the same value auth uses to build the callback URL, or every receipt is rejected.
+- If either half is missing or the secrets differ, SMS still sends but the message stays `sent` and never becomes `delivered`; notification cannot detect auth's callback configuration at startup.
 
 Migration note from `fonu-api`:
 - Truckmoov uses `WHATSAPP_PHONE_NUMBER_ID` as the canonical env name.

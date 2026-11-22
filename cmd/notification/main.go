@@ -131,6 +131,8 @@ func main() {
 	)
 	// SMS is owned by the TS auth service's unified OTP/SMS endpoint. Notification
 	// keeps the delivery-log/outbox/charge layer, but no longer talks to Dotgo.
+	// Receipts still arrive here, so auth's DOTGO_CALLBACK_URL must point at this
+	// service's /notify/sms/webhook and its DOTGO_WEBHOOK_SECRET must match.
 	smsMessageProvider := infrastructure.NewAuthSMSMessageProvider(cfg.AuthServiceURL, serviceCaller, nil)
 	emailMessageProvider := infrastructure.NewSMTPEmailMessageProvider(
 		cfg.SMTPHost,
@@ -163,7 +165,7 @@ func main() {
 		cfg.WhatsAppAccessToken,
 	)
 	if cfg.DotgoWebhookSecret == "" {
-		log.Warn("sms_receipts_unconfigured", "message", "set DOTGO_WEBHOOK_SECRET to validate Dotgo delivery receipts for SMS sent by the auth service")
+		log.Warn("sms_receipts_unconfigured", "message", "set DOTGO_WEBHOOK_SECRET to validate Dotgo delivery receipts; auth must also set DOTGO_CALLBACK_URL to this service's /notify/sms/webhook")
 	}
 	deliveryPublisher := infrastructure.NewDeliveryEventPublisher(bus)
 	deliveryLogRepository := infrastructure.NewPostgresDeliveryLogRepository(postgresDB)

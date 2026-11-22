@@ -20,6 +20,11 @@ var (
 	_ application.TrackedMessageProvider = (*AuthSMSMessageProvider)(nil)
 )
 
+// maxAuthSMSResponseBytes bounds the auth response. It is a small JSON
+// envelope, so this is generous and keeps a misbehaving dependency from
+// allocating without limit.
+const maxAuthSMSResponseBytes = 64 << 10
+
 // AuthSMSMessageProvider sends SMS through the TS auth service's unified
 // OTP/SMS endpoint. It is the only SMS path in the notification service now;
 // auth owns the Dotgo credentials, dedup and provider call.
@@ -89,7 +94,7 @@ func (p *AuthSMSMessageProvider) SendTracked(ctx context.Context, tenantID, chan
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAuthSMSResponseBytes))
 	if err != nil {
 		return failed, fmt.Errorf("read SMS response: %w", err)
 	}
