@@ -99,6 +99,7 @@ func main() {
 	// best-effort: if it is unreachable the live path (Redis + NATS) still works and
 	// telemetry history is simply disabled until it recovers.
 	var telemetryStore application.TelemetryStore
+	var tripStats *application.TripStatsUseCase
 	var quarantineStore application.QuarantineStore = infrastructure.NewInMemoryQuarantineRepository()
 	if timescaleDB, openErr := sql.Open("pgx", cfg.TimescaleDSN()); openErr != nil {
 		log.Warn("timescale_open_failed", "error", openErr.Error())
@@ -113,6 +114,7 @@ func main() {
 				log.Warn("timescale_schema_failed", "error", schemaErr.Error())
 			} else {
 				telemetryStore = infrastructure.NewAsyncTelemetryStore(repo, cfg.TelemetryAsyncInflight, log)
+				tripStats = application.NewTripStatsUseCase(repo, clock)
 				log.Info("telemetry_store_ready")
 			}
 			quarantineStore = buildQuarantineStore(ctx, timescaleDB, quarantineStore, log)
@@ -198,7 +200,7 @@ func main() {
 	openIngest := os.Getenv("ALLOW_UNAUTHENTICATED_INGEST") == "true"
 	warnIfIngestUnguarded(cfg, openIngest, log)
 	handler := trackinghttp.NewHandler(ingestLocationUseCase, publishAlertUseCase, trackingQueryUseCase, deviceTelemetryQueryUseCase, cfg.GPSAPIKey, userTokens, activityPublisher).
-		WithGate(gate).WithMessageRate(messageRate).WithQuarantine(quarantine).WithOpenIngest(openIngest && !cfg.IsProduction())
+		WithGate(gate).WithMessageRate(messageRate).WithQuarantine(quarantine).WithTripStats(tripStats).WithOpenIngest(openIngest && !cfg.IsProduction())
 	accessClient := identity.NewAccessClient(cfg.AuthServiceURL, serviceCaller)
 	if broadcaster, ok := bus.(eventbus.Broadcaster); ok {
 		if _, subErr := broadcaster.SubscribeEveryInstance(identity.AccessChangedSubject, func(_ context.Context, e eventbus.EventEnvelope) error {

@@ -548,6 +548,58 @@ func trackingOpenAPISpec() map[string]any {
 					},
 				},
 			},
+			"/tracking/trips/stats": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"tracking"},
+					"summary":     "Distance, duration, average speed and start of trips, from recorded positions",
+					"operationId": "tripStats",
+					"security":    bearerSecurity,
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{"application/json": map[string]any{"schema": map[string]any{
+							"type": "object",
+							"properties": map[string]any{"trips": map[string]any{
+								"type":     "array",
+								"maxItems": 100,
+								"items": map[string]any{
+									"type":     "object",
+									"required": []string{"id", "vehicle_id", "from"},
+									"properties": map[string]any{
+										"id":         map[string]any{"type": "string", "description": "Caller's key for the trip, e.g. the job id"},
+										"vehicle_id": map[string]any{"type": "string"},
+										"from":       map[string]any{"type": "string", "format": "date-time"},
+										"to":         map[string]any{"type": "string", "format": "date-time", "description": "Defaults to now"},
+									},
+								},
+							}},
+						}}},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Stats per trip, in request order; fields are absent when too few positions were recorded",
+							"content": map[string]any{"application/json": map[string]any{"schema": map[string]any{
+								"type": "object",
+								"properties": map[string]any{"trips": map[string]any{"type": "array", "items": map[string]any{
+									"type": "object",
+									"properties": map[string]any{
+										"id":               map[string]any{"type": "string"},
+										"vehicle_id":       map[string]any{"type": "string"},
+										"point_count":      map[string]any{"type": "integer"},
+										"started_at":       map[string]any{"type": "string", "format": "date-time"},
+										"ended_at":         map[string]any{"type": "string", "format": "date-time"},
+										"distance_km":      map[string]any{"type": "number"},
+										"duration_minutes": map[string]any{"type": "number"},
+										"avg_speed_kph":    map[string]any{"type": "number"},
+									},
+								}}},
+							}}},
+						},
+						"400": map[string]any{"description": "Invalid trip window or more than 100 trips"},
+						"401": map[string]any{"description": "Authenticated tenant context required"},
+						"503": map[string]any{"description": "Telemetry query not configured"},
+					},
+				},
+			},
 			"/tracking/devices/{deviceId}/overview": map[string]any{
 				"get": map[string]any{
 					"tags":        []string{"tracking"},

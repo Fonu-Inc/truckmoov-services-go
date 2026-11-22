@@ -43,6 +43,9 @@ ALTER TABLE telemetry_samples ADD COLUMN IF NOT EXISTS no_fix BOOLEAN NOT NULL D
 CREATE INDEX IF NOT EXISTS idx_telemetry_device_time
     ON telemetry_samples (tenant_id, device_id, observed_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_telemetry_vehicle_time
+    ON telemetry_samples (tenant_id, vehicle_id, observed_at);
+
 CREATE INDEX IF NOT EXISTS idx_telemetry_device_firmware
     ON telemetry_samples (tenant_id, device_id, firmware_version);
 `
@@ -205,6 +208,29 @@ func (r *TimescaleTelemetryRepository) SampleHistory(ctx context.Context, tenant
 		samples = append(samples, sample)
 	}
 	return samples, rows.Err()
+}
+
+func (r *TimescaleTelemetryRepository) VehicleTrack(ctx context.Context, tenantID, vehicleID string, from, to time.Time, limit int) ([]application.TrackPoint, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT observed_at, latitude, longitude FROM telemetry_samples
+		 WHERE tenant_id = $1 AND vehicle_id = $2 AND observed_at >= $3 AND observed_at <= $4 AND NOT no_fix
+		 ORDER BY observed_at ASC LIMIT $5`,
+		tenantID, vehicleID, from, to, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	points := []application.TrackPoint{}
+	for rows.Next() {
+		var p application.TrackPoint
+		if err := rows.Scan(&p.At, &p.Latitude, &p.Longitude); err != nil {
+			return nil, err
+		}
+		points = append(points, p)
+	}
+	return points, rows.Err()
 }
 
 func (r *TimescaleTelemetryRepository) Aggregates(ctx context.Context, tenantID, deviceID string, since, until time.Time) (application.TelemetryAggregates, error) {

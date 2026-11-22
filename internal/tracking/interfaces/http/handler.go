@@ -49,6 +49,7 @@ type Handler struct {
 	publishAlertUseCase         *application.PublishAlertUseCase
 	trackingQueryUseCase        *application.TrackingQueryUseCase
 	deviceTelemetryQueryUseCase *application.DeviceTelemetryQueryUseCase
+	tripStats                   *application.TripStatsUseCase
 	gpsAPIKey                   string
 	activityPublisher           activityPublisher
 	wsBridge                    *trackingws.Bridge
@@ -67,6 +68,12 @@ func (h *Handler) WithQuarantine(quarantine *application.Quarantine) *Handler {
 // WithOpenIngest lets ingest run with no GPS_API_KEY. Dev only.
 func (h *Handler) WithOpenIngest(allow bool) *Handler {
 	h.allowOpenIngest = allow
+	return h
+}
+
+// WithTripStats enables POST /tracking/trips/stats; left off when Timescale is down.
+func (h *Handler) WithTripStats(tripStats *application.TripStatsUseCase) *Handler {
+	h.tripStats = tripStats
 	return h
 }
 
@@ -111,6 +118,7 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 	routes.HandleFunc("/tracking/alerts", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.alerts"), h.alert)
 	routes.HandleFunc("/tracking/vehicles", []httpx.Audience{httpx.Tenant, httpx.Service}, httpx.On("tenant.tracking"), h.listVehicles)
 	routes.HandleFunc("/tracking/vehicles/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.tracking"), h.vehiclesResource)
+	routes.HandleFunc("/tracking/trips/stats", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.tracking"), h.tripStatsHandler)
 	routes.HandleFunc("/tracking/devices/", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.devices"), h.deviceResource)
 	routes.HandleFunc("/tracking/ws", []httpx.Audience{httpx.Admin}, httpx.On("admin.devices"), h.wsBridge.ServeHTTP)
 	routes.HandleFunc("/tracking/internal/gate/blocked-devices", []httpx.Audience{httpx.Service}, httpx.None(), h.blockedDevices)
@@ -328,6 +336,45 @@ func (h *Handler) vehicleHistory(w http.ResponseWriter, r *http.Request, vehicle
 		"vehicle_id": vehicleID,
 		"history":    history,
 	})
+}
+
+type tripStatsRequest struct {
+	Trips []application.TripWindow `json:"trips"`
+}
+
+func (h *Handler) tripStatsHandler(w http.ResponseWriter, r *http.Request) {
+	if h.tripStats == nil {
+		httpx.WriteError(w, http.StatusServiceUnavailable, "telemetry query is not configured")
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpx.WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	tenantID, ok := h.resolveTenantID(r)
+	if !ok {
+		httpx.WriteError(w, http.StatusUnauthorized, "authenticated tenant context is required")
+		return
+	}
+	var req tripStatsRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(req.Trips) > application.MaxTripWindows {
+		httpx.WriteError(w, http.StatusBadRequest, "at most 100 trips per request")
+		return
+	}
+	stats, err := h.tripStats.Stats(r.Context(), tenantID, req.Trips)
+	if errors.Is(err, application.ErrInvalidTripWindow) {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not read trip positions")
+		return
+	}
+	httpx.WriteOK(w, http.StatusOK, map[string]any{"trips": stats})
 }
 
 func (h *Handler) deviceResource(w http.ResponseWriter, r *http.Request) {
