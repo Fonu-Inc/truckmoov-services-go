@@ -277,7 +277,8 @@ func main() {
 	consumeJobOfferNotificationUseCase := application.NewConsumeJobOfferNotificationUseCase(sendMessageUseCase, eventClaims, log).
 		WithContacts(tenantContacts).
 		WithChannels(notificationPreferences, whatsAppAccountRepository)
-	dispatchAlertUseCase := application.NewDispatchAlertUseCase(alertSettingsReader, sendMessageUseCase, eventClaims, log)
+	adminInbox := infrastructure.NewAuthAdminInbox(cfg.AuthServiceURL, serviceCaller, nil)
+	dispatchAlertUseCase := application.NewDispatchAlertUseCase(alertSettingsReader, sendMessageUseCase, adminInbox, eventClaims, log)
 	// Platform alerts ride the system tenant, so they are a separate subject
 	// from a tenant's own notifications and a separate consumer.
 	if _, alertSubErr := bus.Subscribe(ctx, "tm.system.alert.raised", "platform-alerts", verified(dispatchAlertUseCase.Handle)); alertSubErr != nil {

@@ -24,6 +24,24 @@ type AlertSetting struct {
 	MinSeverity string
 }
 
+// InAppChannel lands an alert in the admin portal's notification centre. It is
+// shared by every admin, so it is delivered once per alert and needs no recipient.
+const InAppChannel = "in_app"
+
+// AdminInboxAlert is one alert for the admin portal's notification centre.
+type AdminInboxAlert struct {
+	EventID   string
+	AlertType string
+	Severity  string
+	Title     string
+	Body      string
+}
+
+// AdminInbox records in-app alerts. Recording the same EventID twice is a no-op.
+type AdminInbox interface {
+	Record(ctx context.Context, alert AdminInboxAlert) error
+}
+
 // AlertSettingsReader fetches the configuration for one alert type.
 type AlertSettingsReader interface {
 	// Returns nil when nothing is configured, which is handled the same way as
@@ -66,6 +84,7 @@ func IsKnownAlertType(alertType string) bool {
 type DispatchAlertUseCase struct {
 	settings AlertSettingsReader
 	send     *SendMessageUseCase
+	inbox    AdminInbox
 	claims   EventClaimStore
 	log      *slog.Logger
 }
@@ -73,10 +92,11 @@ type DispatchAlertUseCase struct {
 func NewDispatchAlertUseCase(
 	settings AlertSettingsReader,
 	send *SendMessageUseCase,
+	inbox AdminInbox,
 	claims EventClaimStore,
 	log *slog.Logger,
 ) *DispatchAlertUseCase {
-	return &DispatchAlertUseCase{settings: settings, send: send, claims: claims, log: log}
+	return &DispatchAlertUseCase{settings: settings, send: send, inbox: inbox, claims: claims, log: log}
 }
 
 func (u *DispatchAlertUseCase) Handle(ctx context.Context, envelope eventbus.EventEnvelope) error {
@@ -126,8 +146,31 @@ func (u *DispatchAlertUseCase) Handle(ctx context.Context, envelope eventbus.Eve
 	}
 
 	var failures int
+	if hasChannel(setting.Channels, InAppChannel) {
+		key := strings.Join([]string{"alert", envelope.ID, InAppChannel}, "|")
+		_, inboxErr := sendOnce(ctx, u.claims, key, func() error {
+			if u.inbox == nil {
+				return fmt.Errorf("admin inbox is not configured")
+			}
+			return u.inbox.Record(ctx, AdminInboxAlert{
+				EventID:   envelope.ID,
+				AlertType: alertType,
+				Severity:  severity,
+				Title:     subject,
+				Body:      body,
+			})
+		})
+		if inboxErr != nil {
+			failures++
+			u.log.Warn("alert_send_failed", "alert_type", alertType, "channel", InAppChannel, "error", inboxErr)
+		}
+	}
+
 	for _, recipient := range setting.Recipients {
 		for _, channel := range setting.Channels {
+			if channel == InAppChannel {
+				continue
+			}
 			key := strings.Join([]string{"alert", envelope.ID, recipient, channel}, "|")
 			_, sendErr := sendOnce(ctx, u.claims, key, func() error {
 				// Literal, not taken from the envelope: a platform alert is the
@@ -164,13 +207,13 @@ func suppressionReason(setting *AlertSetting, severity string) string {
 	if !setting.Enabled {
 		return "disabled"
 	}
-	// An alert with no recipient goes nowhere. Reported as unroutable rather
-	// than counted as sent.
-	if len(setting.Recipients) == 0 {
-		return "no_recipients"
-	}
 	if len(setting.Channels) == 0 {
 		return "no_channels"
+	}
+	// An alert with no recipient goes nowhere unless it is shown in-app.
+	// Reported as unroutable rather than counted as sent.
+	if len(setting.Recipients) == 0 && !hasChannel(setting.Channels, InAppChannel) {
+		return "no_recipients"
 	}
 	if severityRank[severity] < severityRank[setting.MinSeverity] {
 		return "below_severity"

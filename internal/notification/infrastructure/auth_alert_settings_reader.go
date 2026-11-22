@@ -88,7 +88,7 @@ func (r *AuthAlertSettingsReader) ForAlertType(
 	req, err := http.NewRequestWithContext(
 		// Escaped as well as allowlisted. The allowlist is what makes this safe;
 		// the escaping is there so it stays safe if the allowlist ever widens.
-		ctx, http.MethodGet, r.baseURL+"/auth/internal/alert-settings/"+url.PathEscape(alertType), nil,
+		ctx, http.MethodGet, r.baseURL+"/auth/internal/usage/alert-settings/"+url.PathEscape(alertType), nil,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build alert settings request: %w", err)

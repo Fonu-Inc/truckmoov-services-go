@@ -23,7 +23,21 @@ func (s *stubAlertSettings) ForAlertType(context.Context, string) (*AlertSetting
 	return s.setting, s.err
 }
 
+type recordingInbox struct {
+	alerts []AdminInboxAlert
+}
+
+func (r *recordingInbox) Record(_ context.Context, alert AdminInboxAlert) error {
+	r.alerts = append(r.alerts, alert)
+	return nil
+}
+
 func alertHarness(setting *AlertSetting, err error) (*DispatchAlertUseCase, *fakeMessageProvider, *recordingCharger) {
+	useCase, provider, charger, _ := alertHarnessWithInbox(setting, err)
+	return useCase, provider, charger
+}
+
+func alertHarnessWithInbox(setting *AlertSetting, err error) (*DispatchAlertUseCase, *fakeMessageProvider, *recordingCharger, *recordingInbox) {
 	provider := &fakeMessageProvider{status: domain.StatusSent}
 	charger := &recordingCharger{}
 	send := NewSendMessageUseCase(
@@ -37,7 +51,43 @@ func alertHarness(setting *AlertSetting, err error) (*DispatchAlertUseCase, *fak
 		"system",
 	)
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	return NewDispatchAlertUseCase(&stubAlertSettings{setting: setting, err: err}, send, newFakeEventClaims(), logger), provider, charger
+	inbox := &recordingInbox{}
+	return NewDispatchAlertUseCase(&stubAlertSettings{setting: setting, err: err}, send, inbox, newFakeEventClaims(), logger), provider, charger, inbox
+}
+
+// In-app needs no recipient address: it is one entry every admin sees.
+func TestInAppOnlyAlertIsRecordedOnceWithoutRecipients(t *testing.T) {
+	setting := enabled()
+	setting.Recipients = nil
+	setting.Channels = []string{InAppChannel}
+	useCase, provider, _, inbox := alertHarnessWithInbox(setting, nil)
+
+	if err := useCase.Handle(context.Background(), alertEvent("critical")); err != nil {
+		t.Fatalf("dispatch failed: %v", err)
+	}
+	if len(inbox.alerts) != 1 || inbox.alerts[0].EventID != "evt-alert-1" || inbox.alerts[0].Title != "Suspicious sign-in" {
+		t.Fatalf("expected one in-app alert, got %+v", inbox.alerts)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("in-app produced %d message sends", provider.calls)
+	}
+}
+
+func TestInAppIsRecordedOnceAlongsideOtherChannels(t *testing.T) {
+	setting := enabled()
+	setting.Recipients = []string{"a@truckmoov.com", "b@truckmoov.com"}
+	setting.Channels = []string{"email", InAppChannel}
+	useCase, provider, _, inbox := alertHarnessWithInbox(setting, nil)
+
+	if err := useCase.Handle(context.Background(), alertEvent("critical")); err != nil {
+		t.Fatalf("dispatch failed: %v", err)
+	}
+	if len(inbox.alerts) != 1 {
+		t.Fatalf("expected one in-app alert for two recipients, got %d", len(inbox.alerts))
+	}
+	if provider.calls != 2 {
+		t.Fatalf("expected 2 email sends, got %d", provider.calls)
+	}
 }
 
 func alertEvent(severity string) eventbus.EventEnvelope {
