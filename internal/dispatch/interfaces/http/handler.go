@@ -288,6 +288,7 @@ type Handler struct {
 	listAggregatorActivityUseCase *application.ListAggregatorActivityUseCase
 	activeJobsMapUseCase          *application.ActiveJobsMapUseCase
 	jobAttachmentUseCase          *application.JobAttachmentUseCase
+	roadRouter                    application.RoadRouter
 }
 
 // WithAggregator attaches the aggregator network overview use cases. A
@@ -440,6 +441,8 @@ func (h *Handler) RegisterRoutes(routes *httpx.Routes) {
 	routes.HandleFunc("/dispatch/jobs/map", []httpx.Audience{httpx.Tenant, httpx.Service}, httpx.On("tenant.dispatch"), h.activeJobsMap)
 	routes.HandleFunc("/dispatch/jobs/", []httpx.Audience{httpx.Tenant, httpx.Service}, httpx.On("tenant.dispatch"), h.jobResource)
 	routes.HandleFunc("/dispatch/routes/optimize", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), h.optimizeRoute)
+	routes.HandleFunc("/dispatch/routes/preview", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), h.routePreview)
+	routes.HandleFunc("/dispatch/routes/matrix", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), h.routeMatrix)
 	// Legacy contract kept for existing integrations that publish status events directly.
 	routes.HandleFunc("/dispatch/jobs/status", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), h.updateStatus)
 	routes.HandleFunc("/dispatch/job-offers", []httpx.Audience{httpx.Tenant}, httpx.On("tenant.dispatch"), hiddenFromOwnerOperators(h.jobOffers))

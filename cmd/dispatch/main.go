@@ -294,6 +294,9 @@ func main() {
 		fleetClient,
 	)
 	handler = handler.WithActiveJobsMap(activeJobsMapUseCase)
+	if router, ok := routeShaper.(application.RoadRouter); ok {
+		handler = handler.WithRoadRouter(router)
+	}
 	handler = handler.WithJobAttachments(application.NewJobAttachmentUseCase(
 		jobRepository,
 		infrastructure.NewPostgresJobAttachmentStore(postgresDB),

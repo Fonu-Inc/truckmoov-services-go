@@ -116,6 +116,58 @@ func dispatchOpenAPISpec() map[string]any {
 					},
 				},
 			},
+			"/dispatch/routes/preview": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Truck route through points in the order given",
+					"operationId": "previewRoute",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/RoutePointsRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Route shape, distance and duration",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/RoutePreview"},
+								},
+							},
+						},
+						"422": map[string]any{"description": "No road route joins the points"},
+					},
+				},
+			},
+			"/dispatch/routes/matrix": map[string]any{
+				"post": map[string]any{
+					"tags":        []string{"dispatch"},
+					"summary":     "Truck distance and time between every pair of points",
+					"operationId": "routeMatrix",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{"$ref": "#/components/schemas/RoutePointsRequest"},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "Distances and durations between every pair",
+							"content": map[string]any{
+								"application/json": map[string]any{
+									"schema": map[string]any{"$ref": "#/components/schemas/RouteMatrix"},
+								},
+							},
+						},
+						"422": map[string]any{"description": "No road route joins the points"},
+					},
+				},
+			},
 			"/dispatch/jobs/status": map[string]any{
 				"post": map[string]any{
 					"tags":        []string{"dispatch"},
@@ -983,6 +1035,50 @@ func dispatchOpenAPISpec() map[string]any {
 						"start": map[string]any{"type": "string", "format": "date-time"},
 						"end":   map[string]any{"type": "string", "format": "date-time"},
 					},
+				},
+				"RoutePointsRequest": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"points": map[string]any{
+							"type":        "array",
+							"minItems":    2,
+							"description": "At most 20 points for a preview, 12 for a matrix.",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"latitude":  map[string]any{"type": "number"},
+									"longitude": map[string]any{"type": "number"},
+								},
+								"required": []string{"latitude", "longitude"},
+							},
+						},
+					},
+					"required": []string{"points"},
+				},
+				"RoutePreview": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"shapes":           map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "One encoded polyline per leg."},
+						"shape_encoding":   map[string]any{"type": "string", "enum": []string{"polyline6"}},
+						"distance_km":      map[string]any{"type": "number"},
+						"duration_seconds": map[string]any{"type": "integer"},
+					},
+					"required": []string{"shapes", "shape_encoding", "distance_km", "duration_seconds"},
+				},
+				"RouteMatrix": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"distances_km": map[string]any{
+							"type":        "array",
+							"description": "Row i, column j is the drive from point i to point j; null where no road joins them.",
+							"items":       map[string]any{"type": "array", "items": map[string]any{"type": "number", "nullable": true}},
+						},
+						"durations_seconds": map[string]any{
+							"type":  "array",
+							"items": map[string]any{"type": "array", "items": map[string]any{"type": "integer", "nullable": true}},
+						},
+					},
+					"required": []string{"distances_km", "durations_seconds"},
 				},
 				"OptimizeRouteRequest": map[string]any{
 					"type": "object",
