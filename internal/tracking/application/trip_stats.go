@@ -103,13 +103,17 @@ func SummariseTrack(points []TrackPoint) TripStats {
 	stats.EndedAt = &end
 
 	km := 0.0
-	for i := 1; i < len(points); i++ {
-		hop := haversineKM(points[i-1].Latitude, points[i-1].Longitude, points[i].Latitude, points[i].Longitude)
-		hours := points[i].At.Sub(points[i-1].At).Hours()
+	// Hops are measured from the last accepted point, so one GPS jump drops only itself
+	// and not the real hop after it.
+	last := points[0]
+	for _, p := range points[1:] {
+		hop := haversineKM(last.Latitude, last.Longitude, p.Latitude, p.Longitude)
+		hours := p.At.Sub(last.At).Hours()
 		if hours > 0 && hop/hours > maxPlausibleKPH {
 			continue
 		}
 		km += hop
+		last = p
 	}
 	minutes := points[len(points)-1].At.Sub(points[0].At).Minutes()
 	distance := round1(km)
