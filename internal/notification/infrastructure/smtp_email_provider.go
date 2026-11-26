@@ -50,7 +50,7 @@ func NewSMTPEmailMessageProviderWithSender(host string, port int, username, pass
 	}
 	name := strings.TrimSpace(fromName)
 	if name == "" {
-		name = "TruckMoov"
+		name = "FleetPro"
 	}
 	return &SMTPEmailMessageProvider{
 		host:        strings.TrimSpace(host),
@@ -120,7 +120,7 @@ func splitSubjectAndBody(content string) (string, string) {
 			return trimmedSubject, strings.TrimSpace(body)
 		}
 	}
-	return "TruckMoov notification", normalized
+	return "FleetPro notification", normalized
 }
 
 func normalizeLineEndings(body string) string {

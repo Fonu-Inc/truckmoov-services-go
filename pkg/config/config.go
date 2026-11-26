@@ -217,7 +217,7 @@ func Load(serviceName, defaultPort string) Config {
 		// MAIL_FROM is what the auth service's mailer already reads, so both
 		// services send from one configured address.
 		SMTPFromAddress:           getFirstEnv([]string{"MAIL_FROM", "SMTP_FROM_ADDRESS"}, ""),
-		SMTPFromName:              getEnv("SMTP_FROM_NAME", "TruckMoov"),
+		SMTPFromName:              getEnv("SMTP_FROM_NAME", "FleetPro"),
 		RouteSolverAddr:           getEnv("ROUTE_SOLVER_ADDR", ""),
 		RouteSolverAuthToken:      getEnv("ROUTE_SOLVER_AUTH_TOKEN", ""),
 		ValhallaURL:               getEnv("VALHALLA_URL", "http://valhalla:8002"),

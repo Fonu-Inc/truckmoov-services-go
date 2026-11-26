@@ -76,7 +76,7 @@ func TestSMTPEmailProviderFallsBackToDefaultSubject(t *testing.T) {
 	if _, err := provider.Send(context.Background(), "tenant-a", "email", "ops@carrier.ng", "Single line only"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(sender.message, "Subject: TruckMoov notification") {
+	if !strings.Contains(sender.message, "Subject: FleetPro notification") {
 		t.Fatalf("expected default subject:\n%s", sender.message)
 	}
 }

@@ -207,9 +207,9 @@ func jobOfferContent(envelope eventbus.EventEnvelope, channel string) string {
 	subject := "Job offer update"
 	if envelope.Type == "job.offer.created" {
 		subject = "You have a new job offer"
-		body = fmt.Sprintf("You have a new job offer (%s)%s. Open TruckMoov to review it.", offerID, offerRateAndExpiry(envelope.Data))
+		body = fmt.Sprintf("You have a new job offer (%s)%s. Open FleetPro to review it.", offerID, offerRateAndExpiry(envelope.Data))
 	} else if status != "" {
-		body = fmt.Sprintf("Your job offer %s was %s. Open TruckMoov to see the job.", offerID, status)
+		body = fmt.Sprintf("Your job offer %s was %s. Open FleetPro to see the job.", offerID, status)
 	}
 	if channel == "email" {
 		return subject + "\n\n" + body
